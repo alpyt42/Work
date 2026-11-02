@@ -62,6 +62,7 @@ The memory is the index of the brain owner's work; the repos are the territory. 
 ## Finish the work
 
 - Leave a short dated entry in the project's timeline, current month only, with the model in parentheses, written with `uv run tools/brain/timeline.py add --project <project> --model "<model>" "<text>"`; update the action in its register. A session must leave a useful trace without copying the sources.
+- Only what is worth versioning gets an entry: a change, a decision, a delivery, a milestone, or a result someone will look for later. A check, a test, or a rerun that changes nothing gets none; report it in the reply instead.
 - Check the links, the diff and the Git state. Flag any changes already present at the start and do not overwrite them. **No commit or push without a separate explicit request**: propose the files and a Conventional Commits message; flag unpushed local commits. Never read a `.env` or add an AI mention to a commit or a PR. The brain stays private.
 
 ## References to open when needed
