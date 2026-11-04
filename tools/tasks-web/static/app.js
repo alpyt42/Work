@@ -4,12 +4,12 @@ const token = document.querySelector('meta[name="csrf-token"]').content;
 const ids = Object.fromEntries([
   'app', 'sidebar', 'scrim', 'sidebarToggle', 'brainMini', 'sidebarClose', 'mainContent',
   'brainSwitch', 'brainStatic', 'brainStaticName', 'brainButton', 'brainName', 'brainMenu',
-  'todayButton', 'listButton', 'boardButton', 'timelineButton', 'notesButton', 'searchButton', 'toolsButton', 'gitButton',
+  'todayButton', 'listButton', 'boardButton', 'timelineButton', 'docsButton', 'toolsButton', 'gitButton',
   'todayCount', 'openCount', 'gitCount', 'projectNav', 'lastSync',
   'moreButton', 'moreMenu', 'refreshButton', 'undoButton', 'undoLabel', 'shortcutsButton', 'quitButton',
-  'viewTitle', 'resultCount', 'gitStatus', 'searchField', 'searchInput', 'docQuery', 'toolSearch', 'newNoteButton', 'newButton',
+  'viewTitle', 'resultCount', 'gitStatus', 'searchField', 'searchInput', 'newNoteButton', 'newButton',
   'filters', 'projectChip', 'projectChipValue', 'projectChipClear', 'ownerChip', 'ownerFilter', 'scopeChip', 'scopeFilter',
-  'groupChip', 'groupFilter', 'docProjectChip', 'docProject', 'resetFilters', 'foldAllButton', 'errorBanner',
+  'groupChip', 'groupFilter', 'docProjectChip', 'docProject', 'docTypeChip', 'docType', 'resetFilters', 'foldAllButton', 'errorBanner',
   'todayView', 'listView', 'boardView', 'timelineView', 'timelineBack', 'timelineToday', 'timelineForward', 'timelineLate', 'timelineDone', 'timelineScale', 'timelineSummary',
   'timelineScroll', 'timelineTray', 'timelineTrayToggle', 'timelineTrayCount', 'timelineTrayMore', 'timelineTrayHint', 'timelineTraySearch',
   'timelineTrayBody', 'timelineTrayList', 'docsView', 'docStatus', 'docList', 'docPane', 'docBack', 'docPaneTitle', 'docPaneMeta',
@@ -37,11 +37,14 @@ function readUIState() {
   } catch { return {}; }
 }
 const savedUI = readUIState();
-const VIEWS = ['today', 'list', 'board', 'timeline', 'notes', 'search', 'tools', 'git'];
+// `search` is the results page of the header field: no button, no digit, never restored (it has no query to show).
+const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'tools', 'git'];
 const ACTION_VIEWS = ['today', 'list', 'board', 'timeline'];
-const VIEW_TITLES = {today: 'Today', list: 'Actions', board: 'Board', timeline: 'Timeline', notes: 'Notes', search: 'Search', tools: 'Tools', git: 'Sync'};
-const NAV_BUTTONS = {today: 'todayButton', list: 'listButton', board: 'boardButton', timeline: 'timelineButton', notes: 'notesButton', search: 'searchButton', tools: 'toolsButton', git: 'gitButton'};
-let view = VIEWS.includes(savedUI.view) ? savedUI.view : 'today';
+const VIEW_TITLES = {today: 'Today', list: 'Actions', board: 'Board', timeline: 'Timeline', docs: 'Docs', search: 'Search', tools: 'Tools', git: 'Sync'};
+const NAV_BUTTONS = {today: 'todayButton', list: 'listButton', board: 'boardButton', timeline: 'timelineButton', docs: 'docsButton', tools: 'toolsButton', git: 'gitButton'};
+// The Docs view was called Notes: a view saved under the old name opens it.
+let view = VIEWS.includes(savedUI.view) && savedUI.view !== 'search' ? savedUI.view : savedUI.view === 'notes' ? 'docs' : 'today';
+let searchReturn = 'today'; // the view the results page goes back to
 // The project filter of the sidebar: '' (all), a register path, or a folder prefix ending with '/' (a client and its missions).
 let projectScope = typeof savedUI.project === 'string' ? savedUI.project : '';
 let pendingGroup = typeof savedUI.group === 'string' ? savedUI.group : '';
@@ -56,6 +59,8 @@ let timelineModel = null;
 let timelineNarrow = false;
 let timelineSpot = ''; // 'overdue', 'week', 'next': the others dim
 let timelineTrayOpen = typeof savedUI.timelineTray === 'boolean' ? savedUI.timelineTray : null; // null: open on a wide page, closed on a narrow one
+const timelineFolded = new Set(Array.isArray(savedUI.timelineFolded) ? savedUI.timelineFolded.filter(key => typeof key === 'string') : []); // folded tray groups: `vague|register`, `none|register`
+let timelineOwners = new Map(); // owner → how a chip names them
 let timelineBase = []; // the actions the view was last drawn from
 let timelineWidth = 0;
 let timelineDrag = null;
@@ -68,12 +73,11 @@ let noteBusy = false;
 let undoState = {available: false, label: null, depth: 0};
 let undoBusy = false;
 let selectedId = null;
-let notesData = [];
+let docsData = [];
 let notesLoaded = false;
-let recentDocs = [];
 let notesRequest = 0;
 let docTimer;
-let docMode = 'recent';
+let docPending = false; // the documents of the query are being searched
 let docResults = [];
 let docTotal = 0;
 let docTruncated = false;
@@ -91,13 +95,14 @@ let docNote = null;
 const DOC_MARK_CAP = 500;
 const docFoldCache = new Map();
 const INBOX_REGISTER = 'inbox';
+const DOC_TYPE_LABELS = {note: 'Note', source: 'Source', workstream: 'Workstream', journal: 'Journal', page: 'Project page'}; // the badge of each type of the Docs list
 const detailCache = new Map();
 function saveUIState() {
   try {
     sessionStorage.setItem(UI_STATE_KEY, JSON.stringify({
-      view, search: ids.searchInput.value, project: projectScope, group: ids.groupFilter.value || pendingGroup,
-      owner: ids.ownerFilter.value, scope: ids.scopeFilter.value, toolSearch: ids.toolSearch.value,
-      docQuery: ids.docQuery.value, docProject: ids.docProject.value, foldedGroups: [...foldedGroups], brain: currentBrain, timelineRange, timelineDone, timelineTray: timelineTrayOpen
+      view: view === 'search' ? searchReturn : view, project: projectScope, group: ids.groupFilter.value || pendingGroup,
+      owner: ids.ownerFilter.value, scope: ids.scopeFilter.value,
+      docProject: ids.docProject.value, docType: ids.docType.value, foldedGroups: [...foldedGroups], brain: currentBrain, timelineRange, timelineDone, timelineTray: timelineTrayOpen, timelineFolded: [...timelineFolded]
     }));
   } catch { /* The interface remains usable when browser storage is unavailable. */ }
 }
@@ -267,12 +272,14 @@ function isMine(action) {
   const me = snapshot.owner.toLocaleLowerCase(LOCALE);
   return action.owner.toLocaleLowerCase(LOCALE).includes(me);
 }
+// What the global search reads of an action: ID, title, owner, project and group.
+function actionSearchText(action) {
+  return `${action.id} ${action.title} ${action.owner} ${action.project} ${action.group ? `${groupLabel(action.group)} ${action.group}` : ''}`;
+}
 function filteredBase() {
-  const text = ids.searchInput.value.trim().toLocaleLowerCase(LOCALE);
   const mine = ids.ownerFilter.value === 'mine';
   const group = ids.groupFilter.value;
   return snapshot.actions.filter(action =>
-    (!text || `${action.id} ${action.title} ${action.owner} ${action.project} ${action.group ? `${groupLabel(action.group)} ${action.group}` : ''}`.toLocaleLowerCase(LOCALE).includes(text)) &&
     inScope(action.register) &&
     (!group || (group === 'none' ? !action.group : Boolean(action.group) && groupKey(action) === group)) &&
     (!mine || isMine(action))
@@ -575,7 +582,7 @@ function foldSection(key, headClass, toggle, extra, body) {
 
 // ---------- Today ----------
 function actionFiltersActive() {
-  return Boolean(projectScope || ids.searchInput.value.trim() || ids.ownerFilter.value || ids.groupFilter.value || (view !== 'today' && view !== 'timeline' && ids.scopeFilter.value !== 'active'));
+  return Boolean(projectScope || ids.ownerFilter.value || ids.groupFilter.value || (view !== 'today' && view !== 'timeline' && ids.scopeFilter.value !== 'active'));
 }
 // With filters on, the empty view offers to clear them; otherwise to create an action.
 function emptyState(title, text, withButton = true) {
@@ -803,7 +810,7 @@ function renderBoard(base) {
 // The logic is in timeline-view.js (range, scale, placement, lanes, summary, tray, keyboard neighbours); this draws it. Wide: a frieze fitted
 // to the width, one lane per project, a sticky overdue zone, a tray of the actions with no deadline under it. Narrow (under 700 px): an
 // agenda, one row per day. Dates are formatted like everywhere else in the app (the browser's locale).
-const TL = {chipH: 56, gap: 6, pad: 6, minLane: 46, agenda: 700, slim: 44};
+const TL = {chipH: 72, gap: 6, pad: 6, minLane: 52, agenda: 700, slim: 44, tight: 104}; // tight: a chip narrower than this drops the owner's name
 const SHORT_FORMAT = new Intl.DateTimeFormat(LOCALE, {day: 'numeric', month: 'short'});
 const WHEN_FORMAT = new Intl.DateTimeFormat(LOCALE, {weekday: 'short', day: 'numeric'});
 const WEEKDAY_FORMAT = new Intl.DateTimeFormat(LOCALE, {weekday: 'short'});
@@ -840,10 +847,11 @@ function openFromTimeline(action) {
   selectAction(action.id, {focus: false, scroll: false});
   openEditor(action);
 }
-// Initials of the owner, only when it is not the person of this brain (the others are who the eye looks for).
+// The first name of the owner, only when it is not the person of this brain (the others are who the eye looks for).
 function ownerBadge(action) {
-  if (isMine(action)) return null;
-  const badge = element('span', 'tl-who', TimelineView.initials(action.owner));
+  const name = isMine(action) ? '' : timelineOwners.get(action.owner) || TimelineView.firstName(action.owner);
+  if (!name) return null;
+  const badge = element('span', 'tl-who', name);
   badge.setAttribute('aria-hidden', 'true');
   return badge;
 }
@@ -866,13 +874,19 @@ function endTimelineDrag() {
   ids.timelineView.querySelectorAll('.is-dragging, .is-drop').forEach(node => node.classList.remove('is-dragging', 'is-drop'));
   showTimelineDrop(null);
 }
-// A chip: status, ID, owner initials, a short title on up to two lines. In the days it stands on its due day (its edge is the date).
+// A chip: status, ID, the owner's first name (dropped when the chip is tight), the title on up to three lines. In the days it ends on its
+// due day, and the last day of the chip is the deadline mark; near the left edge it shrinks to the room it has, and a flipped chip (not
+// even the least room on its left) starts on its day instead, with the mark at its start.
 function timelineChip(entry, {when = false, where = false, spot = ''} = {}) {
   const action = entry.action;
   const dim = spot && !TimelineView.inSpot(action, spot, today());
-  const cell = element('div', `tl-cell ${statusInfo(action.state).cls} ${toneOf(action)}${entry.overdue ? ' is-overdue' : ''}${entry.done ? ' is-done' : ''}${entry.flip ? ' is-flip' : ''}${dim ? ' is-dim' : ''}`);
+  const cell = element('div', `tl-cell ${statusInfo(action.state).cls} ${toneOf(action)}${entry.overdue ? ' is-overdue' : ''}${entry.done ? ' is-done' : ''}${entry.dueW ? ' has-due' : ''}${entry.dueW && entry.w < TL.tight ? ' is-tight' : ''}${entry.flip ? ' is-flip' : ''}${dim ? ' is-dim' : ''}`);
   cell.dataset.id = action.id;
   cell.setAttribute('role', 'listitem');
+  if (entry.dueW) {
+    cell.dataset.col = String(entry.column);
+    cell.style.setProperty('--due-w', `${entry.dueW}px`);
+  }
   const button = element('button', 'tl-chip');
   button.type = 'button';
   button.tabIndex = -1;
@@ -892,6 +906,11 @@ function timelineChip(entry, {when = false, where = false, spot = ''} = {}) {
   button.append(top, title);
   if (where) button.append(element('span', 'tl-chip-where', shortProject(action.project)));
   cell.append(button);
+  if (entry.dueW) {
+    const due = element('span', 'tl-due'); // the due day itself: as wide as its column, in the status colour, with a solid edge
+    due.setAttribute('aria-hidden', 'true');
+    cell.append(due);
+  }
   cell.addEventListener('click', () => openFromTimeline(action));
   if (!entry.done) {
     cell.draggable = true;
@@ -954,6 +973,7 @@ function timelineHead(span, sc, late, summary) {
         cell.append(element('span', 'tl-dow', WEEKDAY_NARROW.format(parseDay(day.iso))), element('span', 'tl-dom', String(day.day)));
       }
       cell.title = dayText(day.iso);
+      cell.dataset.day = String(day.index);
     }
     if (dense) days.append(cell);
   }
@@ -966,7 +986,7 @@ function timelineLane(lane, span, sc, spot) {
   node.setAttribute('role', 'group');
   node.setAttribute('aria-label', lane.project);
   const rows = Math.max(lane.tracks, lane.lateTracks);
-  node.style.height = `${rows ? Math.max(TL.minLane, TL.pad * 2 + rows * TL.chipH + (rows - 1) * TL.gap) : TL.minLane}px`;
+  node.style.minHeight = `${rows ? Math.max(TL.minLane, TL.pad * 2 + rows * TL.chipH + (rows - 1) * TL.gap) : TL.minLane}px`; // the label may need more
   const trackTop = track => TL.pad + track * (TL.chipH + TL.gap);
 
   const label = element('div', 'tl-label');
@@ -979,7 +999,7 @@ function timelineLane(lane, span, sc, spot) {
     count.type = 'button';
     count.tabIndex = -1;
     count.title = `Show the ${plural(lane.undated, 'open action')} of ${lane.project} that have no date, in the tray below`;
-    count.addEventListener('click', () => showTray(lane.project));
+    count.addEventListener('click', () => showTray(lane.project, lane.register));
     head.append(count);
   } else head.append(element('span', 'tl-label-done', 'all dated'));
   label.append(head, element('span', 'tl-label-mission', rest.length ? rest.join(' / ') : lane.project));
@@ -1131,7 +1151,6 @@ function setTimelineSpot(kind) {
 
 // The tray: open actions with no date, by project, vague deadlines first. Cards are dragged onto a day, or get a date from the menu.
 function applyTray() {
-  ids.timelineView.classList.toggle('tray-collapsed', !timelineTrayOpen);
   ids.timelineTray.classList.toggle('is-collapsed', !timelineTrayOpen);
   ids.timelineTrayBody.hidden = !timelineTrayOpen;
   ids.timelineTrayToggle.setAttribute('aria-expanded', String(timelineTrayOpen));
@@ -1141,13 +1160,17 @@ function setTrayOpen(open) {
   applyTray();
   saveUIState();
 }
-function showTray(query = '') {
+// Open the tray, on a search; `register` (the project the search is about) comes unfolded.
+function showTray(query = '', register = '') {
   ids.timelineTraySearch.value = query;
+  if (register) for (const kind of ['vague', 'none']) timelineFolded.delete(`${kind}|${register}`);
   setTrayOpen(true);
   renderTray(timelineBase);
   ids.timelineTray.scrollIntoView({block: 'nearest'});
   ids.timelineTraySearch.focus({preventScroll: true});
 }
+// A row of the tray: status, ID, title (one line, cut at the end; the tooltip has it all), the owner. A vague wording goes on a second,
+// small italic line under the title, so the title always wins; a row without one stays on one line.
 function trayCard(action, text) {
   const item = element('li', `tl-card ${statusInfo(action.state).cls} ${toneOf(action)}`);
   item.dataset.id = action.id;
@@ -1158,11 +1181,11 @@ function trayCard(action, text) {
   main.tabIndex = -1;
   main.setAttribute('aria-label', `${action.id}: ${action.title}. Status: ${statusLabel(action.state)}. ${text ? `Deadline: ${text}` : 'No deadline'}. Project: ${action.project}. Owner: ${action.owner}.`);
   main.title = `${action.id} ${action.title}\n${action.project} · ${action.owner}${text ? `\nDeadline: ${text}` : ''}\nDrag onto a day to plan it`;
-  const top = element('span', 'tl-chip-top');
-  top.append(statusIcon(action.state), element('span', 'tl-chip-id', action.id));
+  const line = element('span', 'tl-card-line');
+  line.append(statusIcon(action.state), element('span', 'tl-card-id', action.id), element('span', 'tl-card-title', action.title));
   const badge = ownerBadge(action);
-  if (badge) top.append(badge);
-  main.append(top, element('span', 'tl-chip-title', action.title));
+  if (badge) line.append(badge);
+  main.append(line);
   if (text) main.append(element('span', 'tl-card-note', text));
   const date = iconButton('icon-button tl-card-date', `Set a due date for ${action.id}`, ICONS.calendar, 'Set a due date (d)');
   date.tabIndex = -1;
@@ -1171,7 +1194,9 @@ function trayCard(action, text) {
   item.addEventListener('click', event => { if (!event.target.closest('.tl-card-date')) openFromTimeline(action); });
   return item;
 }
-function traySection(id, title, groups, count) {
+// A section of the tray (`kind`: vague or none), one group per project; a group folds to its heading (kept in session storage).
+function traySection(kind, title, groups, count) {
+  const id = `tl-tray-${kind}`;
   const section = element('section', 'tl-tray-section');
   section.id = id;
   section.setAttribute('aria-labelledby', `${id}-title`);
@@ -1180,16 +1205,34 @@ function traySection(id, title, groups, count) {
   head.append(element('span', '', title), element('span', 'section-count', String(count)));
   section.append(head);
   const columns = element('div', 'tl-tray-groups');
-  for (const group of groups) {
-    const box = element('div', `tl-group ${groupTone(group.register)}`);
-    const name = element('h4', 'tl-group-name');
-    name.append(element('span', 'group-dot'), element('span', 'tl-group-text', group.project), element('span', 'tl-group-count', String(group.items.length)));
-    name.title = group.project;
+  groups.forEach((group, index) => {
+    const key = `${kind}|${group.register}`;
+    const folded = timelineFolded.has(key);
+    const box = element('div', `tl-group ${groupTone(group.register)}${folded ? ' is-folded' : ''}`);
     const list = element('ul', 'tl-cards');
+    list.id = `${id}-${index}`;
+    list.hidden = folded;
     list.append(...group.items.map(item => trayCard(item.action, item.text)));
+    const toggle = element('button', 'tl-group-toggle');
+    toggle.type = 'button';
+    toggle.title = group.project;
+    toggle.setAttribute('aria-expanded', String(!folded));
+    toggle.setAttribute('aria-controls', list.id);
+    toggle.append(svgIcon(ICONS.chevron, 'fold-chevron'), element('span', 'group-dot'), element('span', 'tl-group-text', group.project), element('span', 'tl-group-count', String(group.items.length)));
+    toggle.addEventListener('click', () => {
+      if (timelineFolded.has(key)) timelineFolded.delete(key); else timelineFolded.add(key);
+      const now = timelineFolded.has(key);
+      list.hidden = now;
+      box.classList.toggle('is-folded', now);
+      toggle.setAttribute('aria-expanded', String(!now));
+      markSelection(); // the tray's Tab stop goes to a row that is still shown
+      saveUIState();
+    });
+    const name = element('h4', 'tl-group-name');
+    name.append(toggle);
     box.append(name, list);
     columns.append(box);
-  }
+  });
   section.append(columns);
   return section;
 }
@@ -1199,8 +1242,8 @@ function renderTray(base) {
   ids.timelineTrayCount.textContent = String(all.none);
   ids.timelineTrayMore.textContent = all.vague ? `+ ${all.vague} vague` : '';
   const nodes = [];
-  if (data.counts.vague) nodes.push(traySection('tl-tray-vague', 'Vague deadlines', data.vague, data.counts.vague));
-  if (data.counts.none) nodes.push(traySection('tl-tray-none', 'No deadline', data.none, data.counts.none));
+  if (data.counts.vague) nodes.push(traySection('vague', 'Vague deadlines', data.vague, data.counts.vague));
+  if (data.counts.none) nodes.push(traySection('none', 'No deadline', data.none, data.counts.none));
   if (!nodes.length) {
     nodes.push(element('p', 'tl-tray-empty', all.none + all.vague ? 'No action matches this search.' : 'Every open action has a deadline.'));
   }
@@ -1210,7 +1253,14 @@ function renderTray(base) {
 }
 
 // The time axis follows the width of the page: the frieze is measured, drawn, and drawn again once if a scrollbar took some room.
-function timelineMetrics(width) { return width < 900 ? {labelW: 124, lateW: 120, chipW: 118} : {labelW: 150, lateW: 148, chipW: 132}; }
+// A chip is wide enough for a few words of title on each of its three lines; a Quarter, whose days are narrow, gets a narrower one.
+// minChipW is the narrowest a chip may shrink to, near the left edge of the range, before it starts on its day instead.
+function timelineMetrics(width, key) {
+  const wide = width >= 900;
+  const chipW = wide ? 170 : 140;
+  const quarter = key === 'quarter';
+  return {labelW: wide ? 200 : 140, lateW: wide ? 148 : 120, chipW: quarter ? chipW - 30 : chipW, minChipW: quarter ? 72 : wide ? 96 : 84};
+}
 function syncTimelineControls(summary, span, sc) {
   for (const button of ids.timelineView.querySelectorAll('[data-range]')) button.setAttribute('aria-pressed', String(button.dataset.range === timelineRange));
   ids.timelineDone.setAttribute('aria-checked', String(timelineDone));
@@ -1230,15 +1280,16 @@ function renderTimeline(base) {
   const late = base.filter(action => !closed(action) && TimelineView.isPlainDate(action.due) && action.due < span.start).length;
   const focused = document.activeElement?.closest?.('#timelineView [data-id]')?.dataset.id || null;
   if (timelineTrayOpen === null) timelineTrayOpen = !timelineNarrow;
+  timelineOwners = TimelineView.ownerLabels(snapshot.actions.map(action => action.owner)); // from every action, so a name does not change with the filters
   const order = snapshot.registers.map(register => register.path);
   const options = {today: now, start: span.start, end: span.end, showDone: timelineDone, order};
   let sc = null;
   let result;
   const draw = () => {
     const width = Math.floor(ids.timelineScroll.clientWidth || ids.mainContent.getBoundingClientRect().width);
-    const metrics = timelineMetrics(width);
+    const metrics = timelineMetrics(width, span.key);
     sc = timelineNarrow ? null : TimelineView.scale({width, weeks: span.weeks, key: span.key, labelW: metrics.labelW, lateW: late ? metrics.lateW : TL.slim});
-    result = TimelineView.layout(base, {...options, scale: sc, chipW: sc && span.key === 'quarter' ? metrics.chipW - 14 : metrics.chipW, gap: TL.gap});
+    result = TimelineView.layout(base, {...options, scale: sc, chipW: metrics.chipW, minChipW: metrics.minChipW, gap: TL.gap});
     timelineModel = {span, sc, result, summary};
     ids.timelineScroll.replaceChildren(timelineNarrow ? timelineAgenda(span, result, timelineSpot) : timelineFrieze(span, sc, result, summary, late));
     ids.timelineScroll.style.scrollPaddingLeft = sc ? `${sc.labelW + sc.lateW}px` : '0';
@@ -1328,10 +1379,11 @@ function timelineKey(event) {
   const next = TimelineView.neighbour(timelineModel.result.lanes, cell.dataset.id, direction);
   if (next) selectAndFollow(next);
 }
-// The tray: up and down walk the cards, Home and End jump to the first and last.
+// The tray: up and down walk the rows (the ones of a folded group are skipped), Home and End jump to the first and last.
+function visibleTrayCards() { return [...ids.timelineTrayList.querySelectorAll('.tl-card')].filter(card => card.offsetParent !== null); }
 function trayKey(event) {
   if (!event.target.closest?.('.tl-card-main') || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-  const cards = [...ids.timelineTrayList.querySelectorAll('.tl-card')].filter(card => card.offsetParent !== null);
+  const cards = visibleTrayCards();
   const index = cards.indexOf(event.target.closest('.tl-card'));
   const next = event.key === 'ArrowDown' ? cards[index + 1] : event.key === 'ArrowUp' ? cards[index - 1] : event.key === 'Home' ? cards[0] : event.key === 'End' ? cards.at(-1) : undefined;
   if (next === undefined) return;
@@ -1356,6 +1408,29 @@ function showTimelineDrop(target) {
   drop.style.left = `${sc.labelW + sc.lateW + sc.xs[target.index]}px`;
   drop.style.width = `${sc.xs[target.index + 1] - sc.xs[target.index]}px`;
   drop.firstChild.textContent = dayText(target.day.iso, DAY_FORMAT);
+}
+// The due day of a chip lights up while the pointer or the focus is on it: its day in the header (the number, or a label when the
+// axis is one tick per week) and its column in the project's lane.
+let dueLit = null;
+function dueCell(node) { return node instanceof Element ? node.closest('.tl-cell[data-col]') : null; }
+function lightDueDay(cell) {
+  if (cell === dueLit && (!cell || cell.isConnected)) return;
+  dueLit = cell;
+  const scroll = ids.timelineScroll;
+  for (const node of scroll.querySelectorAll('.tl-dueday, .tl-dueday-head')) node.remove();
+  for (const node of scroll.querySelectorAll('.tl-day.is-due')) node.classList.remove('is-due');
+  const sc = timelineModel?.sc;
+  const column = cell ? Number(cell.dataset.col) : -1;
+  if (!sc || !(column >= 0) || !cell.parentElement) return;
+  const [left, width] = [sc.xs[column], sc.xs[column + 1] - sc.xs[column]];
+  cell.parentElement.append(absolute('tl-dueday', left, width));
+  const day = scroll.querySelector(`.tl-day[data-day="${column}"]`);
+  if (day) day.classList.add('is-due');
+  else {
+    const mark = absolute('tl-dueday-head', left, width);
+    mark.append(element('span', 'tl-dueday-label', dayText(timelineModel.span.days[column].iso, WHEN_FORMAT)));
+    scroll.querySelector('.tl-days-head')?.prepend(mark); // under the month and week labels
+  }
 }
 
 // ---------- Selection and keyboard navigation over rows and cards ----------
@@ -1552,10 +1627,11 @@ window.addEventListener('resize', () => closePopover(false));
 for (const root of [ids.todayView, ids.listView, ids.boardView, ids.timelineScroll]) root.addEventListener('scroll', () => closePopover(false), {passive: true, capture: true});
 
 // ---------- Render ----------
-function isDocsView() { return view === 'notes' || view === 'search'; }
+function isDocsView() { return view === 'docs' || view === 'search'; }
 function renderFilterChips() {
   const actionView = ACTION_VIEWS.includes(view);
   const docs = isDocsView();
+  const docsList = view === 'docs';
   ids.filters.classList.toggle('is-empty', !actionView && !docs);
   ids.projectChip.hidden = !projectScope || !(actionView || docs);
   ids.projectChipValue.textContent = scopeLabel(projectScope);
@@ -1563,20 +1639,22 @@ function renderFilterChips() {
   ids.scopeChip.hidden = !(view === 'list' || view === 'board');
   ids.groupChip.hidden = !actionView;
   ids.docProjectChip.hidden = !docs;
+  ids.docTypeChip.hidden = !docsList;
   ids.ownerChip.classList.toggle('is-active', ids.ownerFilter.value !== '');
   ids.scopeChip.classList.toggle('is-active', ids.scopeFilter.value !== 'active');
   ids.groupChip.classList.toggle('is-active', ids.groupFilter.value !== '');
   ids.docProjectChip.classList.toggle('is-active', ids.docProject.value !== '');
-  for (const select of [ids.ownerFilter, ids.scopeFilter, ids.groupFilter, ids.docProject]) {
+  ids.docTypeChip.classList.toggle('is-active', ids.docType.value !== '');
+  for (const select of [ids.ownerFilter, ids.scopeFilter, ids.groupFilter, ids.docProject, ids.docType]) {
     select.parentElement.querySelector('.chip-value').textContent = select.selectedOptions[0]?.textContent || '';
   }
-  const active = actionView ? actionFiltersActive() : docs ? Boolean(projectScope || ids.docProject.value) : false;
+  const active = actionView ? actionFiltersActive() : docs ? Boolean(projectScope || ids.docProject.value || (docsList && ids.docType.value)) : false;
   ids.resetFilters.hidden = !active;
   ids.foldAllButton.hidden = view !== 'list' || !listProjectKeys().length;
 }
 function render() {
   closePopover(false);
-  if (view === 'tools') filterTools();
+  if (view === 'tools') countTools();
   else if (view === 'git') renderGit();
   else if (isDocsView()) renderDocsView();
   else {
@@ -1606,19 +1684,19 @@ function setView(next, persist = true) {
     if (name === next) ids[id].setAttribute('aria-current', 'page'); else ids[id].removeAttribute('aria-current');
   }
   ids.viewTitle.textContent = VIEW_TITLES[next];
-  ids.searchInput.hidden = !ACTION_VIEWS.includes(next);
-  ids.docQuery.hidden = next !== 'search';
-  ids.toolSearch.hidden = next !== 'tools';
-  ids.mainContent.classList.toggle('view-searchless', next === 'notes' || next === 'git');
+  if (next !== 'search' && ids.searchInput.value) { // any other view ends the search: the field never says something the page does not show
+    ids.searchInput.value = '';
+    clearTimeout(docTimer);
+    docSearchRequest += 1;
+    resetSearchResults();
+    setDocStatus('');
+  }
   ids.gitStatus.hidden = next !== 'git';
   ids.resultCount.textContent = '';
   render();
   if (next === 'tools' && !tools.length) loadTools();
   if (next === 'git') loadGit();
-  if (isDocsView()) {
-    refreshDocsView();
-    if (persist && next === 'search') ids.docQuery.focus();
-  }
+  if (isDocsView()) refreshDocsView();
   if (persist) {
     saveUIState();
     closeDrawer(false);
@@ -2178,6 +2256,7 @@ function resetBrainState() {
   ids.docProject.value = '';
   ids.editorProject.replaceChildren();
   foldedGroups.clear();
+  timelineFolded.clear();
   snapshot = {actions: [], registers: [], owner: '', today: ''};
   detailCache.clear();
   selectedId = null;
@@ -2196,10 +2275,9 @@ function resetBrainState() {
   notesRequest += 1;
   docSearchRequest += 1;
   docRenderRequest += 1;
-  notesData = [];
-  recentDocs = [];
+  docsData = [];
   notesLoaded = false;
-  docMode = 'recent';
+  docPending = false;
   docResults = [];
   docTotal = 0;
   docTruncated = false;
@@ -2272,6 +2350,7 @@ async function loadBrains({initial = false} = {}) {
       pendingGroup = '';
       ids.docProject.value = '';
       foldedGroups.clear();
+      timelineFolded.clear();
     }
   } else if (fallback && !names.includes(currentBrain)) {
     if (currentBrain) showToast(`Brain ${previousLabel} no longer exists: back to ${brainLabel(fallback)}.`);
@@ -2297,7 +2376,6 @@ async function loadTools() {
       section.append(summary);
       for (const tool of tools.filter(item => item.group === group)) {
         const row = element('div', 'tool-row');
-        row.dataset.search = `${tool.group} ${tool.label} ${tool.description} ${tool.command}`.toLocaleLowerCase(LOCALE);
         const copy = element('div', 'tool-copy');
         const name = element('div', 'tool-name');
         name.append(element('span', '', tool.label));
@@ -2321,21 +2399,8 @@ async function loadTools() {
     ids.toolsCatalog.replaceChildren(element('p', 'error-note', error.message));
   }
 }
-function filterTools() {
-  const query = ids.toolSearch.value.trim().toLocaleLowerCase(LOCALE);
-  let count = 0;
-  for (const group of ids.toolsCatalog.querySelectorAll('.tool-group')) {
-    let visible = 0;
-    for (const row of group.querySelectorAll('.tool-row')) {
-      row.hidden = Boolean(query) && !row.dataset.search.includes(query);
-      if (!row.hidden) visible += 1;
-    }
-    group.hidden = visible === 0;
-    group.querySelector('.tool-group-count').textContent = String(visible);
-    if (query && visible) group.open = true;
-    count += visible;
-  }
-  ids.resultCount.textContent = tools.length ? plural(count, 'tool') : '';
+function countTools() {
+  ids.resultCount.textContent = tools.length ? plural(tools.length, 'tool') : '';
 }
 async function runTool(tool, button) {
   if (tool.confirm && !confirm(tool.confirm)) return;
@@ -2860,11 +2925,11 @@ async function refreshQuietly() {
     loadGit({quiet: true});
     setSummary();
     const scrolls = viewScrolls();
-    if (ACTION_VIEWS.includes(view)) { render(); restoreViewScrolls(scrolls); }
+    if (ACTION_VIEWS.includes(view) || view === 'search') { render(); restoreViewScrolls(scrolls); }
   } catch { /* The next refresh will catch up. */ }
 }
 
-// ---------- Documents: Notes and Search ----------
+// ---------- Documents: Docs and Search ----------
 function docFoldChar(char) {
   let folded = docFoldCache.get(char);
   if (folded === undefined) {
@@ -2970,6 +3035,7 @@ function docItem(item, searching) {
   if (searching) title.append(docMarked(item.title, docFindRanges(item.title, docTerms)));
   else title.textContent = item.title;
   const meta = element('span', 'doc-item-meta');
+  if (DOC_TYPE_LABELS[item.type]) meta.append(element('span', 'doc-item-type', DOC_TYPE_LABELS[item.type]));
   meta.append(element('span', '', item.project || 'Outside projects'));
   if (item.date) meta.append(element('span', 'doc-item-date', formatDay(item.date)));
   button.append(title, meta);
@@ -2988,85 +3054,147 @@ function docEmpty(heading, message) {
   box.append(element('h2', '', heading), element('p', '', message));
   return box;
 }
+// The words of the query, folded like the server folds them: whitespace-separated words or "quoted phrases", all required, two characters at least.
+function searchTerms(query) {
+  const terms = [];
+  for (const [, quoted, bare] of query.matchAll(/"([^"]*)"|([^\s"]+)/g)) {
+    const term = docFoldMap(quoted ?? bare).folded.trim();
+    if (term.length >= 2 && !terms.includes(term)) terms.push(term);
+  }
+  return terms;
+}
+function actionMatches(action, terms) {
+  const text = docFoldMap(actionSearchText(action)).folded;
+  return terms.every(term => text.includes(term));
+}
+const SEARCH_ACTION_LIMIT = 50;
+// An action of the results: a click opens its detail panel. Closed actions are shown too, with their state.
+function searchActionItem(action, terms) {
+  const li = element('li');
+  const button = element('button', `doc-item doc-action${closed(action) ? ' is-closed' : ''}${action.state === '-' ? ' is-cancelled' : ''}`);
+  button.type = 'button';
+  button.dataset.actionId = action.id;
+  const title = element('span', 'doc-item-title');
+  const text = element('span', 'doc-action-text');
+  text.append(docMarked(action.title, docFindRanges(action.title, terms)));
+  title.append(statusIcon(action.state), text);
+  const meta = element('span', 'doc-item-meta');
+  meta.append(element('span', 'doc-item-id', action.id), element('span', '', action.project), element('span', '', statusLabel(action.state)));
+  if (action.due) meta.append(dueNode(action));
+  button.append(title, meta);
+  button.addEventListener('click', () => {
+    selectAction(action.id, {focus: false, scroll: false});
+    openEditor(action);
+  });
+  li.append(button);
+  return li;
+}
+function searchHead(title, count) {
+  const head = element('h2', 'doc-list-heading search-head');
+  head.append(element('span', '', title), element('span', 'section-count', count));
+  return head;
+}
+function searchNone(message, failed = false) { return element('p', failed ? 'search-none search-error' : 'search-none', message); }
+// The results page: the actions that match every word (open and closed), then the documents the server found.
+function renderSearchResults() {
+  const terms = searchTerms(ids.searchInput.value);
+  if (!terms.length) {
+    ids.resultCount.textContent = '';
+    ids.docList.replaceChildren(docEmpty('Nothing to search yet.', 'Type words of two characters or more, or "an exact phrase".'));
+    return;
+  }
+  const actions = sortActions(snapshot.actions.filter(action => docScopeMatch(action) && actionMatches(action, terms)));
+  const docs = docResults.filter(docScopeMatch);
+  const actionSection = element('section', 'search-section');
+  actionSection.append(searchHead('Actions', String(actions.length)));
+  if (actions.length) {
+    const list = element('ul', 'doc-items');
+    list.append(...actions.slice(0, SEARCH_ACTION_LIMIT).map(action => searchActionItem(action, terms)));
+    actionSection.append(list);
+    if (actions.length > SEARCH_ACTION_LIMIT) actionSection.append(searchNone(`${plural(actions.length - SEARCH_ACTION_LIMIT, 'more action')}: add a word to narrow the search.`));
+  } else actionSection.append(searchNone('No action contains these words.'));
+  const docSection = element('section', 'search-section');
+  docSection.append(searchHead('Documents', docPending || docError ? '' : docTotal > docs.length ? `${docs.length} shown of ${docTotal}` : String(docTotal)));
+  if (docError) docSection.append(searchNone(`Search failed: ${docError}`, true));
+  else if (docs.length) {
+    const list = element('ul', 'doc-items');
+    list.append(...docs.map(item => docItem(item, true)));
+    docSection.append(list);
+  } else if (!docPending) docSection.append(searchNone('No document contains these words.'));
+  ids.resultCount.textContent = `${plural(actions.length, 'action')}${docPending || docError ? '' : `, ${plural(docTotal, 'document')}`}`;
+  ids.docList.replaceChildren(actionSection, docSection);
+}
 function renderDocList() {
   const focused = ids.docList.contains(document.activeElement) ? document.activeElement.dataset.docId : null;
   const filtering = Boolean(projectScope || ids.docProject.value);
-  if (view === 'notes') {
+  if (view === 'docs') {
     if (!notesLoaded) { ids.docList.replaceChildren(); return; }
-    const items = notesData.filter(docScopeMatch);
-    ids.resultCount.textContent = plural(items.length, 'note');
+    const type = ids.docType.value;
+    const items = docsData.filter(item => docScopeMatch(item) && (!type || item.type === type));
+    const noun = type === 'note' ? 'note' : 'document';
+    ids.resultCount.textContent = plural(items.length, noun);
     if (!items.length) {
-      ids.docList.replaceChildren(docEmpty('No notes here.', filtering ? 'No notes for this filter.' : 'Create a note: it is saved in the chosen project or in the Inbox.'));
+      // The hint to create a note stays where it can help: with nothing filtered, or on the notes themselves.
+      const hint = filtering || (type && type !== 'note') ? `No ${noun}s for this filter.` : 'Create a note: it is saved in the chosen project or in the Inbox.';
+      ids.docList.replaceChildren(docEmpty(`No ${noun}s here.`, hint));
       return;
     }
     const list = element('ul', 'doc-items');
     list.append(...items.map(item => docItem(item, false)));
     ids.docList.replaceChildren(list);
-  } else {
-    const searching = docMode === 'search';
-    if (searching && docError) {
-      ids.resultCount.textContent = '';
-      ids.docList.replaceChildren(docEmpty('Search failed.', docError));
-      return;
-    }
-    if (!searching && !notesLoaded) { ids.docList.replaceChildren(); return; }
-    const items = (searching ? docResults : recentDocs).filter(docScopeMatch);
-    ids.resultCount.textContent = searching
-      ? `${plural(docTotal, 'result')}${docTotal > items.length ? `, ${items.length} shown` : ''}`
-      : plural(items.length, 'recent document');
-    if (!items.length) {
-      ids.docList.replaceChildren(searching
-        ? docEmpty('No results.', 'No document contains these terms.')
-        : docEmpty('No documents here.', filtering ? 'No documents for this filter.' : 'The brain does not contain any document yet.'));
-      return;
-    }
-    const list = element('ul', 'doc-items');
-    list.append(...items.map(item => docItem(item, searching)));
-    if (searching) ids.docList.replaceChildren(list);
-    else ids.docList.replaceChildren(element('h2', 'doc-list-heading', 'Recently modified'), list);
-  }
+  } else renderSearchResults();
   if (focused) ids.docList.querySelector(`.doc-item[data-doc-id="${CSS.escape(focused)}"]`)?.focus();
 }
 function renderDocsView() { renderDocList(); }
 function markDocSelection() {
-  for (const button of ids.docList.querySelectorAll('.doc-item')) {
+  for (const button of ids.docList.querySelectorAll('.doc-item[data-doc-id]')) {
     button.setAttribute('aria-pressed', String(button.dataset.docId === docSelectedId));
   }
 }
 async function loadNotes() {
   const requestId = ++notesRequest;
-  if (!notesLoaded) setDocStatus('Loading…');
+  if (!notesLoaded && view === 'docs') setDocStatus('Loading…');
   try {
-    const [data, recent] = await Promise.all([request('/api/notes'), request(`/api/docs/recent?project=${encodeURIComponent(docProjectParam())}`)]);
+    const data = await request('/api/docs/list');
     if (requestId !== notesRequest) return;
-    notesData = data.notes;
-    recentDocs = recent.docs;
+    docsData = data.docs;
     notesLoaded = true;
-    if (view === 'notes' || docMode === 'recent') setDocStatus('');
+    if (view === 'docs') setDocStatus('');
     if (isDocsView()) renderDocsView();
   } catch (error) {
-    if (requestId !== notesRequest || error.stale) return;
+    if (requestId !== notesRequest || error.stale || view !== 'docs') return;
     setDocStatus(`Failed: ${error.message}`, true);
   }
 }
+// The global search. The query lives in the header field, whatever the view: a query takes the page to the results (the view it left is
+// remembered), an empty field or Esc brings it back. The actions are matched here at once, the documents come from the server.
+function resetSearchResults() {
+  docResults = [];
+  docTotal = 0;
+  docTruncated = false;
+  docTerms = [];
+  docError = '';
+  docPending = false;
+}
 async function runDocSearch() {
   clearTimeout(docTimer);
-  const query = ids.docQuery.value.trim();
+  const query = ids.searchInput.value.trim();
   const requestId = ++docSearchRequest;
   docError = '';
   if (!query) {
-    docMode = 'recent';
-    docResults = [];
-    docTotal = 0;
-    docTruncated = false;
-    docTerms = [];
+    resetSearchResults();
     setDocStatus('');
-    renderDocsView();
-    loadNotes();
+    if (view === 'search') leaveSearch();
     return;
   }
-  docMode = 'search';
+  if (view !== 'search') {
+    searchReturn = view;
+    setView('search', false); // the page it opens runs the search
+    return;
+  }
+  docPending = true;
   setDocStatus('Searching…');
+  renderDocsView();
   try {
     const data = await request(`/api/search?${new URLSearchParams({q: query, project: docProjectParam()})}`);
     if (requestId !== docSearchRequest) return;
@@ -3074,7 +3202,7 @@ async function runDocSearch() {
     docTotal = data.total;
     docTruncated = data.truncated;
     docTerms = data.terms;
-    setDocStatus(data.truncated ? `The ${data.results.length} best results are shown.` : '');
+    setDocStatus(data.truncated ? `The ${data.results.length} best documents are shown.` : '');
   } catch (error) {
     if (requestId !== docSearchRequest || error.stale) return;
     docResults = [];
@@ -3083,15 +3211,19 @@ async function runDocSearch() {
     docError = error.message;
     setDocStatus('');
   }
-  if (isDocsView()) renderDocsView();
+  docPending = false;
+  if (view === 'search') renderDocsView();
 }
 function scheduleDocSearch() {
   clearTimeout(docTimer);
   docTimer = setTimeout(runDocSearch, 200);
 }
+function leaveSearch() {
+  setView(VIEWS.includes(searchReturn) && searchReturn !== 'search' ? searchReturn : 'today');
+}
 // The lists of the documents views after a filter change.
 function refreshDocLists() {
-  if (view === 'search' && ids.docQuery.value.trim()) runDocSearch();
+  if (view === 'search') runDocSearch();
   else loadNotes();
   renderDocsView();
 }
@@ -3124,7 +3256,7 @@ function renderDocPane() {
     ids.docPaneTitle.textContent = 'Document';
     return;
   }
-  const listed = notesData.find(item => item.id === doc.id) || recentDocs.find(item => item.id === doc.id);
+  const listed = docsData.find(item => item.id === doc.id);
   ids.docPaneTitle.textContent = doc.title;
   ids.docPaneMeta.replaceChildren(element('span', '', doc.project || 'Outside projects'), ...(listed?.date ? [element('span', 'doc-item-date', formatDay(listed.date))] : []));
   ids.docPanePath.textContent = doc.id;
@@ -3256,7 +3388,7 @@ async function saveDoc() {
     docSaving = false;
     showToast('Note saved', {undo: true});
     await Promise.all([loadNotes(), openDoc(docCurrent.id, {nav: 'keep'})]);
-    if (docMode === 'search' && view === 'search') runDocSearch();
+    if (view === 'search') runDocSearch();
     ids.docEdit.focus();
   } catch (error) {
     setDocError(error.status === 409
@@ -3296,7 +3428,7 @@ function showDeleteNoteDialog(title, count, pages, error = '') {
 }
 function openLinkingPage(id) {
   ids.deleteNoteDialog.close();
-  if (view !== 'notes' && view !== 'search') setView('notes');
+  if (view !== 'docs' && view !== 'search') setView('docs');
   openDoc(id, {nav: 'root'});
 }
 async function askDeleteNote() {
@@ -3364,11 +3496,8 @@ ids.deleteNoteDialog.addEventListener('close', () => { noteToDelete = null; });
 
 function refreshDocsView() {
   loadNotes();
-  if (view === 'search' && (ids.docQuery.value.trim() || docMode === 'search')) runDocSearch();
-  else {
-    if (view === 'search') { docMode = 'recent'; docError = ''; }
-    renderDocsView();
-  }
+  if (view === 'search') runDocSearch();
+  else renderDocsView();
   if (docSelectedId && !docEditing && !docSaving) openDoc(docSelectedId, {nav: 'keep'});
 }
 function newNoteFolder() {
@@ -3420,7 +3549,8 @@ async function createNote(event) {
       ids.docProject.value = '';
       renderProjectNav();
     }
-    setView('notes');
+    if (ids.docType.value && ids.docType.value !== 'note') ids.docType.value = ''; // the new note must show in the list
+    setView('docs');
     showToast('Note created', {undo: true});
     await openDoc(result.id, {nav: 'root'});
   } catch (error) {
@@ -3545,10 +3675,8 @@ function isTyping(target) {
   return target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
 }
 function focusSearch() {
-  if (view === 'notes' || view === 'git') setView('search');
-  const input = view === 'search' ? ids.docQuery : view === 'tools' ? ids.toolSearch : ids.searchInput;
-  input.focus();
-  input.select();
+  ids.searchInput.focus();
+  ids.searchInput.select();
 }
 function handleEscape(event) {
   if (document.querySelector('dialog[open]')) return;
@@ -3580,13 +3708,13 @@ document.addEventListener('keydown', event => {
   if (key === 'Escape') { handleEscape(event); return; }
   if (event.metaKey || event.ctrlKey || typing) return;
   if (document.querySelector('dialog[open]') || popoverState || brainMenuOpen() || !ids.moreMenu.hidden) return;
-  const digit = /^[1-6]$/.test(key) ? key : /^Digit[1-6]$/.test(event.code) && !event.altKey ? event.code.slice(5) : null;
+  const digit = /^[1-5]$/.test(key) ? key : /^Digit[1-5]$/.test(event.code) && !event.altKey ? event.code.slice(5) : null;
   const inRows = ACTION_VIEWS.includes(view);
   const onBody = event.target === document.body || event.target === ids.mainContent || event.target === ids.editorTitle;
   if (key === '/') { event.preventDefault(); focusSearch(); }
   else if (key === '?') { event.preventDefault(); ids.shortcutsDialog.showModal(); }
   else if (key === '[') { event.preventDefault(); toggleSidebar(); }
-  else if (digit && !event.altKey) { event.preventDefault(); setView(['today', 'list', 'board', 'timeline', 'notes', 'search'][Number(digit) - 1]); }
+  else if (digit && !event.altKey) { event.preventDefault(); setView(['today', 'list', 'board', 'timeline', 'docs'][Number(digit) - 1]); }
   else if (key === 'n' && !event.altKey) { event.preventDefault(); openEditor(); }
   else if (inRows && (key === 'j' || key === 'ArrowDown') && !event.altKey) {
     if (key === 'ArrowDown' && !onBody && !activeRoot().contains(event.target)) return;
@@ -3777,10 +3905,17 @@ ids.newNoteButton.addEventListener('click', openNewNote);
 ids.sidebarToggle.addEventListener('click', toggleSidebar);
 ids.sidebarClose.addEventListener('click', () => closeDrawer());
 ids.scrim.addEventListener('click', () => closeDrawer());
-ids.projectChipClear.addEventListener('click', () => { setProjectScope(''); ids.searchInput.focus(); });
-ids.docQuery.addEventListener('input', () => { scheduleDocSearch(); saveUIState(); });
-ids.docQuery.addEventListener('keydown', event => {
-  if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); runDocSearch(); }
+ids.projectChipClear.addEventListener('click', () => { setProjectScope(''); ids.resultCount.focus(); });
+ids.searchInput.addEventListener('input', () => { if (ids.searchInput.value.trim()) scheduleDocSearch(); else runDocSearch(); });
+ids.searchInput.addEventListener('keydown', event => {
+  if (event.isComposing) return;
+  if (event.key === 'Enter') { event.preventDefault(); if (ids.searchInput.value.trim()) runDocSearch(); }
+  else if (event.key === 'Escape' && (ids.searchInput.value || view === 'search')) { // clears the search and goes back to the view it left
+    event.preventDefault();
+    ids.searchInput.value = '';
+    runDocSearch();
+    ids.searchInput.blur();
+  }
 });
 ids.docProject.addEventListener('change', () => {
   if (ids.docProject.value && projectScope) { projectScope = ''; populateGroupFilter(); renderProjectNav(); }
@@ -3788,6 +3923,7 @@ ids.docProject.addEventListener('change', () => {
   renderFilterChips();
   saveUIState();
 });
+ids.docType.addEventListener('change', () => { renderDocsView(); renderFilterChips(); saveUIState(); }); // the list is already loaded: only filtered again
 ids.docBack.addEventListener('click', docGoBack);
 ids.docEdit.addEventListener('click', startDocEdit);
 ids.docCancel.addEventListener('click', cancelDocEdit);
@@ -3809,16 +3945,16 @@ ids.newNoteProject.addEventListener('change', updateNewNoteWhere);
 ids.closeNewNote.addEventListener('click', () => ids.newNoteDialog.close());
 ids.cancelNewNote.addEventListener('click', () => ids.newNoteDialog.close());
 ids.groupFilter.addEventListener('change', titleGroupFilter);
-for (const node of [ids.searchInput, ids.groupFilter, ids.ownerFilter, ids.scopeFilter]) {
-  node.addEventListener(node === ids.searchInput ? 'input' : 'change', () => { render(); saveUIState(); });
+for (const node of [ids.groupFilter, ids.ownerFilter, ids.scopeFilter]) {
+  node.addEventListener('change', () => { render(); saveUIState(); });
 }
 ids.resetFilters.addEventListener('click', () => {
   projectScope = '';
   if (isDocsView()) {
     ids.docProject.value = '';
+    if (view === 'docs') ids.docType.value = '';
     refreshDocLists();
   } else {
-    ids.searchInput.value = '';
     ids.groupFilter.value = '';
     ids.ownerFilter.value = '';
     ids.scopeFilter.value = 'active';
@@ -3827,10 +3963,9 @@ ids.resetFilters.addEventListener('click', () => {
   renderProjectNav();
   render();
   saveUIState();
-  (isDocsView() ? ids.docProject : ids.searchInput).focus();
+  (isDocsView() ? ids.docProject : ids.resultCount).focus();
 });
 ids.foldAllButton.addEventListener('click', setAllFolds);
-ids.toolSearch.addEventListener('input', () => { filterTools(); saveUIState(); });
 ids.brainButton.addEventListener('click', () => { if (brainMenuOpen()) closeBrainMenu(); else openBrainMenu(); });
 ids.brainButton.addEventListener('keydown', event => {
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); openBrainMenu(); }
@@ -3906,12 +4041,19 @@ ids.timelineSummary.addEventListener('click', event => {
 ids.timelineTrayToggle.addEventListener('click', () => setTrayOpen(!timelineTrayOpen));
 ids.timelineTraySearch.addEventListener('input', () => renderTray(timelineBase));
 ids.timelineTraySearch.addEventListener('keydown', event => {
-  const first = event.key === 'ArrowDown' ? ids.timelineTrayList.querySelector('.tl-card') : null;
+  const first = event.key === 'ArrowDown' ? visibleTrayCards()[0] : null;
   if (!first) return;
   event.preventDefault();
   selectAndFollow(first.dataset.id);
 });
 ids.timelineScroll.addEventListener('keydown', timelineKey);
+ids.timelineScroll.addEventListener('pointerover', event => { const cell = dueCell(event.target); if (cell) lightDueDay(cell); });
+ids.timelineScroll.addEventListener('pointerout', event => {
+  const cell = dueCell(event.target);
+  if (cell && cell !== dueCell(event.relatedTarget)) lightDueDay(dueCell(document.activeElement)); // back to the focused chip's day, if any
+});
+ids.timelineScroll.addEventListener('focusin', event => { const cell = dueCell(event.target); if (cell) lightDueDay(cell); });
+ids.timelineScroll.addEventListener('focusout', () => lightDueDay(null));
 // Focusing a chip or a card selects it, so the quick edits (`s`, `d`) apply to the one you are on.
 ids.timelineView.addEventListener('focusin', event => {
   const cell = event.target instanceof Element ? event.target.closest('.tl-chip, .tl-card-main')?.closest('[data-id]') : null;
@@ -4002,12 +4144,10 @@ new ResizeObserver(() => {
 applyAccent(brainFromUrl() || readStoredBrain());
 if (!narrowQuery.matches && readSidebarCollapsed()) ids.app.classList.add('sidebar-collapsed');
 updateSidebarToggle();
-ids.searchInput.value = typeof savedUI.search === 'string' ? savedUI.search : '';
 ids.ownerFilter.value = savedUI.owner === 'mine' ? 'mine' : '';
 ids.scopeFilter.value = ['active', 'all', 'closed'].includes(savedUI.scope) ? savedUI.scope : 'active';
-ids.toolSearch.value = typeof savedUI.toolSearch === 'string' ? savedUI.toolSearch : '';
-ids.docQuery.value = typeof savedUI.docQuery === 'string' ? savedUI.docQuery : '';
 ids.docProject.value = ['', INBOX_REGISTER, 'none'].includes(savedUI.docProject) ? savedUI.docProject : '';
+ids.docType.value = ['', ...Object.keys(DOC_TYPE_LABELS)].includes(savedUI.docType) ? savedUI.docType : '';
 // The brain is known before anything is requested, so that no view starts on the wrong one.
 loadBrains({initial: true}).finally(() => {
   setView(view, false);

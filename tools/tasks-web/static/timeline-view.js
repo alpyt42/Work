@@ -2,9 +2,9 @@
 
 // Logic of the Timeline view, apart from drawing it: the visible range, ISO weeks and weekends, the fit-to-width scale (and the day under
 // a pointer), where each action lands, which ones are overdue, vague or undated, the lanes and their stacking, the summary counts, the
-// "no deadline" tray and the keyboard neighbours of a chip. Days are ISO strings (YYYY-MM-DD) and all arithmetic is done in UTC, so a
-// daylight-saving change never moves a day. No DOM and no clock ("today" always comes from the caller): the page draws the result, and
-// the tests run this same file under node.
+// "no deadline" tray, the names of the owners and the keyboard neighbours of a chip. Days are ISO strings (YYYY-MM-DD) and all arithmetic
+// is done in UTC, so a daylight-saving change never moves a day. No DOM and no clock ("today" always comes from the caller): the page
+// draws the result, and the tests run this same file under node.
 const TimelineView = (() => {
   const DAY = 86400000;
   const PLAIN = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -118,12 +118,22 @@ const TimelineView = (() => {
   // Open and with nothing to put on the frieze: no date (vague or not).
   function undated(action) { return !finished(action) && !isPlainDate(action.due); }
 
-  // Owner initials for a chip: first and last word ("Jane Doe" → "JD"), the first two letters of a single name.
-  function initials(owner) {
-    const words = String(owner || '').trim().split(/\s+/).filter(Boolean);
-    if (!words.length) return '';
-    const letters = words.length === 1 ? Array.from(words[0]).slice(0, 2) : [Array.from(words[0])[0], Array.from(words.at(-1))[0]];
-    return letters.join('').toLocaleUpperCase();
+  // The owner as a chip names them: the first name ("Jane Doe" → "Jane").
+  function firstName(owner) { return String(owner || '').trim().split(/\s+/)[0] || ''; }
+  // The chip names of a list of owners, as a Map from the owner to the name: the first name, and with the initial of the last name
+  // ("Jane D.", "Jane R.") when two owners share it, so two people never look the same.
+  function ownerLabels(owners) {
+    const known = [...new Set(owners.map(owner => String(owner || '')))].filter(owner => owner.trim());
+    const same = new Map();
+    for (const owner of known) {
+      const key = firstName(owner).toLocaleLowerCase();
+      same.set(key, (same.get(key) || new Set()).add(owner.trim().replace(/\s+/g, ' ').toLocaleLowerCase()));
+    }
+    return new Map(known.map(owner => {
+      const words = owner.trim().split(/\s+/);
+      const clash = same.get(words[0].toLocaleLowerCase()).size > 1 && words.length > 1;
+      return [owner, clash ? `${words[0]} ${Array.from(words.at(-1))[0].toLocaleUpperCase()}.` : words[0]];
+    }));
   }
 
   // The weeks the summary talks about: this one (today to Sunday), and the two after it.
@@ -186,9 +196,11 @@ const TimelineView = (() => {
   // at their done date. Unfinished ones go to the Late zone when due before the range, to `later` when due after it. A scheduled date
   // inside the range, earlier than the due date, becomes a marker joined to the chip. Every project that has an open action gets a lane,
   // dated or not (`open`, `undated`: how many open, how many of them have no date).
-  // With a `scale` the chips also get a position: x and w in px (a chip starts on its day and runs right, or ends on it and runs left
-  // when it would leave the range), and a track, the row it stacks in so no two chips overlap.
-  function layout(actions, {today, start, end, showDone = false, order = [], scale: sc = null, chipW = 132, gap = 6}) {
+  // With a `scale` the chips also get a position: x and w in px, and a track, the row it stacks in so no two chips overlap. The deadline
+  // is where a chip ends: its right edge is the right edge of its day and it runs left. A chip near the left edge of the range, with
+  // less room than `chipW`, shrinks to the room it has (x = 0), as long as that is at least `minChipW`; only under that does it start
+  // on its day and run right (`flip`, `minChipW` wide). `dueW` is the width of the due day, the deadline mark at the chip's end.
+  function layout(actions, {today, start, end, showDone = false, order = [], scale: sc = null, chipW = 170, minChipW = 96, gap = 6}) {
     const rank = new Map(order.map((register, index) => [register, index]));
     const laneRank = register => (rank.has(register) ? rank.get(register) : order.length);
     const byRegister = new Map();
@@ -222,7 +234,7 @@ const TimelineView = (() => {
       if (sched === 'before' && scheduled >= start) marker = {column: diffDays(start, scheduled)};
       lane(action).entries.push({
         id: action.id, action, register: action.register, project: action.project, date, column, late: column === -1, done,
-        overdue: done ? 0 : overdueDays(action, today), scheduled, sched, marker, track: 0, x: 0, w: 0, flip: false
+        overdue: done ? 0 : overdueDays(action, today), scheduled, sched, marker, track: 0, x: 0, w: 0, dueW: 0, flip: false
       });
     }
     const by = (a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id, 'en', {numeric: true});
@@ -238,10 +250,13 @@ const TimelineView = (() => {
         const dated = item.entries.filter(entry => !entry.late);
         if (sc) {
           for (const entry of dated) {
-            const right = sc.xs[entry.column + 1];
-            entry.flip = sc.xs[entry.column] + chipW > sc.total;
-            entry.w = Math.min(chipW, sc.total);
-            entry.x = entry.flip ? Math.max(0, right - entry.w) : sc.xs[entry.column];
+            const [from, right] = [sc.xs[entry.column], sc.xs[entry.column + 1]];
+            const full = Math.min(chipW, sc.total);
+            const least = Math.min(minChipW, full);
+            entry.flip = right < least; // not even the least room on the left of the day's end: it starts on the day and runs right
+            entry.w = entry.flip ? Math.min(least, sc.total - from) : Math.min(full, right); // else the whole chip, or the room there is
+            entry.x = entry.flip ? from : right - entry.w;
+            entry.dueW = Math.min(right - from, entry.w);
             if (entry.marker) {
               entry.marker.x = Math.round((sc.xs[entry.marker.column] + sc.xs[entry.marker.column + 1]) / 2);
               if (entry.marker.x > entry.x - 6) entry.marker = null; // it would sit under the chip: the chip carries the hourglass instead
@@ -304,7 +319,7 @@ const TimelineView = (() => {
 
   return {
     ranges: Object.keys(RANGE_WEEKS), isPlainDate, addDays, diffDays, weekday, isWeekend, mondayOf, isoWeek, moveDue,
-    range, scale, dayAt, overdueDays, vagueText, undated, initials, windows, summary, inSpot, tray, layout, neighbour, agenda
+    range, scale, dayAt, overdueDays, vagueText, undated, firstName, ownerLabels, windows, summary, inSpot, tray, layout, neighbour, agenda
   };
 })();
 if (typeof module !== 'undefined') module.exports = TimelineView;

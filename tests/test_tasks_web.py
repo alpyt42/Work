@@ -999,6 +999,239 @@ class NotesTest(unittest.TestCase):
         self.assertEqual(list((self.brain / self.CLIENT / "notes").glob(f"{self.today}-*")), [])
 
 
+class DocsListTest(unittest.TestCase):
+    """The Docs view: notes, sources, workstreams, journal files and project pages of each project, in one list."""
+    CLIENT = "projects/clients/acme/missions/demo-migration"
+    INTERNAL = "projects/internal/setup"
+    NESTED = "projects/internal/setup/sub"
+
+    def day(self, year, month, day):
+        return datetime(year, month, day, 12, tzinfo=ZoneInfo("Europe/Paris")).timestamp()
+
+    def write(self, relative, text, day=None):
+        path = self.brain / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        if day:
+            os.utime(path, (self.day(*day), self.day(*day)))
+        return path
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        self.brain = root / "brain"
+        self.outside = root / "outside.md"
+        self.outside.write_text("# Secret\n\nOutside the brain\n", encoding="utf-8")
+        for folder, line in ((self.CLIENT, "- [ ] **ACM-001** — Jane — Deliver"), (self.INTERNAL, "- [ ] **SET-001** — Jane — Tidy"), (self.NESTED, "- [ ] **SUB-001** — Jane — Nest")):
+            self.write(f"{folder}/state/actions.md", f"# Actions\n\n## Open\n{line}\n")
+        client, internal = self.CLIENT, self.INTERNAL
+        # One document of each type.
+        self.write(f"{client}/demo-migration.md", "# Migration Demo\n\nMission page.\n", (2026, 8, 1))
+        self.write(f"{client}/notes/2026-10-01-existing.md", "# Existing note\n\n> Note from 01/10/2026\n\nWorking note.\n", (2026, 1, 1))
+        self.write(f"{client}/sources/2026-10/2026-10-05-cr-kickoff.md", "---\ndate: 2026-10-05\n---\n\n# kickoff minutes\n\n> Meeting\n\nBody  of\n the minutes.\n", (2026, 1, 1))
+        self.write(f"{client}/sources/2026-10/2026-10-05-mail-zulu.md", "# Zulu mail\n\nA mail.\n", (2026, 1, 1))
+        self.write(f"{client}/sources/2026-10/2026-13-45-cr-bad-date.md", "# Bad date\n\nImpossible day in the name.\n", (2026, 10, 6))
+        self.write(f"{client}/sources/2026-10/2026-10-07-export/part-1.md", "# Export part 1\n\nOne file of an export.\n", (2026, 10, 7))
+        self.write(f"{client}/workstreams/architecture.md", "# Architecture\n\nReference doc.\n", (2026, 9, 20))
+        self.write(f"{client}/journal/2026-09.md", "# Journal September\n\nMoved entries.\n", (2026, 10, 2))
+        self.write(f"{internal}/setup.md", "# Setup page\n\nInternal project page.\n", (2026, 7, 1))
+        self.write(f"{internal}/notes/undated.md", "No title, only text.\n", (2026, 8, 15))
+        self.write(f"{self.NESTED}/sources/2026-10-08-note-nested.md", "# Nested source\n\nBelongs to the nested project.\n", (2026, 1, 1))
+        self.write("inbox/2026-10-03-raw.md", "# Raw capture\n\nTo triage.\n", (2026, 1, 1))
+        # Never listed.
+        self.write(f"{client}/sources/2026-10/index.md", "# Index of the month\n")
+        self.write(f"{client}/sources/2026-10/README.md", "# Readme of sources\n")
+        self.write(f"{client}/sources/2026-10/2026-10-07-export/INDEX.md", "# Index of the export\n")
+        self.write(f"{client}/workstreams/README.md", "# Readme of workstreams\n")
+        self.write(f"{client}/notes/README.md", "# Notes index\n")
+        self.write(f"{client}/notes/archive/2026-01-01-old.md", "# Archived\n")
+        self.write(f"{client}/state/decisions.md", "# Decisions\n")
+        self.write(f"{client}/scripts/tool.md", "# Tool\n")
+        self.write(f"{client}/handoffs/2026-10-02-handoff.md", "# Handoff\n")
+        self.write(f"{client}/other.md", "# Other root file\n")
+        self.write(f"{client}/journal/old/2026-08.md", "# Journal sub-folder\n")
+        self.write(f"{internal}/other.md", "# Other root file\n")
+        self.write("projects/clients/acme/acme.md", "# Acme client page\n")
+        self.write("inbox/README.md", "# Inbox readme\n")
+        self.write("inbox/inbox.md", "# Capture scratchpad\n")
+        self.write("inbox/sources/2026-10-03-stray.md", "# Stray source in the inbox\n")
+        self.write("context/glossary.md", "# Glossary\n")
+        self.write(f"{client}/sources/.hidden.md", "# Hidden\n")
+        (self.brain / client / "sources/2026-10/link.md").symlink_to(self.outside)
+        (self.brain / client / "workstreams/link.md").symlink_to(self.outside)
+        (self.brain / client / "journal/link.md").symlink_to(self.outside)
+        self.server = tasks_web.TaskServer(("127.0.0.1", 0), tasks_web.Store(self.brain))
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+        self.register = f"{client}/state/actions.md"
+        self.internal_register = f"{internal}/state/actions.md"
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+        self.temp.cleanup()
+
+    request = TasksWebTest.request
+
+    def docs(self, query=""):
+        status, data = self.request("GET", "/api/docs/list" + query)
+        self.assertEqual(status, 200)
+        return data["docs"]
+
+    def test_lists_each_type_with_its_project_and_register(self):
+        by_id = {doc["id"]: doc for doc in self.docs()}
+        expected = {
+            f"{self.CLIENT}/demo-migration.md": ("page", "Migration Demo", "acme / demo-migration", self.register),
+            f"{self.CLIENT}/notes/2026-10-01-existing.md": ("note", "Existing note", "acme / demo-migration", self.register),
+            f"{self.CLIENT}/sources/2026-10/2026-10-05-cr-kickoff.md": ("source", "kickoff minutes", "acme / demo-migration", self.register),
+            f"{self.CLIENT}/workstreams/architecture.md": ("workstream", "Architecture", "acme / demo-migration", self.register),
+            f"{self.CLIENT}/journal/2026-09.md": ("journal", "Journal September", "acme / demo-migration", self.register),
+            f"{self.INTERNAL}/setup.md": ("page", "Setup page", "setup", self.internal_register),
+            f"{self.INTERNAL}/notes/undated.md": ("note", "undated", "setup", self.internal_register),
+            "inbox/2026-10-03-raw.md": ("note", "Raw capture", "Inbox", "inbox"),
+            # The longest project folder owns a file: this source is not one of `setup`.
+            f"{self.NESTED}/sources/2026-10-08-note-nested.md": ("source", "Nested source", "sub", f"{self.NESTED}/state/actions.md"),
+        }
+        for doc_id, (kind, title, project, register) in expected.items():
+            doc = by_id[doc_id]
+            self.assertEqual((doc["type"], doc["title"], doc["project"], doc["register"]), (kind, title, project, register), doc_id)
+        self.assertEqual({doc["type"] for doc in by_id.values()}, {"note", "source", "workstream", "journal", "page"})
+
+    def test_only_documents_of_the_five_types_are_listed(self):
+        ids = {doc["id"] for doc in self.docs()}
+        self.assertEqual(ids, {
+            f"{self.CLIENT}/demo-migration.md", f"{self.CLIENT}/notes/2026-10-01-existing.md",
+            f"{self.CLIENT}/sources/2026-10/2026-10-05-cr-kickoff.md", f"{self.CLIENT}/sources/2026-10/2026-10-05-mail-zulu.md",
+            f"{self.CLIENT}/sources/2026-10/2026-13-45-cr-bad-date.md", f"{self.CLIENT}/sources/2026-10/2026-10-07-export/part-1.md",
+            f"{self.CLIENT}/workstreams/architecture.md", f"{self.CLIENT}/journal/2026-09.md",
+            f"{self.INTERNAL}/setup.md", f"{self.INTERNAL}/notes/undated.md", f"{self.NESTED}/sources/2026-10-08-note-nested.md",
+            "inbox/2026-10-03-raw.md",
+        })
+
+    def test_date_comes_from_the_file_name_prefix_else_from_the_modification_day(self):
+        by_id = {doc["id"]: doc for doc in self.docs()}
+        self.assertEqual(by_id[f"{self.CLIENT}/sources/2026-10/2026-10-05-cr-kickoff.md"]["date"], "2026-10-05")  # the file was touched in January
+        self.assertEqual(by_id[f"{self.CLIENT}/notes/2026-10-01-existing.md"]["date"], "2026-10-01")
+        self.assertEqual(by_id["inbox/2026-10-03-raw.md"]["date"], "2026-10-03")
+        self.assertEqual(by_id[f"{self.CLIENT}/sources/2026-10/2026-13-45-cr-bad-date.md"]["date"], "2026-10-06")  # not a real date: the modification day
+        self.assertEqual(by_id[f"{self.CLIENT}/sources/2026-10/2026-10-07-export/part-1.md"]["date"], "2026-10-07")
+        self.assertEqual(by_id[f"{self.CLIENT}/workstreams/architecture.md"]["date"], "2026-09-20")
+        self.assertEqual(by_id[f"{self.CLIENT}/journal/2026-09.md"]["date"], "2026-10-02")  # a month, not a day
+        self.assertEqual(by_id[f"{self.CLIENT}/demo-migration.md"]["date"], "2026-08-01")
+        self.assertEqual(by_id[f"{self.INTERNAL}/notes/undated.md"]["date"], "2026-08-15")
+
+    def test_newest_first_then_by_title(self):
+        docs = self.docs()
+        self.assertEqual([doc["date"] for doc in docs], sorted((doc["date"] for doc in docs), reverse=True))
+        self.assertEqual([doc["id"] for doc in docs], [
+            f"{self.NESTED}/sources/2026-10-08-note-nested.md",
+            f"{self.CLIENT}/sources/2026-10/2026-10-07-export/part-1.md",
+            f"{self.CLIENT}/sources/2026-10/2026-13-45-cr-bad-date.md",
+            f"{self.CLIENT}/sources/2026-10/2026-10-05-cr-kickoff.md",  # "kickoff minutes" before "Zulu mail": titles compare without case
+            f"{self.CLIENT}/sources/2026-10/2026-10-05-mail-zulu.md",
+            "inbox/2026-10-03-raw.md",
+            f"{self.CLIENT}/journal/2026-09.md",
+            f"{self.CLIENT}/notes/2026-10-01-existing.md",
+            f"{self.CLIENT}/workstreams/architecture.md",
+            f"{self.INTERNAL}/notes/undated.md",
+            f"{self.CLIENT}/demo-migration.md",
+            f"{self.INTERNAL}/setup.md",
+        ])
+
+    def test_fields_of_a_listed_document(self):
+        kickoff = next(doc for doc in self.docs() if doc["id"].endswith("2026-10-05-cr-kickoff.md"))
+        self.assertEqual(set(kickoff), {"id", "title", "project", "register", "type", "date", "modified", "excerpt", "size"})
+        self.assertEqual(kickoff["excerpt"], "Body of the minutes.")  # no front matter, no title, no quote
+        self.assertEqual(kickoff["size"], (self.brain / kickoff["id"]).stat().st_size)
+        self.assertRegex(kickoff["modified"], r"^2026-01-01T\d{2}:\d{2}:\d{2}")
+        self.write(f"{self.CLIENT}/workstreams/architecture.md", "# Architecture\n\n" + "word " * 200, (2026, 9, 20))
+        excerpt = next(doc for doc in self.docs() if doc["id"].endswith("workstreams/architecture.md"))["excerpt"]
+        self.assertTrue(excerpt.endswith("…") and len(excerpt) <= 161)
+
+    def test_notes_keep_the_fields_of_api_notes(self):
+        status, data = self.request("GET", "/api/notes")
+        self.assertEqual(status, 200)
+        listed = {doc["id"]: doc for doc in self.docs() if doc["type"] == "note"}
+        self.assertEqual(set(listed), {note["id"] for note in data["notes"]})
+        for note in data["notes"]:
+            self.assertEqual({**note, "type": "note"}, listed[note["id"]])
+
+    def test_a_changed_file_is_listed_again(self):
+        self.write(f"{self.CLIENT}/workstreams/architecture.md", "# Renamed architecture\n\nChanged.\n", (2026, 9, 21))
+        self.write(f"{self.CLIENT}/workstreams/runbook.md", "# Runbook\n\nNew.\n", (2026, 9, 22))
+        (self.brain / self.CLIENT / "journal/2026-09.md").unlink()
+        by_id = {doc["id"]: doc for doc in self.docs()}
+        self.assertEqual((by_id[f"{self.CLIENT}/workstreams/architecture.md"]["title"], by_id[f"{self.CLIENT}/workstreams/architecture.md"]["date"]), ("Renamed architecture", "2026-09-21"))
+        self.assertEqual(by_id[f"{self.CLIENT}/workstreams/runbook.md"]["type"], "workstream")
+        self.assertNotIn(f"{self.CLIENT}/journal/2026-09.md", by_id)
+
+    def test_documents_other_than_notes_open_read_only(self):
+        for doc_id in (f"{self.CLIENT}/sources/2026-10/2026-10-05-cr-kickoff.md", f"{self.CLIENT}/workstreams/architecture.md",
+                       f"{self.CLIENT}/journal/2026-09.md", f"{self.CLIENT}/demo-migration.md"):
+            status, rendered = self.request("GET", "/api/docs/render?id=" + quote(doc_id))
+            self.assertEqual(status, 200)
+            self.assertEqual((rendered["note"], rendered["deletable"], rendered["version"]), (False, False, None), doc_id)
+            self.assertEqual(self.request("DELETE", "/api/notes", {"id": doc_id, "version": "x"})[0], 400, doc_id)
+        note = self.request("GET", "/api/docs/render?id=" + quote(f"{self.CLIENT}/notes/2026-10-01-existing.md"))[1]
+        self.assertEqual((note["note"], note["deletable"]), (True, True))
+
+    def test_search_results_carry_the_type_of_the_document(self):
+        expected = {
+            f"{self.CLIENT}/demo-migration.md": "page", f"{self.INTERNAL}/setup.md": "page",
+            f"{self.CLIENT}/notes/2026-10-01-existing.md": "note", "inbox/2026-10-03-raw.md": "note",
+            f"{self.CLIENT}/sources/2026-10/2026-10-05-cr-kickoff.md": "source", f"{self.CLIENT}/sources/2026-10/2026-10-07-export/part-1.md": "source",
+            f"{self.CLIENT}/workstreams/architecture.md": "workstream", f"{self.CLIENT}/journal/2026-09.md": "journal",
+            # None of the five types: the index of a month, README files, state, scripts, the scratchpad, a client page, other files.
+            f"{self.CLIENT}/sources/2026-10/index.md": None, f"{self.CLIENT}/sources/2026-10/README.md": None, f"{self.CLIENT}/workstreams/README.md": None,
+            f"{self.CLIENT}/notes/README.md": None, f"{self.CLIENT}/notes/archive/2026-01-01-old.md": None, f"{self.CLIENT}/state/decisions.md": None,
+            f"{self.CLIENT}/scripts/tool.md": None, f"{self.CLIENT}/other.md": None, f"{self.CLIENT}/handoffs/2026-10-02-handoff.md": None,
+            "projects/clients/acme/acme.md": None, "inbox/inbox.md": None, "inbox/README.md": None, "inbox/sources/2026-10-03-stray.md": None,
+            "context/glossary.md": None,
+        }
+        for doc_id in expected:
+            with (self.brain / doc_id).open("a", encoding="utf-8") as handle:
+                handle.write("\nA quokka walked by.\n")
+        status, data = self.request("GET", "/api/search?q=quokka")
+        self.assertEqual(status, 200)
+        self.assertEqual({result["id"]: result["type"] for result in data["results"]}, expected)
+        self.assertTrue(all("type" in result for result in data["results"]))
+        # A search of one project keeps the field.
+        status, scoped = self.request("GET", "/api/search?q=quokka&project=" + quote(self.register))
+        self.assertEqual(status, 200)
+        self.assertEqual({result["id"]: result["type"] for result in scoped["results"]}, {doc_id: kind for doc_id, kind in expected.items() if doc_id.startswith(self.CLIENT)})
+        # The listing and the search tell the same type for every listed document.
+        listed = {doc["id"]: doc["type"] for doc in self.docs()}
+        self.assertEqual({doc_id: kind for doc_id, kind in expected.items() if kind}, {doc_id: listed[doc_id] for doc_id, kind in expected.items() if kind})
+
+    def test_empty_brain_and_unknown_brain(self):
+        empty = self.brain / "projects/internal/empty"
+        (empty / "state").mkdir(parents=True)
+        (empty / "state/actions.md").write_text("# Actions\n\n## Open\n- [ ] **EMP-001** — Jane — Nothing\n", encoding="utf-8")
+        self.assertNotIn("empty", {doc["project"] for doc in self.docs()})
+        self.assertEqual(self.request("GET", "/api/docs/list?brain=brain-unknown"), (400, {"error": "Unknown brain."}))
+        self.assertEqual(self.request("GET", "/api/docs/list?brain=brain&brain=brain")[0], 400)
+
+    def test_classifier_by_path_under_the_project_folder(self):
+        for relative, expected in (
+            ("sources/2026-10/2026-10-05-cr-a.md", "source"), ("sources/a.md", "source"), ("sources/2026-10/index.md", None), ("sources/index.md", None),
+            ("sources/2026-10/Index.MD", None), ("sources/README.md", None), ("sources/readme.md", None), ("sources/sub/INDEX.md", None),
+            ("workstreams/topic.md", "workstream"), ("workstreams/deep/topic.md", "workstream"), ("workstreams/README.md", None), ("workstreams/Readme.md", None),
+            ("journal/2026-09.md", "journal"), ("journal/old/2026-08.md", None),
+            ("demo.md", "page"), ("Demo.md", None), ("other.md", None), ("state/actions.md", None), ("scripts/demo.md", None),
+            ("notes/demo.md", "note"), ("notes/README.md", None), ("notes/readme.md", None), ("notes/archive/2026-01-01-old.md", None), ("notes", None),
+            ("handoffs/2026-10-02-x.md", None), ("sources.md", None), ("sources", None),
+        ):
+            self.assertEqual(tasks_web.doc_type(relative, "demo"), expected, relative)
+        for relative, expected in (("2026-10-03-raw.md", "note"), ("raw.md", "note"), ("README.md", None), ("inbox.md", None), ("sources/2026-10-03-x.md", None), ("notes/x.md", None)):
+            self.assertEqual(tasks_web.doc_type(relative, "inbox", inbox=True), expected, relative)
+        self.assertEqual(tasks_web.doc_date("2026-10-05-cr-a.md", self.day(2026, 1, 1)), "2026-10-05")
+        self.assertEqual(tasks_web.doc_date("2026-10-05", self.day(2026, 1, 1)), "2026-10-05")
+        self.assertEqual(tasks_web.doc_date("2026-02-30-x.md", self.day(2026, 1, 2)), "2026-01-02")
+        self.assertEqual(tasks_web.doc_date("topic.md", self.day(2026, 3, 4)), "2026-03-04")
+
+
 class WrittenFormatTest(unittest.TestCase):
     """What the interface writes into a brain file: the source of a new action and the header of a new note."""
     ENGLISH = "projects/clients/acme/missions/demo-migration"
@@ -3107,6 +3340,14 @@ class BrainSwitchTest(unittest.TestCase):
                 (self.root / name / "AGENTS.md").unlink()
             self.assertEqual(tasks_web.default_brain_dir(), self.root / "brain-initech")  # the only brain
 
+    def test_docs_list_follows_the_selected_brain(self):
+        (self.other / self.OTHER_PROJECT / "perso.md").write_text("# Personal page\n", encoding="utf-8")
+        self.assertEqual(self.request("GET", "/api/docs/list"), (200, {"docs": []}))
+        status, other = self.request("GET", "/api/docs/list?brain=brain-perso")
+        self.assertEqual(status, 200)
+        self.assertEqual([(doc["id"], doc["type"], doc["title"]) for doc in other["docs"]], [(f"{self.OTHER_PROJECT}/perso.md", "page", "Personal page")])
+        self.assertEqual(self.request("GET", "/api/docs/list?brain=brain"), (200, {"docs": []}))
+
     def test_default_brain_without_parameter_and_selected_brain_with_it(self):
         default = self.actions()
         self.assertEqual([action["id"] for action in default["actions"]], ["ALP-001"])
@@ -3132,7 +3373,7 @@ class BrainSwitchTest(unittest.TestCase):
 
     def test_unknown_brain_is_a_400_on_every_route(self):
         gets = ["/api/actions", "/api/actions/ALP-001/details", "/api/tools", "/api/notes", "/api/notes/content?id=x.md",
-                "/api/search?q=alpha", "/api/docs/render?id=x.md", "/api/docs/recent", "/api/git", "/api/git/changes?path=a.md", "/api/undo"]
+                "/api/search?q=alpha", "/api/docs/render?id=x.md", "/api/docs/recent", "/api/docs/list", "/api/git", "/api/git/changes?path=a.md", "/api/undo"]
         for path in gets:
             joiner = "&" if "?" in path else "?"
             status, data = self.request("GET", f"{path}{joiner}brain=brain-inconnu")
@@ -3552,21 +3793,49 @@ class TimelineViewTest(unittest.TestCase):
 
     def test_timeline_is_a_sidebar_view_right_after_the_board(self):
         views = re.findall(r'<button id="(\w+)" class="nav-item[^"]*" type="button" data-view="(\w+)" title="([^"]*)"', self.page)
-        self.assertEqual([view for _id, view, _title in views], ["today", "list", "board", "timeline", "notes", "search", "tools", "git"])
+        self.assertEqual([view for _id, view, _title in views], ["today", "list", "board", "timeline", "docs", "tools", "git"])  # Search is a field, not a view of the sidebar
         titles = {view: title for _id, view, title in views}
-        self.assertEqual([titles[view] for view in ("timeline", "notes", "search")], ["Timeline (4)", "Notes (5)", "Search (6)"])
+        self.assertEqual([titles[view] for view in ("timeline", "docs")], ["Timeline (4)", "Docs (5)"])
         self.assertIn('<button id="timelineButton"', self.page)
-        self.assertIn("<kbd>1</kbd> to <kbd>6</kbd></dt><dd>Today, Actions, Board, Timeline, Notes, Search", self.page)
+        self.assertIn("<kbd>1</kbd> to <kbd>5</kbd></dt><dd>Today, Actions, Board, Timeline, Docs</dd>", self.page)
         self.assertIn("<kbd>Alt</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>On the Timeline: move the deadline by a day", self.page)
 
     def test_keyboard_scheme_follows_the_sidebar_order(self):
-        self.assertIn("const VIEWS = ['today', 'list', 'board', 'timeline', 'notes', 'search', 'tools', 'git'];", self.script)
-        self.assertIn("setView(['today', 'list', 'board', 'timeline', 'notes', 'search'][Number(digit) - 1]);", self.script)
-        self.assertIn("/^[1-6]$/.test(key)", self.script)
-        self.assertIn("/^Digit[1-6]$/.test(event.code)", self.script)
+        self.assertIn("const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'tools', 'git'];", self.script)
+        self.assertIn("setView(['today', 'list', 'board', 'timeline', 'docs'][Number(digit) - 1]);", self.script)
+        self.assertIn("/^[1-5]$/.test(key)", self.script)
+        self.assertIn("/^Digit[1-5]$/.test(event.code)", self.script)
         # The timeline is an action view: filters, j/k, Enter, the detail panel and the quick edits work there as in the list and the board.
         self.assertRegex(self.script, r"const ACTION_VIEWS = \[[^\]]*'timeline'[^\]]*\];")
         self.assertIn("timeline: 'timelineButton'", self.script)
+
+    def test_search_is_one_global_field_with_a_results_page(self):
+        # One field in the header, the same in every view: no Search button, no second field for the documents or the tools.
+        self.assertIn('<input id="searchInput" type="search" placeholder="Search actions and documents"', self.page)
+        for gone in ('id="searchButton"', 'id="docQuery"', 'id="toolSearch"', "Filter actions", "Filter tools"):
+            self.assertNotIn(gone, self.page)
+        self.assertNotIn("search: 'searchButton'", self.script)
+        self.assertNotIn("view-searchless", self.script + self.styles)
+        # `search` stays an internal view: never restored, never saved as the view to come back to.
+        self.assertIn("const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'tools', 'git'];", self.script)
+        self.assertIn("VIEWS.includes(savedUI.view) && savedUI.view !== 'search'", self.script)
+        self.assertIn("view: view === 'search' ? searchReturn : view,", self.script)
+        # A query shows the results page, an empty field or Esc goes back to the view it left; any other view ends the search.
+        self.assertIn("searchReturn = view;\n    setView('search', false);", self.script)
+        self.assertIn("function leaveSearch() {", self.script)
+        self.assertIn("event.key === 'Escape' && (ids.searchInput.value || view === 'search')", self.script)
+        self.assertIn("if (next !== 'search' && ids.searchInput.value) {", self.script)
+        # Two sections, actions first, then the documents of /api/search (all types); the recent list of the former tab is gone.
+        results = self.script[self.script.index("function renderSearchResults()"):self.script.index("function renderDocList()")]
+        self.assertLess(results.index("searchHead('Actions'"), results.index("searchHead('Documents'"))
+        self.assertIn("snapshot.actions.filter(action => docScopeMatch(action) && actionMatches(action, terms))", results)
+        self.assertIn("const SEARCH_ACTION_LIMIT = 50;", self.script)
+        self.assertIn("/api/search?", self.script)
+        self.assertNotIn("/api/docs/recent", self.script)
+        self.assertNotIn("Recently modified", self.script)
+        # The chips of the Docs view do not apply to the results page; Location and the sidebar project do.
+        self.assertIn("ids.docTypeChip.hidden = !docsList;", self.script)
+        self.assertIn("ids.docProjectChip.hidden = !docs;", self.script)
 
     def test_timeline_markup(self):
         view = self.page[self.page.index('<div id="timelineView"'):self.page.index('<div id="docsView"')]
@@ -3611,6 +3880,57 @@ class TimelineViewTest(unittest.TestCase):
         # Dates are formatted like the rest of the app (the browser's locale, through the shared formatters), never capitalised by the style.
         self.assertIn("new Intl.DateTimeFormat(LOCALE,", self.script)
         self.assertNotIn("text-transform: capitalize", self.styles)
+
+    def test_chips_mark_their_deadline_and_light_up_their_due_day(self):
+        for fragment in ("const due = element('span', 'tl-due');", "cell.dataset.col = String(entry.column);", "cell.style.setProperty('--due-w',", "entry.dueW ? ' has-due' : ''",
+                         "entry.flip ? ' is-flip' : ''", "function lightDueDay(cell) {", "ids.timelineScroll.addEventListener('pointerover'", "ids.timelineScroll.addEventListener('focusin'",
+                         "ids.timelineScroll.addEventListener('focusout'", "cell.dataset.day = String(day.index);", "absolute('tl-dueday', left, width)", "classList.add('is-due')",
+                         "TimelineView.ownerLabels(snapshot.actions.map(action => action.owner))", "TimelineView.firstName(action.owner)",
+                         "const chipW = wide ? 170 : 140;", "labelW: wide ? 200 : 140", "chipW: quarter ? chipW - 30 : chipW", "minChipW: quarter ? 72 : wide ? 96 : 84",
+                         "minChipW: metrics.minChipW", "entry.dueW && entry.w < TL.tight ? ' is-tight' : ''"):
+            self.assertIn(fragment, self.script)
+        self.assertNotIn("TimelineView.initials", self.script)
+        # The mark is the due day itself (as wide as its column, in the status colour, with a solid edge) at the end of the chip; a flipped chip has it at its start.
+        for rule in (".tl-due {", ".tl-due::before {", ".tl-due::after {", ".tl-cell.is-flip .tl-due {", ".tl-cell.has-due .tl-chip {", "width: calc(var(--due-w) - 1px);",
+                     ".tl-cell.is-tight .tl-who { display: none; }", ".tl-dueday {", ".tl-dueday-head {", ".tl-day.is-due,", "-webkit-line-clamp: 3;", ".tl-cell { position: absolute; z-index: 3; height: 72px;"):
+            self.assertIn(rule, self.styles)
+        self.assertIn("const TL = {chipH: 72,", self.script)
+        # The label shows the client and the mission in full (they wrap), and the count of undated actions is a pill that opens the tray on the project.
+        label = self.styles[self.styles.index(".tl-label-client {"):self.styles.index(".tl-label-add {")]
+        self.assertNotIn("ellipsis", label)
+        self.assertIn(".tl-label-count { border: 1px solid var(--line); background: var(--bg-sunken);", label)
+        self.assertIn("showTray(lane.project, lane.register)", self.script)
+        self.assertIn("node.style.minHeight =", self.script)  # a lane grows with its label
+
+    def test_tray_rows_are_one_line_and_project_groups_fold(self):
+        for fragment in ("const line = element('span', 'tl-card-line');", "element('span', 'tl-card-id', action.id), element('span', 'tl-card-title', action.title)", "element('span', 'tl-card-note', text)",
+                         "const toggle = element('button', 'tl-group-toggle');", "toggle.setAttribute('aria-expanded', String(!folded));", "toggle.setAttribute('aria-controls', list.id);",
+                         "const key = `${kind}|${group.register}`;", "timelineFolded: [...timelineFolded]", "savedUI.timelineFolded.filter(key => typeof key === 'string')",
+                         "function visibleTrayCards()", "traySection('vague', 'Vague deadlines'", "traySection('none', 'No deadline'", "list.hidden = now;",
+                         "timelineFolded.delete(`${kind}|${register}`)", "card.offsetParent !== null"):
+            self.assertIn(fragment, self.script)
+        self.assertEqual(self.script.count("timelineFolded.clear();"), 2)  # tray folds belong to the brain, like the other folds
+        self.assertLess(self.script.index("traySection('vague', 'Vague deadlines'"), self.script.index("traySection('none', 'No deadline'"))  # vague deadlines first
+        # No more big cards: a row is 28 px, on one line (title, owner and calendar button); a vague wording is a second small italic line
+        # under the title, never beside it, so the title keeps the width; the tray never takes more than 40% of the view, and its body scrolls.
+        for rule in (".tl-card { position: relative; min-height: 28px;", ".tl-card-line { display: flex; align-items: center; gap: 8px; min-width: 0; height: 26px; }",
+                     ".tl-card-title { flex: 1 1 0; min-width: 4ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
+                     ".tl-card-note { display: block; min-width: 0;", "padding: 0 0 3px 84px;", ".tl-group-toggle[aria-expanded=\"false\"] .fold-chevron { transform: rotate(-90deg); }",
+                     ".tl-tray { flex: 0 0 auto; max-height: 40%;", ".tl-tray-body { flex: 1 1 auto; min-height: 0; overflow-y: auto;"):
+            self.assertIn(rule, self.styles)
+        self.assertNotIn(".tl-card-main { width: 100%; padding-right: 30px; }", self.styles)
+        self.assertNotIn("max-width: 42%", self.styles)  # the wording no longer competes with the title on its line
+        line = self.script[self.script.index("function trayCard("):self.script.index("function traySection(")]
+        self.assertLess(line.index("main.append(line);"), line.index("main.append(element('span', 'tl-card-note', text));"))
+        self.assertLess(line.index("line.append(badge);"), line.index("main.append(line);"))  # the owner stays on the first line
+        self.assertIn("Drag a row onto a day to plan it.", self.page)
+
+    def test_the_search_field_is_wide_enough_for_its_placeholder_on_wide_pages_and_shrinks_on_narrow_ones(self):
+        self.assertIn(".search-field { position: relative; display: flex; align-items: center; width: 290px; }", self.styles)
+        narrow = self.styles[self.styles.index("@container main (max-width: 980px) {"):]
+        self.assertIn(".search-field { width: 240px; }", narrow[:narrow.index("}\n@container")])
+        self.assertIn(".search-field { width: 200px; }", self.styles)  # as before, from 820 px down
+        self.assertIn(".search-field { flex: 1 1 auto; width: auto; }", self.styles)  # the whole row on a phone
 
     def test_planning_by_dragging_and_by_keyboard_goes_through_the_due_date_update(self):
         # A chip or a tray card is dragged onto a day, a chip back onto the tray; Alt+arrows move the deadline; all of them are `updateDue`,
@@ -3741,18 +4061,19 @@ class TimelineViewTest(unittest.TestCase):
             action("LAB-001", self.LAB, "initech / lab", state="-"),
         ]
 
-    # Lanes in register order (globex, acme, internal, initech), as the page gives them; the axis is the one of a 1192 px page.
+    # Lanes in register order (globex, acme, internal, initech), as the page gives them; the axis is the one of a 1192 px page (200 px of
+    # project labels, 148 of overdue zone, chips 170 px wide, 96 at the least near the left edge).
     SETUP = """
       const T = require(process.argv[1]);
       const {actions, showDone} = JSON.parse(require('fs').readFileSync(0, 'utf8'));
       const range = T.range('2026-10-25');
-      const sc = T.scale({width: 1192, weeks: 6, key: 'six'});
+      const sc = T.scale({width: 1192, weeks: 6, key: 'six', labelW: 200});
       const order = ['projects/clients/globex/missions/pilot/state/actions.md', 'projects/clients/acme/missions/rollout/state/actions.md',
         'projects/internal/setup/state/actions.md', 'projects/clients/initech/missions/lab/state/actions.md'];
-      const result = T.layout(actions, {today: '2026-10-25', start: range.start, end: range.end, showDone, order, scale: sc, chipW: 132});
+      const result = T.layout(actions, {today: '2026-10-25', start: range.start, end: range.end, showDone, order, scale: sc, chipW: 170, minChipW: 96});
     """
     LAYOUT = SETUP + """
-      const entry = e => [e.id, e.column, e.track, e.x, e.w, e.flip, e.overdue, e.done, e.sched, e.marker && e.marker.x];
+      const entry = e => [e.id, e.column, e.track, e.x, e.w, e.flip, e.overdue, e.done, e.sched, e.marker && e.marker.x, e.dueW];
       process.stdout.write(JSON.stringify({
         lanes: result.lanes.map(lane => ({project: lane.project, tracks: lane.tracks, lateTracks: lane.lateTracks, open: lane.open, undated: lane.undated, entries: lane.entries.map(entry)})),
         late: result.late.map(e => e.id), later: result.later.map(a => a.id), total: result.total
@@ -3768,24 +4089,153 @@ class TimelineViewTest(unittest.TestCase):
         # Each lane counts its open actions and the undated ones among them (a vague wording, a text due date, a scheduled date alone, nothing).
         self.assertEqual((globex["open"], globex["undated"], acme["open"], acme["undated"], setup["open"], setup["undated"]), (2, 0, 11, 4, 2, 2))
         self.assertEqual((setup["tracks"], setup["entries"]), (0, []))
-        # A chip starts on its day (x is the left edge of its column) and runs 132 px to the right: the two of globex overlap, so they stack.
+        # The deadline is where a chip ends: its right edge is the right edge of its day (x + w), and it runs 170 px to the left, the two
+        # of globex overlap, so they stack. `dueW` (last value) is the width of the due day: the deadline mark at the chip's end.
         self.assertEqual(globex["tracks"], 2)
-        self.assertEqual(globex["entries"], [["GLO-001", 12, 0, 264, 132, False, 1, False, "", None], ["GLO-002", 13, 1, 281, 132, False, 0, False, "", None]])
-        # Acme, by date then ID: ACM-003 is before the range (the overdue zone, column -1, stacked there), ACM-004 is a Saturday and overdue,
-        # ACM-012 is scheduled the day it is due (an hourglass on the chip, no marker), ACM-001 is scheduled on the 27th (a marker at its
-        # day, joined to the chip) and shares its day with ACM-002 (a third track), ACM-015 is on the last week and would leave the range
-        # to the right: it ends on its day instead (flip).
+        self.assertEqual(globex["entries"], [["GLO-001", 12, 0, 95, 170, False, 1, False, "", None, 16], ["GLO-002", 13, 1, 111, 170, False, 0, False, "", None, 16]])
+        # Acme, by date then ID: ACM-003 is before the range (the overdue zone, column -1, stacked there), ACM-004 is a Saturday, overdue,
+        # and so close to the left edge that its day ends at 124 px, less than the 170 of a chip: the chip shrinks to that room (x = 0, still
+        # ending on its day, not flipped), ACM-012 is scheduled the day it is due (an hourglass on the chip, no marker) and fits on the
+        # same track, ACM-001 is scheduled on the 27th, which falls under its chip (no marker: the chip carries the hourglass) and shares
+        # its day with ACM-002 (a second and a third track).
         self.assertEqual(acme["tracks"], 3)
         self.assertEqual(acme["lateTracks"], 1)
         self.assertEqual(acme["entries"], [
-            ["ACM-003", -1, 0, 0, 0, False, 22, False, "", None], ["ACM-004", 5, 0, 115, 132, False, 8, False, "", None],
-            ["ACM-012", 14, 0, 298, 132, False, 0, False, "same", None], ["ACM-001", 18, 1, 390, 132, False, 0, False, "before", 333],
-            ["ACM-002", 18, 2, 390, 132, False, 0, False, "", None], ["ACM-015", 39, 0, 728, 132, True, 0, False, "", None]])
+            ["ACM-003", -1, 0, 0, 0, False, 22, False, "", None, 0], ["ACM-004", 5, 0, 0, 124, False, 8, False, "", None, 16],
+            ["ACM-012", 14, 0, 133, 170, False, 0, False, "same", None, 22], ["ACM-001", 18, 1, 220, 170, False, 0, False, "before", None, 22],
+            ["ACM-002", 18, 2, 220, 170, False, 0, False, "", None, 22], ["ACM-015", 39, 0, 642, 170, False, 0, False, "", None, 22]])
         self.assertEqual(got["late"], ["ACM-003"])
         self.assertEqual(got["later"], ["ACM-008"])
         self.assertEqual(got["total"], 8)
         shown = {entry[0] for lane in got["lanes"] for entry in lane["entries"]}
         self.assertTrue({"ACM-005", "ACM-006", "ACM-007", "ACM-009", "ACM-010", "ACM-011", "ACM-013", "ACM-014", "LAB-001"}.isdisjoint(shown))
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_chip_ends_on_its_due_day_in_every_range_and_width_and_tracks_never_overlap(self):
+        # One chip on every day of the range (three on some days, some scheduled five days earlier), for the three ranges, four page widths
+        # and the chip widths of the page: the deadline is where the chip ends, so the right edge of a chip is the right edge of its day, and
+        # its width is the whole chip, or the room it has when that is less (never under the least width); only with less room than that does
+        # a chip start on its day instead (flip), and the chips of one track never touch.
+        got = node_json("""
+          const T = require(process.argv[1]);
+          const today = '2026-10-25';
+          const problems = [];
+          const seen = {placed: 0, ended: 0, flipped: 0, shrunk: 0, markers: 0, tracks: 0};
+          for (const key of ['two', 'six', 'quarter']) {
+            for (const width of [700, 900, 1192, 2400]) {
+              for (const [labelW, lateW, chipW, minChipW] of [[200, 148, 170, 96], [200, 148, 140, 96], [140, 120, 140, 84], [140, 120, 110, 72]]) {
+                const weeks = {two: 2, six: 6, quarter: 13}[key];
+                const range = T.range(today, key);
+                const sc = T.scale({width, weeks, key, labelW, lateW});
+                const actions = [];
+                range.days.forEach((day, index) => {
+                  for (let n = 0; n < (index % 9 === 4 ? 3 : 1); n += 1) {
+                    actions.push({id: 'ACM-' + String(index * 10 + n).padStart(4, '0'), state: ' ', owner: 'Jane Doe', title: 'x', register: 'r', project: 'acme / rollout', priority: '',
+                      due: day.iso, scheduled: index % 3 === 0 && index > 5 ? range.days[index - 5].iso : '', done: '', due_note: ''});
+                  }
+                });
+                const result = T.layout(actions, {today, start: range.start, end: range.end, order: [], scale: sc, chipW, minChipW, gap: 6});
+                const tag = [key, width, chipW, minChipW].join('/');
+                const full = Math.min(chipW, sc.total);
+                const least = Math.min(minChipW, full);
+                for (const lane of result.lanes) {
+                  const byTrack = new Map();
+                  for (const e of lane.entries.filter(item => !item.late)) {
+                    seen.placed += 1;
+                    const [from, right] = [sc.xs[e.column], sc.xs[e.column + 1]];
+                    if (e.flip) {
+                      seen.flipped += 1;
+                      if (e.x !== from) problems.push(tag + ' flip does not start on its day ' + e.id);
+                      if (!(right < least)) problems.push(tag + ' flipped with room ' + e.id);
+                      if (e.w !== Math.min(least, sc.total - from)) problems.push(tag + ' flipped width ' + e.id);
+                    } else {
+                      seen.ended += 1;
+                      if (e.x + e.w !== right) problems.push(tag + ' does not end on its day ' + e.id + ' ' + (e.x + e.w) + ' vs ' + right);
+                      if (e.w < least) problems.push(tag + ' narrower than the least ' + e.id);
+                      if (e.w !== full && e.x !== 0) problems.push(tag + ' shrunk with room ' + e.id);
+                      if (e.w < full) { seen.shrunk += 1; if (e.w !== right) problems.push(tag + ' shrunk to less than its room ' + e.id); }
+                    }
+                    if (e.x < 0 || e.x + e.w > sc.total) problems.push(tag + ' leaves the range ' + e.id);
+                    if (e.dueW !== Math.min(right - from, e.w) || e.dueW <= 0) problems.push(tag + ' due mark ' + e.id);
+                    if (e.marker) { seen.markers += 1; if (e.marker.x > e.x - 6) problems.push(tag + ' marker under its chip ' + e.id); }
+                    const box = [e.marker ? Math.min(e.x, e.marker.x - 9) : e.x, e.x + e.w];
+                    byTrack.set(e.track, [...(byTrack.get(e.track) || []), box]);
+                  }
+                  if (lane.tracks !== byTrack.size) problems.push(tag + ' track count');
+                  seen.tracks = Math.max(seen.tracks, lane.tracks);
+                  for (const boxes of byTrack.values()) {
+                    boxes.sort((a, b) => a[0] - b[0]);
+                    boxes.forEach((box, at) => { if (at && box[0] < boxes[at - 1][1] + 6) problems.push(tag + ' overlap ' + boxes[at - 1] + ' ' + box); });
+                  }
+                }
+              }
+            }
+          }
+          process.stdout.write(JSON.stringify({problems: problems.slice(0, 5), seen}));
+        """)
+        self.assertEqual(got["problems"], [])
+        seen = got["seen"]
+        self.assertGreater(seen["ended"], 1000)  # the rule, in volume
+        self.assertGreater(seen["shrunk"], 20)  # near the left edge a chip shrinks to its room first
+        self.assertGreater(seen["flipped"], 20)  # and only under the least width does it flip
+        self.assertGreater(seen["markers"], 100)
+        self.assertGreater(seen["tracks"], 3)
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_chip_near_the_left_edge_shrinks_to_its_room_and_flips_only_under_the_least_width(self):
+        got = node_json("""
+          const T = require(process.argv[1]);
+          const range = T.range('2026-10-25');
+          const sc = T.scale({width: 1192, weeks: 6, key: 'six', labelW: 200});
+          const actions = range.days.slice(0, 10).map((day, index) => ({id: 'ACM-' + String(index).padStart(3, '0'), state: ' ', owner: 'Jane Doe', title: 'x', register: 'r',
+            project: 'acme / rollout', priority: '', due: day.iso, scheduled: '', done: '', due_note: ''}));
+          const place = options => T.layout(actions, {today: '2026-10-25', start: range.start, end: range.end, order: [], scale: sc, ...options}).lanes[0].entries
+            .map(e => [e.column, e.flip, e.x, e.w, e.x + e.w, e.dueW]);
+          process.stdout.write(JSON.stringify({xs: sc.xs.slice(0, 11), normal: place({chipW: 170, minChipW: 96}), tight: place({chipW: 170, minChipW: 60}), wide: place({chipW: 60, minChipW: 40})}));
+        """)
+        # The days end at 22, 43, 65, 87, 108, 124, 141, 162, 184, 206 px. With a chip of 170 and a least width of 96: the four first days have
+        # less than 96 px on their left, so their chips start on the day and run right 96 px (flip, the due mark at their start); the next ones
+        # shrink to the room they have (x = 0, w = the end of their day, so they still end on it) until a day ends at 170 px or more.
+        self.assertEqual(got["xs"], [0, 22, 43, 65, 87, 108, 124, 141, 162, 184, 206])
+        self.assertEqual(got["normal"], [[0, True, 0, 96, 96, 22], [1, True, 22, 96, 118, 21], [2, True, 43, 96, 139, 22], [3, True, 65, 96, 161, 22],
+                                         [4, False, 0, 108, 108, 21], [5, False, 0, 124, 124, 16], [6, False, 0, 141, 141, 17], [7, False, 0, 162, 162, 21],
+                                         [8, False, 14, 170, 184, 22], [9, False, 36, 170, 206, 22]])
+        # A lower least width lets more chips shrink instead of flipping; a chip narrower than the least width is never wider than itself.
+        self.assertEqual([entry[1] for entry in got["tight"]], [True, True, False, False, False, False, False, False, False, False])
+        self.assertEqual([entry[4] for entry in got["tight"][2:8]], [65, 87, 108, 124, 141, 162])
+        # A chip of 60 with a least width of 40: the first day (22 px) flips at 40, the second shrinks to its 43 px, the third has room for all 60.
+        self.assertEqual([entry[3] for entry in got["wide"]][:3], [40, 43, 60])
+        self.assertEqual([entry[1] for entry in got["wide"]][:3], [True, False, False])
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_scheduled_marker_is_drawn_left_of_the_chip_and_dropped_when_it_would_sit_under_it(self):
+        got = node_json("""
+          const T = require(process.argv[1]);
+          const range = T.range('2026-10-25');
+          const sc = T.scale({width: 1192, weeks: 6, key: 'six', labelW: 200});
+          const action = (id, fields) => ({id, state: ' ', owner: 'Jane Doe', title: id, register: 'r', project: 'acme / rollout', priority: '', due: '', scheduled: '', done: '', due_note: '', ...fields});
+          const result = T.layout([
+            action('ACM-001', {due: '2026-11-20', scheduled: '2026-10-19'}),  // eight days before the chip starts: drawn
+            action('ACM-002', {due: '2026-10-30', scheduled: '2026-10-27'}),  // under its chip: dropped, the chip carries the hourglass
+            action('ACM-003', {due: '2026-10-13', scheduled: '2026-10-12'}),  // a chip that starts on its day (under the least width on its left): left of it
+            action('ACM-006', {due: '2026-10-17', scheduled: '2026-10-14'}),  // a chip shrunk to its room (x = 0): nothing is left of it, no marker
+            action('ACM-004', {due: '2026-11-12', scheduled: '2026-09-01'}),  // before the range: no marker
+            action('ACM-005', {due: '2026-11-05', scheduled: '2026-11-09'})   // after the due date: no marker
+          ], {today: '2026-10-25', start: range.start, end: range.end, order: [], scale: sc, chipW: 170});
+          const by = Object.fromEntries(result.lanes[0].entries.map(e => [e.id, {x: e.x, w: e.w, flip: e.flip, sched: e.sched, marker: e.marker && e.marker.x}]));
+          process.stdout.write(JSON.stringify({by, mid: [sc.xs[7], sc.xs[8]], right: sc.xs[6]}));
+        """)
+        by = got["by"]
+        self.assertEqual(by["ACM-001"]["sched"], "before")
+        self.assertEqual(by["ACM-001"]["marker"], round(sum(got["mid"]) / 2))  # the middle of the 19th
+        self.assertLess(by["ACM-001"]["marker"], by["ACM-001"]["x"] - 6)
+        self.assertEqual((by["ACM-002"]["sched"], by["ACM-002"]["marker"]), ("before", None))
+        self.assertTrue(by["ACM-003"]["flip"])
+        self.assertIsNotNone(by["ACM-003"]["marker"])
+        self.assertLess(by["ACM-003"]["marker"], by["ACM-003"]["x"] - 6)
+        self.assertEqual((by["ACM-006"]["flip"], by["ACM-006"]["x"], by["ACM-006"]["w"], by["ACM-006"]["sched"], by["ACM-006"]["marker"]), (False, 0, got["right"], "before", None))
+        self.assertEqual((by["ACM-004"]["sched"], by["ACM-004"]["marker"]), ("before", None))
+        self.assertEqual((by["ACM-005"]["sched"], by["ACM-005"]["marker"]), ("after", None))
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_done_actions_show_on_request_at_their_done_date(self):
@@ -3835,12 +4285,19 @@ class TimelineViewTest(unittest.TestCase):
         self.assertEqual(got["nothing"]["counts"], {"vague": 0, "none": 0})
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
-    def test_initials_for_chips_of_other_owners(self):
+    def test_chips_name_other_owners_by_their_first_name(self):
         got = node_json("""
           const T = require(process.argv[1]);
-          process.stdout.write(JSON.stringify(['Jane Doe', 'John Smith', 'Marie-Claire de la Poe', 'Mary', 'Zoe', '', '  Sam   Poe  ', null].map(T.initials)));
+          process.stdout.write(JSON.stringify({
+            first: ['Jane Doe', 'John Smith', 'Marie-Claire de la Poe', 'Mary', '', '  Sam   Poe  ', null].map(T.firstName),
+            labels: Object.fromEntries(T.ownerLabels(['Jane Doe', 'Jane Roe', 'John Smith', 'Jane Doe', 'Mary', '', null, 'Zoe Poe', 'Zoe Poe ', 'Jane'])),
+            none: [...T.ownerLabels([])]
+          }));
         """)
-        self.assertEqual(got, ["JD", "JS", "MP", "MA", "ZO", "", "SP", ""])
+        self.assertEqual(got["first"], ["Jane", "John", "Marie-Claire", "Mary", "", "Sam", ""])
+        # Two owners with the same first name get the initial of their last name, so two people never look alike; the others stay short.
+        self.assertEqual(got["labels"], {"Jane Doe": "Jane D.", "Jane Roe": "Jane R.", "John Smith": "John", "Mary": "Mary", "Zoe Poe": "Zoe", "Zoe Poe ": "Zoe", "Jane": "Jane"})
+        self.assertEqual(got["none"], [])
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_arrow_keys_walk_a_project_by_date_and_change_project_on_the_closest_date(self):
@@ -3854,7 +4311,7 @@ class TimelineViewTest(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_agenda_lists_each_day_with_its_chips_and_markers(self):
-        got = node_json(self.SETUP.replace("scale: sc, chipW: 132", "scale: null") + """
+        got = node_json(self.SETUP.replace("scale: sc, chipW: 170", "scale: null") + """
           const agenda = T.agenda(result, range.days);
           process.stdout.write(JSON.stringify({days: agenda.length,
             agenda: agenda.filter(d => d.entries.length || d.markers.length).map(d => [d.day.iso, d.entries.map(e => e.id), d.markers.map(e => e.id)])}));

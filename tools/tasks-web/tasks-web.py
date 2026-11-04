@@ -5,7 +5,7 @@
 #   "markdown-it-py==3.0.0",
 # ]
 # ///
-"""Serve a private, local action manager (Today, list and board views, notes, search, tools, Sync) backed by brain action registers.
+"""Serve a private, local action manager (Today, list and board views, docs, search, tools, Sync) backed by brain action registers.
 
 Run from Work with: uv run tools/tasks-web/tasks-web.py
 Only listens on 127.0.0.1. The Markdown registers remain the source of truth.
@@ -268,6 +268,38 @@ def note_summary(text: str, fallback: str) -> tuple[str, str]:
     if len(excerpt) > NOTE_EXCERPT_LIMIT:
         excerpt = excerpt[:NOTE_EXCERPT_LIMIT].rstrip() + "…"
     return title, excerpt
+
+
+def doc_date(name: str, mtime: float) -> str:
+    """The `YYYY-MM-DD` prefix of a file name when it is a real date, else the modification day (Europe/Paris)."""
+    match = NOTE_DATE_PREFIX_RE.match(name)
+    if match:
+        try:
+            datetime.strptime(match.group(1), "%Y-%m-%d")
+            return match.group(1)
+        except ValueError:
+            pass
+    return datetime.fromtimestamp(mtime, ZoneInfo("Europe/Paris")).date().isoformat()
+
+
+def doc_type(relative: str, project: str, inbox: bool = False) -> str | None:
+    """The type of a document from its path under the folder of its project (or under `inbox/`): note, source, workstream, journal or page; None for the rest.
+
+    Notes are the files `notes/*.md` of a project and `inbox/*.md`, README files and the inbox scratchpad apart: the rule of `Store.notes()`.
+    """
+    parts = relative.split("/")
+    name = parts[-1].lower()
+    if inbox:
+        return "note" if len(parts) == 1 and name not in {"readme.md", INBOX_FILE} else None
+    if parts[0] == "notes" and len(parts) == 2:
+        return None if name == "readme.md" else "note"
+    if parts[0] == "sources" and len(parts) > 1:
+        return None if name in {"index.md", "readme.md"} else "source"
+    if parts[0] == "workstreams" and len(parts) > 1:
+        return None if name == "readme.md" else "workstream"
+    if parts[0] == "journal" and len(parts) == 2:
+        return "journal"
+    return "page" if len(parts) == 1 and parts[0] == f"{project}.md" else None
 
 
 parse_action = action_tool.parse_action
@@ -1614,14 +1646,7 @@ class Store:
 
     @staticmethod
     def _note_date(path: Path) -> str:
-        match = NOTE_DATE_PREFIX_RE.match(path.name)
-        if match:
-            try:
-                datetime.strptime(match.group(1), "%Y-%m-%d")
-                return match.group(1)
-            except ValueError:
-                pass
-        return datetime.fromtimestamp(path.stat().st_mtime, ZoneInfo("Europe/Paris")).date().isoformat()
+        return doc_date(path.name, path.stat().st_mtime)
 
     def _note_files(self) -> list[tuple[Path, str, str]]:
         """Note files as (path, project label, register path); symlinks, archives, README files and the inbox scratchpad are skipped. Inbox notes use INBOX_REGISTER."""
@@ -1927,12 +1952,45 @@ class Store:
                 break
         return {"docs": docs}
 
+    @staticmethod
+    def _doc_kind(doc_id: str, owner: tuple[str, str] | None, folders: dict[str, str]) -> str | None:
+        """The type of a catalogue file (see `doc_type`); None outside the projects and the Inbox. `folders` maps a register path to its folder."""
+        if owner is None:
+            return None
+        folder = folders[owner[1]]
+        return doc_type(doc_id[len(folder) + 1:], posixpath.basename(folder), inbox=owner[1] == INBOX_REGISTER)
+
+    def doc_list(self) -> dict:
+        """The Docs view: the working notes (as `notes()` lists them) and the sources, workstreams, journal files and project pages of each project, newest first.
+
+        A file belongs to the project whose folder is the longest prefix of its path. `state/`, `scripts/`, `handoffs/`, the other files of the
+        Inbox and the rest of the brain are not listed.
+        """
+        items = [{**note, "type": "note"} for note in self.notes()["notes"]]
+        projects = self._doc_projects()
+        folders = {register: folder for folder, _, register in projects}
+        for entry in self.docs():
+            owner = self._doc_project(entry.id, projects)
+            kind = self._doc_kind(entry.id, owner, folders)
+            if kind in {None, "note"}:  # the notes come from `notes()`
+                continue
+            items.append({
+                "id": entry.id, "title": entry.title, "project": owner[0], "register": owner[1],
+                "date": doc_date(posixpath.basename(entry.id), entry.mtime),
+                "modified": datetime.fromtimestamp(entry.mtime, ZoneInfo("Europe/Paris")).isoformat(timespec="seconds"),
+                "excerpt": note_summary(split_front_matter(entry.text)[1], entry.title)[1], "size": entry.key[1], "type": kind,
+            })
+        items.sort(key=lambda item: item["title"].casefold())
+        items.sort(key=lambda item: item["date"], reverse=True)
+        return {"docs": items}
+
     def search(self, query: str, project: str) -> dict:
         terms = parse_query(query)
         empty = {"query": query, "terms": terms, "results": [], "total": 0, "truncated": False}
         if not terms:
             return empty
         projects = self._doc_projects()
+        folders = {register: folder for folder, _, register in projects}
         now = datetime.now().timestamp()
         matches: list[tuple[float, str, DocEntry, tuple[str, str] | None]] = []
         for entry in self.docs():
@@ -1955,7 +2013,7 @@ class Store:
         matches.sort(key=lambda item: (-item[0], item[1]))
         results = [{
             "id": entry.id, "title": entry.title, "project": owner[0] if owner else None, "register": owner[1] if owner else None,
-            "snippets": doc_snippets(entry, terms), "score": score,
+            "type": self._doc_kind(entry.id, owner, folders), "snippets": doc_snippets(entry, terms), "score": score,
         } for score, _, entry, owner in matches[:SEARCH_RESULT_LIMIT]]
         return {**empty, "results": results, "total": len(matches), "truncated": len(matches) > SEARCH_RESULT_LIMIT}
 
@@ -2057,7 +2115,7 @@ class Handler(BaseHTTPRequestHandler):
         if path in {"/api/notes", "/api/notes/content", "/api/notes/backlinks"}:
             self._notes_request(path, store)
             return
-        if path in {"/api/search", "/api/docs/render", "/api/docs/recent"}:
+        if path in {"/api/search", "/api/docs/render", "/api/docs/recent", "/api/docs/list"}:
             self._docs_request(path, store)
             return
         if path == "/api/undo":
@@ -2103,6 +2161,9 @@ class Handler(BaseHTTPRequestHandler):
                 result = store.search(one("q", ""), one("project", ""))
             elif path == "/api/docs/recent":
                 result = store.recent_docs(one("project", ""))
+            elif path == "/api/docs/list":
+                with WRITE_LOCK:  # the notes half is read as `/api/notes` reads it
+                    result = store.doc_list()
             else:
                 result = store.render_doc(one("id"))
             self._json(HTTPStatus.OK, result)
