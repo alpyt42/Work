@@ -8,6 +8,7 @@
 
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -17,6 +18,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -676,6 +678,184 @@ class TasksWebTest(unittest.TestCase):
         self.assertEqual(status, 404)
 
 
+class SubtasksTest(unittest.TestCase):
+    """The subtasks of an action through the API: the snapshot field, the five writes, the lock, the refusals, the close warning, undo."""
+    REGISTER = ("# Actions\n\n## Open\n"
+                "- [ ] **ACM-001** — Jane Doe — Prepare the globex demo 📅 2026-11-20\n    - source: kickoff notes\n    - 10/11: asked for the room\n"
+                "- [ ] **ACM-002** — Jane Doe — Plain action\n    - source: kickoff notes\n\n## Done\n")
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        clock = patch.dict(os.environ, {"ACTION_NOW": "2026-11-11 10:00"})  # the tool runs as a command: it reads the clock from there
+        clock.start()
+        self.addCleanup(clock.stop)
+        self.brain = Path(self.temp.name) / "brain"
+        self.register = self.brain / "projects/clients/acme/missions/demo/state/actions.md"
+        self.register.parent.mkdir(parents=True)
+        self.register.write_text(self.REGISTER, encoding="utf-8")
+        (self.brain / ".data").mkdir()
+        (self.brain / ".data/doctor.json").write_text('{"owner":"Jane Doe"}', encoding="utf-8")
+        self.server = tasks_web.TaskServer(("127.0.0.1", 0), tasks_web.Store(self.brain))
+        thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (self.server.shutdown(), self.server.server_close(), thread.join(timeout=2)))
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+
+    def request(self, method, path, payload=None, token=True, origin=True):
+        return TasksWebTest.request(self, method, path, payload, token, origin)
+
+    def version(self, action_id="ACM-001"):
+        return self.request("GET", f"/api/actions/{action_id}/details")[1]["details_version"]
+
+    def add(self, text, **extra):
+        return self.request("POST", "/api/actions/ACM-001/subtasks", {"details_version": self.version(), "text": text, **extra})
+
+    def change(self, index, **change):
+        return self.request("PATCH", f"/api/actions/ACM-001/subtasks/{index}", {"details_version": self.version(), **change})
+
+    def texts(self, detail):
+        return [(item["text"], item["done"]) for item in detail.get("subtasks", [])]
+
+    def test_the_snapshot_carries_the_progress_and_the_texts_only_for_an_action_with_subtasks(self):
+        self.register.write_text(self.REGISTER.replace("📅 2026-11-20\n", "📅 2026-11-20\n    - [x] Book the room ✅ 2026-11-10\n    - [ ] Send the agenda\n"), encoding="utf-8")
+        actions = {action["id"]: action for action in self.request("GET", "/api/actions")[1]["actions"]}
+        self.assertEqual(actions["ACM-001"]["subtasks"], {"done": 1, "total": 2, "texts": ["Book the room", "Send the agenda"]})
+        self.assertNotIn("subtasks", actions["ACM-002"])
+        detail = self.request("GET", "/api/actions/ACM-001/details")[1]
+        self.assertEqual(detail["subtasks"], [{"index": 0, "text": "Book the room", "done": True, "done_on": "2026-11-10"},
+                                              {"index": 1, "text": "Send the agenda", "done": False, "done_on": ""}])
+        self.assertEqual((detail["subtasks_done"], detail["subtasks_total"]), (1, 2))
+        # The history leaves the subtasks out: its indices are the ones of the history routes.
+        self.assertEqual([note["text"] for note in detail["notes"]], ["- source: kickoff notes", "- 10/11: asked for the room"])
+
+    def test_add_tick_rename_move_and_remove_write_the_register_as_specified(self):
+        status, detail = self.add("Book the room")
+        self.assertEqual((status, self.texts(detail), detail["subtasks_total"], detail["unchanged"]), (201, [("Book the room", False)], 1, False))
+        self.add("Send the agenda")
+        status, detail = self.add("Print the badges", position=0)
+        self.assertEqual(self.texts(detail), [("Print the badges", False), ("Book the room", False), ("Send the agenda", False)])
+        status, detail = self.change(1, done=True)
+        self.assertEqual((status, detail["subtasks"][1]), (200, {"index": 1, "text": "Book the room", "done": True, "done_on": "2026-11-11"}))
+        before = self.register.read_bytes()
+        status, detail = self.change(1, done=True)  # already ticked: left as it is
+        self.assertEqual((status, detail["unchanged"], self.register.read_bytes()), (200, True, before))
+        status, detail = self.change(1, text="Book the large room")
+        self.assertEqual((status, detail["subtasks"][1]["text"], detail["subtasks"][1]["done"]), (200, "Book the large room", True))
+        status, detail = self.change(0, to=2)
+        self.assertEqual(self.texts(detail), [("Book the large room", True), ("Send the agenda", False), ("Print the badges", False)])
+        status, detail = self.request("DELETE", "/api/actions/ACM-001/subtasks/1", {"details_version": self.version()})
+        self.assertEqual((status, self.texts(detail), detail["subtasks_done"]), (200, [("Book the large room", True), ("Print the badges", False)], 1))
+        self.assertEqual(detail["undo"]["label"], "subtask removed from ACM-001")
+        status, detail = self.change(0, done=False)
+        self.assertEqual(detail["subtasks"][0], {"index": 0, "text": "Book the large room", "done": False, "done_on": ""})
+        self.change(0, done=True)
+        # Right under the action line, before the other sub-bullets; no history entry for a subtask change.
+        text = self.register.read_text(encoding="utf-8")
+        self.assertIn("- [ ] **ACM-001** — Jane Doe — Prepare the globex demo 📅 2026-11-20\n"
+                      "    - [x] Book the large room ✅ 2026-11-11\n    - [ ] Print the badges\n    - source: kickoff notes\n", text)
+        self.assertEqual(text.count("    - 1"), 1)  # the one history entry, 10/11
+        self.assertIn("    - updated: 2026-11-11 10:00", text)
+        snapshot = {action["id"]: action for action in self.request("GET", "/api/actions")[1]["actions"]}
+        self.assertEqual(snapshot["ACM-001"]["subtasks"], {"done": 1, "total": 2, "texts": ["Book the large room", "Print the badges"]})
+
+    def test_every_write_needs_the_current_details_version(self):
+        stale = self.version()
+        self.add("Book the room")
+        before = self.register.read_bytes()
+        for method, path, payload in (("POST", "/api/actions/ACM-001/subtasks", {"text": "Send the agenda"}),
+                                      ("PATCH", "/api/actions/ACM-001/subtasks/0", {"done": True}),
+                                      ("PATCH", "/api/actions/ACM-001/subtasks/0", {"text": "Book another room"}),
+                                      ("PATCH", "/api/actions/ACM-001/subtasks/0", {"to": 0}),
+                                      ("DELETE", "/api/actions/ACM-001/subtasks/0", {})):
+            with self.subTest(method=method, payload=payload):
+                status, answer = self.request(method, path, {"details_version": stale, **payload})
+                self.assertEqual(status, 409)
+                self.assertIn("changed in the register", answer["error"])
+        self.assertEqual(self.register.read_bytes(), before)
+        # A history note changes the details too: the version it returns is the one the next subtask write needs.
+        status, detail = self.request("POST", "/api/actions/ACM-001/notes", {"details_version": self.version(), "note": "room booked"})
+        status, _ = self.request("PATCH", "/api/actions/ACM-001/subtasks/0", {"details_version": detail["details_version"], "done": True})
+        self.assertEqual(status, 200)
+
+    def test_refusals_are_400_with_the_message_of_the_tool_and_change_nothing(self):
+        self.add("Book the room")
+        before = self.register.read_bytes()
+        long = " ".join(f"word{number}" for number in range(16))
+        status, answer = self.add(long)
+        self.assertEqual(status, 400)
+        self.assertTrue(answer["error"].startswith("Subtask has 16 words; the cap is 15."), answer["error"])
+        for text, message in (("Book the room 📅 2026-11-12", "carries no Tasks metadata"), ("Follow **ACM-002**", "carries no action ID")):
+            with self.subTest(text=text):
+                status, answer = self.add(text)
+                self.assertEqual(status, 400)
+                self.assertIn(message, answer["error"])
+        self.assertEqual(self.change(5, done=True), (400, {"error": "Subtask not found."}))
+        status, answer = self.change(0, to=3)
+        self.assertEqual((status, answer["error"]), (400, "The target index must be 0 to 0."))
+        for payload in ({}, {"done": "yes"}, {"done": True, "text": "Two changes"}, {"to": -1}, {"to": True}, {"text": ""}, {"text": 3}, {"colour": "red"}):
+            with self.subTest(payload=payload):
+                status, answer = self.change(0, **payload)
+                self.assertEqual(status, 400)
+        for payload in ({"text": "Send the agenda", "position": "0"}, {"text": "Send the agenda", "position": -1}, {"text": "Send the agenda", "extra": 1}):
+            with self.subTest(payload=payload):
+                status, _ = self.request("POST", "/api/actions/ACM-001/subtasks", {"details_version": self.version(), **payload})
+                self.assertEqual(status, 400)
+        self.assertEqual(self.register.read_bytes(), before)
+        status, _ = self.request("POST", "/api/actions/ACM-009/subtasks", {"details_version": "x", "text": "Send the agenda"})
+        self.assertEqual(status, 404)
+        status, _ = self.request("POST", "/api/actions/ACM-001/subtasks", {"details_version": self.version(), "text": "Send the agenda"}, token=False)
+        self.assertEqual(status, 403)
+        for number in range(9):
+            self.assertEqual(self.add(f"Step {number}")[0], 201)
+        status, answer = self.add("The eleventh step")
+        self.assertEqual(status, 400)
+        self.assertIn("at most 10 subtasks", answer["error"])
+
+    def test_a_history_note_over_35_words_is_refused_with_the_message_and_a_duplicate_is_written_once(self):
+        before = self.register.read_bytes()
+        long = " ".join(f"word{number}" for number in range(36))
+        status, answer = self.request("POST", "/api/actions/ACM-001/notes", {"details_version": self.version(), "note": long})
+        self.assertEqual(status, 400)
+        self.assertTrue(answer["error"].startswith("History entry has 36 words; the cap is 35."), answer["error"])
+        self.assertEqual(self.register.read_bytes(), before)
+        status, detail = self.request("POST", "/api/actions/ACM-001/notes", {"details_version": self.version(), "note": "room booked"})
+        self.assertEqual((status, detail["unchanged"]), (201, False))
+        status, detail = self.request("POST", "/api/actions/ACM-001/notes", {"details_version": self.version(), "note": "room booked"})
+        self.assertEqual((status, detail["unchanged"]), (201, True))
+        self.assertEqual(self.register.read_text(encoding="utf-8").count("room booked"), 1)
+
+    def test_closing_an_action_with_open_subtasks_succeeds_and_says_so(self):
+        self.add("Book the room")
+        self.add("Send the agenda")
+        self.change(0, done=True)
+        current = next(action for action in self.request("GET", "/api/actions")[1]["actions"] if action["id"] == "ACM-001")
+        fields = {key: current[key] for key in ("owner", "priority", "due", "scheduled")}
+        status, answer = self.request("PATCH", "/api/actions/ACM-001", {"version": current["version"], "action": {**fields, "title": current["raw_title"], "state": "x"}})
+        self.assertEqual(status, 200)
+        self.assertEqual(answer["warnings"], ["1 subtask of ACM-001 still open, left unticked."])
+        detail = self.request("GET", "/api/actions/ACM-001/details")[1]
+        self.assertEqual((detail["state"], self.texts(detail)), ("x", [("Book the room", True), ("Send the agenda", False)]))
+        plain = next(action for action in self.request("GET", "/api/actions")[1]["actions"] if action["id"] == "ACM-002")
+        status, answer = self.request("PATCH", "/api/actions/ACM-002", {"version": plain["version"], "action": {
+            "title": plain["raw_title"], "owner": plain["owner"], "state": "x", "priority": "", "due": "", "scheduled": ""}})
+        self.assertEqual(status, 200)
+        self.assertNotIn("warnings", answer)
+
+    def test_each_subtask_change_is_one_undo_step(self):
+        original = self.register.read_bytes()
+        self.add("Book the room")
+        self.change(0, done=True)
+        self.change(0, text="Book the large room")
+        self.assertEqual(self.request("GET", "/api/undo")[1]["label"], "subtask edited on ACM-001")
+        for label in ("subtask edited on ACM-001", "subtask ticked on ACM-001", "subtask added to ACM-001"):
+            with self.subTest(label=label):
+                status, answer = self.request("POST", "/api/undo", {"label": label})
+                self.assertEqual((status, answer["undone"], answer["action_id"]), (200, label, "ACM-001"))
+        self.assertEqual(self.register.read_bytes(), original)
+        self.assertNotIn("subtasks", self.request("GET", "/api/actions/ACM-001/details")[1])
+
+
 class NotesTest(unittest.TestCase):
     CLIENT = "projects/clients/acme/missions/demo-migration"
     INTERNAL = "projects/internal/setup"
@@ -1230,6 +1410,278 @@ class DocsListTest(unittest.TestCase):
         self.assertEqual(tasks_web.doc_date("2026-10-05", self.day(2026, 1, 1)), "2026-10-05")
         self.assertEqual(tasks_web.doc_date("2026-02-30-x.md", self.day(2026, 1, 2)), "2026-01-02")
         self.assertEqual(tasks_web.doc_date("topic.md", self.day(2026, 3, 4)), "2026-03-04")
+
+
+class ArchivedProjectsTest(unittest.TestCase):
+    """An archived project (moved whole under an `archive/` folder at the level of what it holds) leaves every view; Sync, which reads Git, is not filtered."""
+    LIVE = "projects/clients/acme/missions/live-mission"
+    OLD_MISSION = "projects/clients/acme/missions/archive/old-mission"
+    OLD_INTERNAL = "projects/internal/archive/globex-old"
+    OLD_CLIENT = "projects/clients/archive/initech/missions/pilot"  # a whole client, archived with its mission
+    EARLIER_MISSION = "projects/clients/acme/archive/early-mission"  # the earlier places still count
+    EARLIER_INTERNAL = "projects/archive/early-internal"
+    ARCHIVED = (OLD_MISSION, OLD_INTERNAL, OLD_CLIENT, EARLIER_MISSION, EARLIER_INTERNAL)
+
+    def write(self, relative, text):
+        path = self.brain / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.brain = Path(self.temp.name) / "brain"
+        for folder, prefix in ((self.LIVE, "LIV"), (self.OLD_MISSION, "OLD"), (self.OLD_INTERNAL, "GLX"), (self.OLD_CLIENT, "PIL"),
+                               (self.EARLIER_MISSION, "ERM"), (self.EARLIER_INTERNAL, "ERI")):
+            self.write(f"{folder}/state/actions.md", f"# Actions\n\n## Open\n- [ ] **{prefix}-001** — Jane Doe — Zebracorn task {prefix} 📅 2026-10-15\n")
+            self.write(f"{folder}/notes/2026-10-01-zebracorn-note.md", f"# Zebracorn note {prefix}\n\nZebracorn body.\n")
+            self.write(f"{folder}/sources/2026-10-02-note-zebracorn.md", f"# Zebracorn source {prefix}\n\nZebracorn.\n")
+        self.write(f"{self.LIVE}/live-mission.md", "# Live page\n\nZebracorn.\n")
+        self.write("projects/clients/archive/initech/initech.md", "# Client page\n\nZebracorn.\n")  # a client page, archived too
+        (self.brain / ".data").mkdir()
+        self.server = tasks_web.TaskServer(("127.0.0.1", 0), tasks_web.Store(self.brain))
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+        self.live_register = f"{self.LIVE}/state/actions.md"
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+        self.temp.cleanup()
+
+    request = TasksWebTest.request
+
+    def archived_ids(self, items):
+        return [item for item in items if "/archive/" in item]
+
+    def test_snapshot_lists_only_the_ongoing_projects(self):
+        status, data = self.request("GET", "/api/actions")
+        self.assertEqual(status, 200)
+        self.assertEqual([action["id"] for action in data["actions"]], ["LIV-001"])
+        self.assertEqual([register["path"] for register in data["registers"]], [self.live_register])
+
+    def test_notes_docs_search_and_recent_docs_skip_archived_projects(self):
+        status, notes = self.request("GET", "/api/notes")
+        self.assertEqual(status, 200)
+        self.assertEqual([note["id"] for note in notes["notes"]], [f"{self.LIVE}/notes/2026-10-01-zebracorn-note.md"])
+        status, docs = self.request("GET", "/api/docs/list")
+        self.assertEqual(status, 200)
+        self.assertEqual(self.archived_ids(doc["id"] for doc in docs["docs"]), [])
+        self.assertEqual(len(docs["docs"]), 3)
+        status, found = self.request("GET", "/api/search?q=zebracorn")
+        self.assertEqual(status, 200)
+        self.assertEqual(found["total"], 4)  # page, note, source and register of the live mission
+        self.assertEqual(self.archived_ids(item["id"] for item in found["results"]), [])
+        status, recent = self.request("GET", "/api/docs/recent")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(recent["docs"]), 4)
+        self.assertEqual(self.archived_ids(item["id"] for item in recent["docs"]), [])
+
+    def test_archived_documents_are_unknown_to_the_reader(self):
+        for relative in (*(f"{folder}/notes/2026-10-01-zebracorn-note.md" for folder in self.ARCHIVED),
+                         *(f"{folder}/sources/2026-10-02-note-zebracorn.md" for folder in self.ARCHIVED),
+                         "projects/clients/archive/initech/initech.md"):
+            self.assertEqual(self.request("GET", "/api/docs/render?id=" + quote(relative))[0], 404, relative)
+            self.assertEqual(self.request("GET", "/api/notes/content?id=" + quote(relative))[0], 404, relative)
+        live = f"{self.LIVE}/notes/2026-10-01-zebracorn-note.md"
+        self.assertEqual(self.request("GET", "/api/docs/render?id=" + quote(live))[0], 200)
+
+    def test_creating_into_an_archived_register_is_an_unknown_project(self):
+        action = {"title": "Late idea", "owner": "Jane Doe", "state": " ", "priority": "", "due": "", "scheduled": ""}
+        for folder in self.ARCHIVED:
+            status, data = self.request("POST", "/api/actions", {"register": f"{folder}/state/actions.md", "action": action})
+            self.assertEqual((status, data["error"]), (400, "Unknown project."), folder)
+            status, data = self.request("POST", "/api/notes", {"title": "Late note", "register": f"{folder}/state/actions.md", "content": "x"})
+            self.assertEqual((status, data["error"]), (400, "Unknown project."), folder)
+            self.assertFalse((self.brain / folder / "notes/late-note.md").exists())
+
+    def test_updating_an_action_of_an_archived_project_is_refused(self):
+        action = {"title": "Changed", "owner": "Jane Doe", "state": "x", "priority": "", "due": "", "scheduled": ""}
+        for folder, action_id in zip(self.ARCHIVED, ("OLD-001", "GLX-001", "PIL-001", "ERM-001", "ERI-001")):
+            before = (self.brain / folder / "state/actions.md").read_text(encoding="utf-8")
+            status, data = self.request("PATCH", f"/api/actions/{action_id}", {"version": "any", "action": action})
+            self.assertEqual(status, 400, folder)
+            self.assertIn("archived", data["error"])
+            self.assertEqual((self.brain / folder / "state/actions.md").read_text(encoding="utf-8"), before)
+
+    def test_git_project_names_the_project_of_a_file_of_an_archived_place_like_a_live_one(self):
+        for relative, label in ((f"{self.OLD_MISSION}/notes/x.md", "acme / old-mission"), (f"{self.OLD_MISSION}/old-mission.md", "acme / old-mission"),
+                                (f"{self.OLD_CLIENT}/pilot.md", "initech / pilot"), (f"{self.EARLIER_MISSION}/early-mission.md", "acme / early-mission"),
+                                (f"{self.OLD_INTERNAL}/globex-old.md", "globex-old"), (f"{self.EARLIER_INTERNAL}/x.md", "early-internal"),
+                                (f"{self.LIVE}/x.md", "acme / live-mission")):
+            self.assertEqual(tasks_web.git_project(self.brain, relative), label, relative)  # with a register
+        # without a register (a client page, or a project deleted with its register): the label is read from the path
+        for relative, label in (("projects/clients/archive/initech/missions/gone/gone.md", "initech / gone"),
+                                ("projects/clients/acme/missions/archive/gone/gone.md", "acme / gone"),
+                                ("projects/clients/acme/archive/gone/gone.md", "acme / gone"),
+                                ("projects/internal/archive/gone/gone.md", "gone"), ("projects/archive/gone/gone.md", "gone"),
+                                ("projects/clients/archive/initech/initech.md", "initech"),
+                                ("projects/clients/acme/missions/gone/gone.md", "acme / gone"), ("projects/internal/gone/gone.md", "gone")):
+            self.assertEqual(tasks_web.git_project(self.brain, relative), label, relative)
+            self.assertNotEqual(tasks_web.git_project(self.brain, relative), "archive")
+
+    def test_the_timeline_reads_the_snapshot_so_it_has_no_archived_due_date(self):
+        # Timeline view: `timeline-view.js` is fed by `state.actions` of GET /api/actions (due dates, `due_note`), nothing else.
+        actions = self.request("GET", "/api/actions")[1]["actions"]
+        self.assertEqual([action["due"] for action in actions], ["2026-10-15"])
+
+
+class ArchivesViewTest(unittest.TestCase):
+    """The Archives view and its writes: the listing, a project read there, the dry run, the refusal, archive and unarchive (and undo)
+    through `brain-state.py`, and the display names of the clients. A fictitious Work: brain/ with clients acme and globex-industries."""
+    DONE = "projects/clients/acme/missions/done-mission"
+    OPEN = "projects/clients/acme/missions/open-mission"
+    WRAPPED = "projects/internal/wrapped"
+    OLD = "projects/internal/archive/old-internal"
+
+    def write(self, relative, text):
+        path = self.brain / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.work = Path(self.temp.name) / "work"
+        self.brain = self.work / "brain"
+        self.write("AGENTS.md", "# Brain\n")
+        (self.brain / ".data").mkdir(parents=True)
+        self.write("projects/clients/acme/acme.md", "# Client: ACME Corp\n\nMissions: [done](missions/done-mission/done-mission.md).\n")
+        self.write("projects/clients/globex-industries/missions/pilot/state/actions.md",
+                   "# Actions\n\n## Done\n- [x] **GLO-001** — Jane Doe — Pilot review ✅ 2026-10-01\n")
+        self.write(f"{self.DONE}/done-mission.md", "# Done mission\n\nBack to the [client](../../acme.md).\n")
+        self.write(f"{self.DONE}/notes/2026-10-01-zebracorn-wrap-up.md", "# Zebracorn wrap-up\n\nAll delivered.\n")
+        self.write(f"{self.DONE}/state/decisions.md", "# Decisions\n\n## 1. Ship the zebracorn report\n")
+        self.write(f"{self.DONE}/state/actions.md", "# Actions\n\n## Done\n- [x] **ACM-001** — Jane Doe — Deliver the report ✅ 2026-10-02\n\n"
+                                                    "## Cancelled\n- [-] **ACM-002** — Jane Doe — Second workshop ❌ 2026-10-03\n")
+        self.write(f"{self.OPEN}/state/actions.md", "# Actions\n\n## Open\n- [/] **ACM-010** — Jane Doe — Still running\n")
+        self.write(f"{self.WRAPPED}/state/actions.md", "# Actions\n\n## Done\n- [x] **WRP-001** — Jane Doe — Wrapped up ✅ 2026-10-04\n")
+        self.write("projects/internal/setup/state/actions.md", "# Actions\n\n## Done\n- [x] **SET-001** — Jane Doe — Set up ✅ 2026-10-04\n")
+        self.write(f"{self.OLD}/old-internal.md", "# Old internal\n")
+        self.write(f"{self.OLD}/state/actions.md", "# Actions\n\n## Done\n- [x] **OLD-001** — Jane Doe — Old work ✅ 2026-09-01\n")
+        self.server = tasks_web.TaskServer(("127.0.0.1", 0), tasks_web.Store(self.brain), work=self.work)
+        thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (self.server.shutdown(), self.server.server_close(), thread.join(timeout=2)))
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+
+    def request(self, method, path, payload=None, token=True, origin=True):
+        return TasksWebTest.request(self, method, path, payload, token, origin)
+
+    def tree(self):
+        return {path.relative_to(self.brain).as_posix(): path.read_bytes() for path in sorted(self.brain.rglob("*")) if path.is_file()}
+
+    def plan(self, verb, folder):
+        return self.request("GET", f"/api/archives/plan?verb={verb}&folder={quote(folder)}")
+
+    def test_client_names_come_from_the_client_page_heading_else_the_folder_name(self):
+        status, snapshot = self.request("GET", "/api/actions")
+        self.assertEqual(status, 200)
+        self.assertEqual(snapshot["clients"], {"acme": "ACME Corp", "globex-industries": "Globex Industries"})
+        # The labels that address a project do not change: only the page shows the names.
+        self.assertIn("acme / done-mission", {register["label"] for register in snapshot["registers"]})
+        for heading, name in (("# Initech Labs\n", "Initech Labs"), ("# client :  Initech   Labs\n", "Initech Labs"),
+                              ("---\ntitle: x\n---\n## Not this\n# Client: Initech\n", "Initech"), ("No heading here.\n", "Globex Industries"),
+                              ("```\n# Client: In code\n```\n", "Globex Industries")):
+            with self.subTest(heading=heading):
+                self.write("projects/clients/globex-industries/globex-industries.md", heading)
+                self.assertEqual(tasks_web.client_display_name(self.brain / "projects/clients/globex-industries"), name)
+        self.assertEqual(tasks_web.client_display_name(self.brain / "projects/clients/no_page-here"), "No Page Here")
+
+    def test_the_listing_gives_each_archived_folder_its_kind_label_counts_and_actions(self):
+        status, data = self.request("GET", "/api/archives")
+        self.assertEqual(status, 200)
+        self.assertEqual([(item["folder"], item["kind"], item["label"], item["client"], item["archived_on"]) for item in data["archives"]],
+                         [(self.OLD, "internal", "old-internal", "", None)])
+        self.assertEqual(data["archives"][0]["counts"], {"total": 1, "done": 1, "cancelled": 0, "open": 0})
+        self.assertEqual([(action["id"], action["folder"]) for action in data["actions"]], [("OLD-001", self.OLD)])
+        self.assertEqual(data["clients"]["acme"], "ACME Corp")
+
+    def test_the_dry_run_says_what_moves_and_changes_nothing(self):
+        before = self.tree()
+        status, plan = self.plan("archive", self.DONE)
+        self.assertEqual(status, 200, plan)
+        self.assertEqual((plan["verb"], plan["kind"], plan["label"], plan["from"], plan["to"], plan["write"]),
+                         ("archive", "mission", "acme / done-mission", self.DONE, "projects/clients/acme/missions/archive/done-mission", False))
+        self.assertEqual((plan["links"], plan["link_files"]), (2, ["brain/projects/clients/acme/acme.md", "brain/projects/clients/acme/missions/archive/done-mission/done-mission.md"]))
+        self.assertEqual(self.tree(), before)
+        status, plan = self.plan("archive", "projects/clients/acme")
+        self.assertEqual((status, plan.get("kind")), (409, None))  # a whole client: refused while a mission has an open action
+        self.assertEqual([item["id"] for item in plan["open_actions"]], ["ACM-010"])
+
+    def test_archiving_with_open_actions_is_refused_with_the_blocking_actions(self):
+        before = self.tree()
+        for method, path, payload in (("GET", f"/api/archives/plan?verb=archive&folder={quote(self.OPEN)}", None),
+                                      ("POST", "/api/archives/archive", {"folder": self.OPEN})):
+            with self.subTest(method=method):
+                status, answer = self.request(method, path, payload)
+                self.assertEqual(status, 409)
+                self.assertEqual(answer["error"], "acme / open-mission cannot be archived: 1 action is still to do, in progress or waiting. "
+                                                  "Close or cancel it first, then archive again.")
+                self.assertEqual(answer["open_actions"], [{"id": "ACM-010", "state": "/", "title": "Still running", "project": "acme / open-mission"}])
+        status, answer = self.plan("archive", "projects/internal/setup")
+        self.assertEqual(status, 400)
+        self.assertIn("never archived", answer["error"])
+        for folder, expected in (("projects/clients/acme/missions/nope", 404), ("projects/../outside", 400), ("/etc", 400), (self.OLD, 404)):
+            with self.subTest(folder=folder):
+                self.assertEqual(self.plan("archive", folder)[0], expected)
+        self.assertEqual(self.plan("unarchive", self.DONE)[0], 404)  # not archived
+        self.assertEqual(self.request("GET", "/api/archives/plan?verb=delete&folder=" + quote(self.DONE))[0], 400)
+        self.assertEqual(self.request("POST", "/api/archives/archive", {"folder": self.DONE}, token=False)[0], 403)
+        self.assertEqual(self.request("POST", "/api/archives/archive", {"folder": self.DONE, "extra": 1})[0], 400)
+        self.assertEqual(self.tree(), before)
+
+    def test_archive_then_unarchive_gives_every_file_back_and_the_archive_is_read_only_in_its_view(self):
+        before = self.tree()
+        status, done = self.request("POST", "/api/archives/archive", {"folder": self.DONE})
+        self.assertEqual(status, 200, done)
+        archived = "projects/clients/acme/missions/archive/done-mission"
+        self.assertEqual((done["write"], done["to"], done["undo"]["label"]), (True, archived, "archive of acme / done-mission"))
+        self.assertIn("[done](missions/archive/done-mission/done-mission.md)", (self.brain / "projects/clients/acme/acme.md").read_text(encoding="utf-8"))
+        # Out of the normal snapshot, documents and search…
+        snapshot = self.request("GET", "/api/actions")[1]
+        self.assertNotIn("ACM-001", {action["id"] for action in snapshot["actions"]})
+        self.assertEqual(self.request("GET", "/api/search?q=zebracorn")[1]["total"], 0)
+        note = f"{archived}/notes/2026-10-01-zebracorn-wrap-up.md"
+        self.assertEqual(self.request("GET", "/api/docs/render?id=" + quote(note))[0], 404)
+        # …and in the Archives view, which reads it and searches it alone.
+        listing = self.request("GET", "/api/archives")[1]
+        self.assertEqual([item["folder"] for item in listing["archives"]], [archived, self.OLD])
+        self.assertEqual(listing["archives"][0]["counts"], {"total": 2, "done": 1, "cancelled": 1, "open": 0})
+        found = self.request("GET", "/api/search?q=zebracorn&archived=1")[1]
+        self.assertEqual(sorted(item["id"] for item in found["results"]), [note, f"{archived}/state/decisions.md"])
+        status, doc = self.request("GET", "/api/docs/render?archived=1&id=" + quote(note))
+        self.assertEqual((status, doc["note"], doc["deletable"], doc["project"]), (200, False, False, "acme / done-mission"))
+        status, project = self.request("GET", "/api/archives/project?folder=" + quote(archived))
+        self.assertEqual(status, 200)
+        self.assertEqual((project["kind"], project["label"], project["page"]), ("mission", "acme / done-mission", f"{archived}/done-mission.md"))
+        self.assertEqual([action["id"] for action in project["projects"][0]["actions"]], ["ACM-001", "ACM-002"])
+        self.assertEqual(project["projects"][0]["decisions"], f"{archived}/state/decisions.md")
+        self.assertEqual([(item["id"], item["type"]) for item in project["docs"]], [(f"{archived}/done-mission.md", "page"), (note, "note")])  # newest first: the page has no date in its name
+        # Read-only: an archived action refuses every write.
+        status, answer = self.request("PATCH", "/api/actions/ACM-001", {"version": "x", "action": {
+            "title": "Deliver the report", "owner": "Jane Doe", "state": " ", "priority": "", "due": "", "scheduled": ""}})
+        self.assertEqual(status, 400)
+        self.assertIn("archived", answer["error"])
+        # Unarchive: the dry run, then the write; every file comes back byte for byte.
+        status, plan = self.plan("unarchive", archived)
+        self.assertEqual((status, plan["to"], plan["write"]), (200, self.DONE, False))
+        status, back = self.request("POST", "/api/archives/unarchive", {"folder": archived})
+        self.assertEqual((status, back["to"], back["undo"]["label"]), (200, self.DONE, "unarchive of acme / done-mission"))
+        self.assertEqual(self.tree(), before)
+        self.assertIn("ACM-001", {action["id"] for action in self.request("GET", "/api/actions")[1]["actions"]})
+
+    def test_undo_of_an_archive_is_the_inverse_command(self):
+        before = self.tree()
+        self.request("POST", "/api/archives/archive", {"folder": self.WRAPPED})
+        self.assertFalse((self.brain / self.WRAPPED).exists())
+        self.assertNotIn("WRP-001", {action["id"] for action in self.request("GET", "/api/actions")[1]["actions"]})
+        status, answer = self.request("POST", "/api/undo", {"label": "archive of wrapped"})
+        self.assertEqual((status, answer["undone"]), (200, "archive of wrapped"))
+        self.assertEqual(self.tree(), before)
+        self.assertIn("WRP-001", {action["id"] for action in self.request("GET", "/api/actions")[1]["actions"]})
+        self.assertEqual(self.request("GET", "/api/undo")[1]["available"], False)
 
 
 class WrittenFormatTest(unittest.TestCase):
@@ -3586,6 +4038,92 @@ class BrainSwitchTest(unittest.TestCase):
         self.assertEqual(data["default"], "brain")
         self.assertEqual([action["id"] for action in self.actions("?brain=brain")["actions"]], ["EXT-001"])
 
+    def other_work(self):
+        """Another Work, the directory the command is run from: its brains have the names of the served Work, and one more."""
+        elsewhere = Path(self.temp.name) / "other-work"
+        for name, prefix in (("brain-perso", "OTH"), ("brain-globex", "GLO")):
+            project = elsewhere / name / "projects/internal/other/state"
+            project.mkdir(parents=True)
+            (project / "actions.md").write_text(f"# Actions\n\n## Open\n- [ ] **{prefix}-001** — Jane Doe — Action of another Work\n", encoding="utf-8")
+            (elsewhere / name / "AGENTS.md").write_text("# Brain\n", encoding="utf-8")
+            (elsewhere / name / ".data").mkdir()
+        return elsewhere
+
+    def run_cli(self, *argv, cwd=None):
+        """Run the command line on the Work of the test, from `cwd`: (the Store it would serve or None, exit code, error output)."""
+        served = []
+
+        class Server:
+            server_port = 0
+
+            def __init__(self, address, store):
+                self.work = tasks_web.WORK
+                served.append(store)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *error):
+                return False
+
+            def serve_forever(self):
+                pass
+
+        previous = os.getcwd()
+        os.chdir(cwd or self.root)
+        output, errors = io.StringIO(), io.StringIO()
+        try:
+            with patch.object(tasks_web, "WORK", self.root), patch.object(tasks_web, "TaskServer", Server), \
+                    patch.object(sys, "argv", ["tasks-web.py", *argv]), redirect_stdout(output), redirect_stderr(errors):
+                try:
+                    tasks_web.main()
+                    code = 0
+                except SystemExit as stop:
+                    code = stop.code
+        finally:
+            os.chdir(previous)
+        return (served[0] if served else None), code, errors.getvalue()
+
+    def test_a_relative_brain_option_is_read_from_the_work_root_not_from_the_current_directory(self):
+        elsewhere = self.other_work()
+        # Run from another Work that has a brain of that name: the served Work wins (WORK_DIR), the current directory never does.
+        store, code, errors = self.run_cli("--brain", "brain-perso", cwd=elsewhere)
+        self.assertEqual((code, errors), (0, ""))
+        self.assertEqual(store.brain, self.other.resolve())
+        self.assertNotEqual(store.brain, (elsewhere / "brain-perso").resolve())
+        self.start(store)
+        self.assertEqual(self.request("GET", "/api/brains")[1]["default"], "brain-perso")
+        self.assertEqual([action["id"] for action in self.actions()["actions"]], ["PER-001"])
+        # The same from any directory, and with a path that climbs back to the root.
+        for value in ("brain-perso", "./brain-perso", "brain-acme/../brain-perso"):
+            with self.subTest(value=value):
+                self.assertEqual(self.run_cli("--brain", value, cwd=Path(self.temp.name))[0].brain, self.other.resolve())
+        self.assertEqual(tasks_web.brain_option(Path("brain-perso"), self.root), self.other.resolve())
+
+    def test_a_brain_option_that_is_not_a_brain_is_refused_with_a_clear_error(self):
+        elsewhere = self.other_work()
+        # brain-globex is a brain of the current directory only; the others are no brain of the served Work (missing, no AGENTS.md, no .data/, a file).
+        for value in ("brain-globex", "brain-nope", "brain-vide", "brain-sans-data", "brain-fichier"):
+            with self.subTest(value=value):
+                store, code, errors = self.run_cli("--brain", value, cwd=elsewhere)
+                self.assertIsNone(store)
+                self.assertEqual(code, 2)
+                self.assertIn(f"--brain {value}: {(self.root / value).resolve()} is not a brain (a folder holding AGENTS.md and .data/)", errors)
+                self.assertIn(f"a relative --brain is read from the Work root, {self.root}", errors)
+                with self.assertRaises(ValueError):
+                    tasks_web.brain_option(Path(value), self.root)
+        # An absolute path names its folder, inside Work or not: a brain is served, anything else is refused.
+        outside = elsewhere / "brain-globex"
+        store, code, errors = self.run_cli("--brain", str(outside))
+        self.assertEqual((store.brain, code, errors), (outside.resolve(), 0, ""))
+        store, code, errors = self.run_cli("--brain", str(elsewhere))
+        self.assertEqual((store, code), (None, 2))
+        self.assertIn("is not a brain", errors)
+        self.assertNotIn("a relative --brain", errors)
+        # Without the option, the default brain of the served Work, as before.
+        store, code, errors = self.run_cli(cwd=elsewhere)
+        self.assertEqual((store.brain, code, errors), (self.default.resolve(), 0, ""))
+
     def test_brain_list_refuses_foreign_hosts_and_the_page_carries_the_switcher(self):
         request = Request(self.base + "/api/brains", headers={"Host": "evil.example"})
         with self.assertRaises(HTTPError) as caught:
@@ -3793,7 +4331,7 @@ class TimelineViewTest(unittest.TestCase):
 
     def test_timeline_is_a_sidebar_view_right_after_the_board(self):
         views = re.findall(r'<button id="(\w+)" class="nav-item[^"]*" type="button" data-view="(\w+)" title="([^"]*)"', self.page)
-        self.assertEqual([view for _id, view, _title in views], ["today", "list", "board", "timeline", "docs", "tools", "git"])  # Search is a field, not a view of the sidebar
+        self.assertEqual([view for _id, view, _title in views], ["today", "list", "board", "timeline", "docs", "archives", "tools", "git"])  # Search is a field, not a view of the sidebar
         titles = {view: title for _id, view, title in views}
         self.assertEqual([titles[view] for view in ("timeline", "docs")], ["Timeline (4)", "Docs (5)"])
         self.assertIn('<button id="timelineButton"', self.page)
@@ -3801,7 +4339,7 @@ class TimelineViewTest(unittest.TestCase):
         self.assertIn("<kbd>Alt</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>On the Timeline: move the deadline by a day", self.page)
 
     def test_keyboard_scheme_follows_the_sidebar_order(self):
-        self.assertIn("const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'tools', 'git'];", self.script)
+        self.assertIn("const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git'];", self.script)
         self.assertIn("setView(['today', 'list', 'board', 'timeline', 'docs'][Number(digit) - 1]);", self.script)
         self.assertIn("/^[1-5]$/.test(key)", self.script)
         self.assertIn("/^Digit[1-5]$/.test(event.code)", self.script)
@@ -3817,7 +4355,7 @@ class TimelineViewTest(unittest.TestCase):
         self.assertNotIn("search: 'searchButton'", self.script)
         self.assertNotIn("view-searchless", self.script + self.styles)
         # `search` stays an internal view: never restored, never saved as the view to come back to.
-        self.assertIn("const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'tools', 'git'];", self.script)
+        self.assertIn("const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git'];", self.script)
         self.assertIn("VIEWS.includes(savedUI.view) && savedUI.view !== 'search'", self.script)
         self.assertIn("view: view === 'search' ? searchReturn : view,", self.script)
         # A query shows the results page, an empty field or Esc goes back to the view it left; any other view ends the search.
@@ -4320,6 +4858,131 @@ class TimelineViewTest(unittest.TestCase):
         self.assertEqual(got["agenda"], [["2026-10-17", ["ACM-004"], []], ["2026-10-24", ["GLO-001"], []], ["2026-10-25", ["GLO-002"], []],
                                          ["2026-10-26", ["ACM-012"], []], ["2026-10-27", [], ["ACM-001"]], ["2026-10-30", ["ACM-001", "ACM-002"], []],
                                          ["2026-11-20", ["ACM-015"], []]])
+
+
+class ActionViewsPageTest(unittest.TestCase):
+    """Today, the owner filters, the Board and the history in the page: markup, wiring and style (the behaviour is checked in the browser)."""
+    STATIC = TOOL.parent / "static"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.page = (cls.STATIC / "index.html").read_text(encoding="utf-8")
+        cls.script = (cls.STATIC / "app.js").read_text(encoding="utf-8")
+        cls.styles = (cls.STATIC / "app.css").read_text(encoding="utf-8")
+
+    def function(self, name):
+        """The source of a top-level function of app.js."""
+        start = re.search(rf"\n(?:async )?function {name}\(", self.script).start()
+        return self.script[start:self.script.index("\n}\n", start)]
+
+    def test_today_splits_what_others_carry_into_late_and_waiting_by_owner(self):
+        sections = self.function("todaySections")
+        # Someone else's overdue action is tested first: it never falls into the waiting list.
+        self.assertLess(sections.index("sections.othersLate.push(action)"), sections.index("sections.waiting.push(action)"))
+        self.assertIn("if (!mine && action.due && action.due < day) sections.othersLate.push(action);", sections)
+        today = self.function("renderToday")
+        titles = re.findall(r"\['[\w-]+', '([^']+)', sections\.\w+, [^\]]*, (true|false)\]", today)
+        self.assertEqual(titles, [("Overdue", "false"), ("Today", "false"), ("In progress", "false"), ("Late from others", "true"),
+                                  ("Waiting on others", "true"), ("This week", "false")])
+        self.assertIn("ownerGroups(actions, late)", today)
+        # The owners with overdue actions lead, then the ones with the most actions, then by name; a row under a heading drops the owner.
+        self.assertIn("(late.get(b.owner) || 0) - (late.get(a.owner) || 0) || b.actions.length - a.actions.length || a.owner.localeCompare(b.owner, LOCALE)",
+                      self.function("ownerGroups"))
+        self.assertIn("rowList(group.actions, {...options, owner: false})", self.function("ownerBlock"))
+        self.assertIn(".section-late h2, .section-others-late h2 { color: var(--danger); }", self.styles)
+
+    def test_the_project_column_gives_way_to_the_title_when_one_project_is_in_scope(self):
+        self.assertIn("const options = {project: !singleProject()};", self.function("renderToday"))
+        self.assertIn("snapshot.registers.filter(register => inScope(register.path)).length === 1", self.script)
+        row = self.function("actionRow")
+        self.assertIn("function actionRow(action, {project = false, owner = true} = {})", row)
+        for variant, areas in ((".row {", "status id title owner due prio actions"), (".row.with-project {", "status id title project owner due prio actions"),
+                               (".row.no-owner {", "status id title due prio actions"), (".row.with-project.no-owner {", "status id title project due prio actions")):
+            with self.subTest(variant=variant):
+                rule = self.styles[self.styles.index("\n" + variant):]
+                self.assertIn(f'grid-template-areas: "{areas}";', rule[:rule.index("}")])
+
+    def test_the_owner_filter_lists_people_and_is_kept_with_the_other_filters(self):
+        self.assertIn('<select id="ownerFilter"><option value="">Everyone</option><option value="mine">Me</option></select>', self.page)
+        populate = self.function("populateOwnerFilters")
+        self.assertIn("ownerCounts(snapshot.actions)", populate)
+        self.assertIn("new Option('Everyone', ''), new Option('Me', OWNER_MINE)", populate)
+        # The most open actions first, then the most actions, then by name.
+        self.assertIn("b.open - a.open || b.total - a.total || a.owner.localeCompare(b.owner, LOCALE)", self.function("ownerCounts"))
+        self.assertIn("action.owner === choice.slice(OWNER_PREFIX.length)", self.function("ownerMatches"))
+        self.assertIn("owner: ids.ownerFilter.value, boardOwner: ids.boardOwner.value,", self.function("saveUIState"))
+        self.assertIn("restoreOwner(ids.ownerFilter, savedUI.owner, '');", self.script)
+
+    def test_the_board_shows_my_cards_first_with_a_switch_for_everyone_and_fits_four_columns(self):
+        self.assertRegex(self.page, r'<label id="boardOwnerChip" class="chip chip-select" hidden>.*\s*<select id="boardOwner"><option value="">Everyone</option>'
+                                    r'<option value="mine" selected>Me</option></select></label>')
+        self.assertIn('<button id="boardEveryone" class="tl-switch" type="button" role="switch" aria-checked="false"', self.page)
+        self.assertIn("function ownerSelect() { return view === 'board' ? ids.boardOwner : ids.ownerFilter; }", self.script)
+        self.assertIn("restoreOwner(ids.boardOwner, savedUI.boardOwner, readBoardEveryone() ? '' : OWNER_MINE);", self.script)
+        self.assertIn("ids.boardEveryone.setAttribute('aria-checked', String(ids.boardOwner.value === ''));", self.function("renderFilterChips"))
+        self.assertIn("ids.boardOwner.value = ids.boardOwner.value === '' ? OWNER_MINE : '';", self.script)
+        # 4 columns, 3 gaps and the side padding fit the page of a 1280 px window (1032 px beside the 248 px sidebar).
+        self.assertIn("grid-auto-columns: minmax(220px, 1fr);", self.styles)
+        self.assertLessEqual(4 * 220 + 3 * 12 + 2 * 24, 1280 - 248)
+
+    def test_the_history_shows_the_newest_note_first_and_keeps_the_register_index(self):
+        notes = self.function("renderNotes")
+        self.assertIn("details.notes.filter(note => !/^-?\\s*(created|updated)\\s*:/i.test(note.text)).reverse();", notes)
+        self.assertIn("noteState = {id: details.id, version: details.details_version, notes: details.notes};", notes)
+        self.assertIn("/notes/${note.index}`", self.function("deleteNote"))
+        # The field to add a note opens above the list, where the new note appears.
+        self.assertLess(self.page.index('<div id="noteForm"'), self.page.index('<ol id="editorHistoryList"'))
+
+    def test_the_panel_has_a_subtask_checklist_between_the_fields_and_the_history(self):
+        self.assertLess(self.page.index('<div class="props">'), self.page.index('<section id="editorSubtasks"'))
+        self.assertLess(self.page.index('<section id="editorSubtasks"'), self.page.index('<section id="editorHistory"'))
+        self.assertIn('<ol id="editorSubtaskList" class="subtask-list" aria-labelledby="editorSubtasksTitle"></ol>', self.page)
+        self.assertIn('<p id="subtaskError" class="form-error" role="alert" hidden></p>', self.page)
+        item = self.function("subtaskItem")
+        for fragment in ("box.type = 'checkbox';", "text.htmlFor = box.id;", "`Move “${item.text}” up`", "`Move “${item.text}” down`",
+                         "`Rename “${item.text}”`", "`Delete “${item.text}”`"):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, item)
+        # Register order: the list is drawn as the details give it, never sorted by state.
+        self.assertIn("ids.editorSubtaskList.replaceChildren(...subtaskState.map(subtaskItem));", self.function("renderSubtaskList"))
+        self.assertNotIn("sort", self.function("renderSubtasks") + self.function("renderSubtaskList"))
+        # The limits are visible before the write; the routes and the lock are the server's.
+        self.assertIn("`${words}/${SUBTASK_WORDS} words`", self.function("updateSubtaskHint"))
+        self.assertIn("const HISTORY_WORDS = 35;", self.script)
+        self.assertIn("/subtasks${suffix}", self.function("subtaskSend"))
+        self.assertIn("details_version: version", self.function("subtaskSend"))
+
+    def test_the_lists_show_the_progress_pill_and_the_search_reads_the_subtasks(self):
+        self.assertIn("progress.done === progress.total ? ' is-complete' : ''", self.function("subtaskPill"))
+        for name in ("actionRow", "makeCard", "timelineChip", "trayCard"):
+            with self.subTest(function=name):
+                self.assertIn("subtaskPill(action)", self.function(name))
+        self.assertIn("(action.subtasks?.texts || []).join(' ')", self.function("actionSearchText"))
+        self.assertIn(".subtask-pill.is-complete {", self.styles)
+
+    def test_a_closing_warning_and_a_refused_note_are_shown(self):
+        self.assertIn("warnings: result.warnings || []", self.function("patchAction"))
+        self.assertIn("warnings: result.warnings || []", self.function("saveEditor"))
+        self.assertIn("ids.toast.classList.toggle('is-warning', warnings.length > 0);", self.function("showToast"))
+        self.assertIn("onError(error);", self.function("changeDetails"))
+        self.assertIn("error.message", self.function("showNoteError"))
+        self.assertIn("This note is already in the history: nothing was added.", self.function("submitNote"))
+
+    def test_touch_targets_are_36_px_without_changing_the_desktop(self):
+        start = self.styles.index("@media (pointer: coarse), (max-width: 700px) {")
+        touch = self.styles[start:self.styles.index("\n}\n", start)]
+        for rule in (".chip { height: 36px; }", ".chip-clear { width: 36px; height: 36px; }", ".row-action { width: 36px; height: 36px; }",
+                     ".tl-card-date { top: 0; right: 0; width: 36px; height: 36px; }", ".link-button { min-height: 36px;"):
+            with self.subTest(rule=rule):
+                self.assertIn(rule, touch)
+        for selector in (".row .status-button", ".card-top .status-button", ".due-button"):
+            with self.subTest(selector=selector):
+                self.assertRegex(touch, rf"\n  {re.escape(selector)} \{{[^}}]*\bheight: 36px;")
+        # Outside that block the dense sizes are the ones of the desktop.
+        desktop = self.styles[:start]
+        self.assertIn("height: 26px; padding: 0 8px;", desktop[desktop.index("\n.chip {"):desktop.index("\n.chip-key")])
+        self.assertRegex(desktop, r"\n\.status-button \{\s*display: grid; place-items: center; width: 24px; height: 24px;")
+        self.assertIn("--row-h: 40px;", desktop)
 
 
 if __name__ == "__main__":

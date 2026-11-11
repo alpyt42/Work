@@ -13,7 +13,7 @@ Only listens on 127.0.0.1. The Markdown registers remain the source of truth.
 A Work can hold several brains (`brain`, `brain-<name>`): the page switches between them without a
 restart, and every /api route takes an optional `brain=<name>` (a discovered name, never a path).
 `--brain` only chooses the default brain (otherwise the default brain of Work, see tools/machine/work_config.py).
-WORK_DIR points to another Work root.
+WORK_DIR points to another Work root; a relative `--brain` is read from that root, and a folder that is not a brain is refused.
 """
 
 from __future__ import annotations
@@ -54,6 +54,9 @@ WORK = Path(os.environ.get("WORK_DIR", TOOLS_ROOT)).resolve()
 # Every write to an action register goes through tools/brain/action.py, run as a command (the same tool
 # the agents use); reads import it, so the parsing is shared too.
 ACTION_SCRIPT = TOOLS_ROOT / "tools/brain/action.py"
+# Archiving a whole project or client, and bringing it back, is `tools/brain/brain-state.py archive|unarchive`, run as a command
+# (the same tool and the same refusals as for the agents, see `Store.archive_change`).
+BRAIN_STATE_SCRIPT = TOOLS_ROOT / "tools/brain/brain-state.py"
 _spec = importlib.util.spec_from_file_location("brain_action", ACTION_SCRIPT)
 assert _spec and _spec.loader
 action_tool = importlib.util.module_from_spec(_spec)
@@ -84,6 +87,13 @@ finally:
     else:
         os.environ["BRAIN_DIR"] = _links_brain
 ACTION_STATUS = {"bad_request": HTTPStatus.BAD_REQUEST, "not_found": HTTPStatus.NOT_FOUND, "conflict": HTTPStatus.CONFLICT}
+SUBTASKS_ROUTE = re.compile(r"/api/actions/([A-Z]{2,5}-\d{3})/subtasks")  # POST: add a subtask
+SUBTASK_ROUTE = re.compile(r"/api/actions/([A-Z]{2,5}-\d{3})/subtasks/(\d{1,2})")  # PATCH: tick, rename or move it; DELETE: remove it
+# Where archived folders are, below `projects/` (see action.py `live_parts`): a whole client, a client mission, an internal project,
+# and the two earlier places; and the order of their kinds in the Archives view.
+ARCHIVE_PLACES = ("clients/archive/*", "clients/*/missions/archive/*", "internal/archive/*", "archive/*", "clients/*/archive/*")
+ARCHIVE_KINDS = ("client", "mission", "internal")
+ARCHIVE_VERBS = {"/api/archives/archive": "archive", "/api/archives/unarchive": "unarchive"}
 ASSETS = Path(__file__).resolve().parent / "static"
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DUE_NOTE_RE = re.compile(r"-\s*due\s*:\s*(.*)", re.IGNORECASE | re.DOTALL)
@@ -329,6 +339,21 @@ def default_brain_dir() -> Path:
         return WORK / "brain"
 
 
+def brain_option(value: Path, work: Path) -> Path:
+    """The folder `--brain` names; ValueError when it is not a brain.
+
+    A relative value is read from the Work root the server serves (`work`: WORK_DIR, else this checkout), never from the
+    directory the command is run in: with WORK_DIR set, `--brain brain-acme` would otherwise serve the brain-acme of the
+    current directory, a brain of another Work, without a word. A brain is a folder that holds an AGENTS.md and a .data/
+    folder (the rule of tools/machine/work_config.py); its name is free, since the default brain may live outside Work.
+    """
+    path = (value if value.is_absolute() else work / value).resolve()
+    if not (path.is_dir() and (path / "AGENTS.md").is_file() and (path / ".data").is_dir()):
+        where = "" if value.is_absolute() else f"; a relative --brain is read from the Work root, {work}"
+        raise ValueError(f"--brain {value}: {path} is not a brain (a folder holding AGENTS.md and .data/){where}")
+    return path
+
+
 def brain_label(name: str) -> str:
     """Short name shown in the page: `brain-initech` -> `Initech`, `brain-acme-corp` -> `Acme-corp`, `brain` -> `Brain`.
 
@@ -337,6 +362,51 @@ def brain_label(name: str) -> str:
     """
     short = name.removeprefix("brain-") or name
     return short[:1].upper() + short[1:]
+
+
+CLIENT_HEADING_PREFIX_RE = re.compile(r"^client\s*:\s*", re.IGNORECASE)
+CLIENT_PAGE_READ = 8192
+
+
+def client_display_name(folder: Path) -> str:
+    """How the page names a client: the first level-1 heading of `<client>/<client>.md` without its `Client:` prefix
+    (`# Client: Acme Labs` -> `Acme Labs`, a heading without the prefix as it is), else the folder name with
+    each word capitalised (`globex-industries` -> `Globex Industries`). Only displayed: the folder name stays the value
+    the API addresses (register paths, labels)."""
+    page = folder / f"{folder.name}.md"
+    try:
+        if page.is_file() and not page.is_symlink():
+            with open(page, "rb") as handle:
+                text = handle.read(CLIENT_PAGE_READ).decode("utf-8", "replace").lstrip("﻿")
+            fenced = False
+            for line in split_front_matter(text)[1].splitlines():
+                if FENCE_RE.match(line):
+                    fenced = not fenced
+                    continue
+                heading = None if fenced else HEADING_RE.match(line)
+                if heading and len(heading.group(1)) == 1:
+                    name = " ".join(CLIENT_HEADING_PREFIX_RE.sub("", heading.group(2).strip()).split())
+                    if name:
+                        return name[:120]
+                    break
+    except OSError:
+        pass
+    return " ".join(word[:1].upper() + word[1:] for word in re.split(r"[-_\s]+", folder.name) if word) or folder.name
+
+
+def client_names(brain: Path) -> dict[str, str]:
+    """Folder name -> display name of every client of the brain, the archived ones too (a live client wins a shared name)."""
+    clients = brain / "projects/clients"
+    names: dict[str, str] = {}
+    for shelf in (clients / "archive", clients):
+        try:
+            folders = sorted(shelf.iterdir()) if shelf.is_dir() and not shelf.is_symlink() else []
+        except OSError:
+            folders = []
+        for folder in folders:
+            if folder.is_dir() and not folder.is_symlink() and not folder.name.startswith(".") and folder.name != "archive":
+                names[folder.name] = client_display_name(folder)
+    return names
 
 
 def brain_boundary(brain: Path) -> dict[str, str]:
@@ -596,7 +666,7 @@ def git_project(brain: Path, relative: str) -> str:
         if register.is_file() and not register.is_symlink():
             return action_tool.project_label(register, brain)
     # No register (a client page, or a project deleted with its register): the same rule, read from the path.
-    inner = parts[1:-1]
+    inner = list(action_tool.live_parts(tuple(parts[1:-1])))  # an archived project or client reads like a live one
     if len(inner) >= 4 and inner[0] == "clients" and inner[2] == "missions":
         return f"{inner[1]} / {inner[3]}"
     return inner[1] if len(inner) >= 2 else ""
@@ -1386,13 +1456,19 @@ class Store:
             raise ValueError(f"Registers not found under {self.projects}")
         self.undo_stack: list[dict] = []
         self._doc_cache: dict[str, DocEntry] = {}
+        self._archive_cache: dict[str, DocEntry] = {}  # the documents of the archived projects (the Archives view)
         self._doc_lock = threading.Lock()
 
+    def archived(self, path: Path | str) -> bool:
+        """True for a path inside an archived project (an `archive/` folder at its level, see `action.py` `live_parts`): the app never shows those."""
+        return action_tool.in_archived_project(path, self.brain)
+
     def registers(self) -> list[Path]:
+        """The registers of the ongoing projects (archived ones are skipped: they leave every view; only Sync, which reads Git, still sees them)."""
         root = self.projects.resolve()
         files = []
         for path in sorted(root.glob("**/state/actions.md")):
-            if path.is_symlink() or not path.resolve().is_relative_to(root) or not path.is_file():
+            if path.is_symlink() or not path.resolve().is_relative_to(root) or not path.is_file() or self.archived(path):
                 continue
             files.append(path)
         return files
@@ -1430,11 +1506,28 @@ class Store:
                     entry["due_note"] = "" if note in {"", "—", "–", "-"} else note[:200]
                     break
 
+    @staticmethod
+    def _subtask_texts(path: Path, entries: list[dict]) -> None:
+        """Add the texts of the steps to the `subtasks` progress `load()` gives an action that has subtasks ({done, total}):
+        `texts`, in register order, so that the page searches them. A register that changed meanwhile gives an empty list."""
+        pending = [entry for entry in entries if "subtasks" in entry]
+        if not pending:
+            return
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            lines = []
+        for entry in pending:
+            index = entry["line"] - 1
+            fresh = index < len(lines) and f"**{entry['id']}**" in lines[index]
+            entry["subtasks"]["texts"] = [item["text"] for item in action_tool.subtasks_of(lines, index)] if fresh else []
+
     def _scan_registers(self) -> list[dict]:
         infos = []
         for path in self.registers():
             entries = action_tool.load(path, self.brain)
             self._due_notes(path, entries)
+            self._subtask_texts(path, entries)
             label = entries[0]["project"] if entries else action_tool.project_label(path, self.brain)
             prefixes = {entry["id"].split("-", 1)[0] for entry in entries}
             infos.append({"file": path, "path": path.relative_to(self.brain).as_posix(), "label": label,
@@ -1446,7 +1539,8 @@ class Store:
         infos = self._scan_registers()
         actions = [action for info in infos for action in info["entries"]]
         registers = [{key: info[key] for key in ("path", "label", "prefix", "groups")} for info in infos]
-        return {"actions": actions, "registers": registers, "owner": self.owner(), "today": datetime.now(ZoneInfo("Europe/Paris")).date().isoformat()}
+        return {"actions": actions, "registers": registers, "owner": self.owner(), "today": datetime.now(ZoneInfo("Europe/Paris")).date().isoformat(),
+                "clients": client_names(self.brain)}
 
     def _register(self, relative: object) -> Path:
         if not isinstance(relative, str):
@@ -1553,6 +1647,8 @@ class Store:
         entry = self.undo_stack[-1]
         if payload["label"] != entry["label"]:
             raise TaskError(HTTPStatus.CONFLICT, "The last change is different. Refresh before undoing.")
+        if entry.get("command"):  # an archive or an unarchive: its undo is the inverse command
+            return self._undo_archive(entry)
         path = entry["path"]
         if entry.get("deleted"):
             self._restore_deleted_note(entry)
@@ -1602,20 +1698,71 @@ class Store:
         if not isinstance(payload["version"], str):
             raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid update data.")
         path = self._find(action_id)[0]
-        self._run_action(path, action_id, "update", action_id, *self._field_args(fields), f"--expect-version={payload['version']}")
-        return {"id": action_id}
+        result = self._run_action(path, action_id, "update", action_id, *self._field_args(fields), f"--expect-version={payload['version']}")
+        # Closing an action whose subtasks are still open is allowed: the tool says so, and the page shows it.
+        return {"id": action_id, **({"warnings": result["warnings"]} if result.get("warnings") else {})}
 
-    def _locked(self, action_id: str, payload: dict, keys: set[str]) -> Path:
+    def _locked(self, action_id: str, payload: dict, keys: set[str], what: str = "note") -> Path:
         if set(payload) != keys or not isinstance(payload["details_version"], str):
-            raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid note data.")
+            raise TaskError(HTTPStatus.BAD_REQUEST, f"Invalid {what} data.")
         return self._find(action_id)[0]
 
     def add_note(self, action_id: str, payload: dict) -> dict:
         note = clean_note(payload.get("note"))
         path = self._locked(action_id, payload, {"details_version", "note"})
-        self._run_action(path, action_id, "history", "add", action_id, f"--text={note}",
-                         f"--expect-details-version={payload['details_version']}")
-        return self.details(action_id)
+        result = self._run_action(path, action_id, "history", "add", action_id, f"--text={note}",
+                                  f"--expect-details-version={payload['details_version']}")
+        # The same note on the same day is written once: `unchanged` tells the page that nothing was added.
+        return {**self.details(action_id), "unchanged": bool(result.get("unchanged"))}
+
+    # Subtasks: the checklist of an action, written by `action.py subtask` under the details-version lock; each answer is the
+    # refreshed details (like the history routes), and each write is one undo step. The tool's refusals (too many words, an
+    # eleventh subtask, an index that is not there) come back as 400 with its message, a stale lock as 409.
+
+    @staticmethod
+    def _subtask_text(value: object) -> str:
+        if not isinstance(value, str) or not value.strip() or len(value) > 1000:
+            raise TaskError(HTTPStatus.BAD_REQUEST, "Subtask text is required.")
+        return value.strip()
+
+    def _subtask_run(self, path: Path, action_id: str, payload: dict, *argv: str) -> dict:
+        result = self._run_action(path, action_id, "subtask", *argv, f"--expect-details-version={payload['details_version']}")
+        return {**self.details(action_id), "unchanged": bool(result.get("unchanged"))}
+
+    def add_subtask(self, action_id: str, payload: dict) -> dict:
+        """`POST /api/actions/<ID>/subtasks` {details_version, text[, position]}: a new open subtask, last unless `position` (from 0)."""
+        keys = {"details_version", "text"} | ({"position"} if "position" in payload else set())
+        path = self._locked(action_id, payload, keys, "subtask")
+        text = self._subtask_text(payload["text"])
+        position = payload.get("position")
+        if position is not None and (type(position) is not int or position < 0):
+            raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid subtask position.")
+        return self._subtask_run(path, action_id, payload, "add", action_id, f"--text={text}",
+                                 *([] if position is None else [f"--position={position}"]))
+
+    def change_subtask(self, action_id: str, number: int, payload: dict) -> dict:
+        """`PATCH /api/actions/<ID>/subtasks/<N>` {details_version} and one of: `done` (true ticks, false unticks: a subtask already
+        in that state is left as is), `text` (renames it, state kept) or `to` (moves it to that index, from 0)."""
+        change = set(payload) - {"details_version"}
+        if len(change) != 1 or not change <= {"done", "text", "to"}:
+            raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid subtask data.")
+        path = self._locked(action_id, payload, {"details_version", *change}, "subtask")
+        if "done" in payload:
+            if not isinstance(payload["done"], bool):
+                raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid subtask data.")
+            return self._subtask_run(path, action_id, payload, "toggle", action_id, f"--index={number}",
+                                     "--done" if payload["done"] else "--undone")
+        if "text" in payload:
+            text = self._subtask_text(payload["text"])
+            return self._subtask_run(path, action_id, payload, "edit", action_id, f"--index={number}", f"--text={text}")
+        if type(payload["to"]) is not int or payload["to"] < 0:
+            raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid subtask position.")
+        return self._subtask_run(path, action_id, payload, "move", action_id, f"--index={number}", f"--to={payload['to']}")
+
+    def remove_subtask(self, action_id: str, number: int, payload: dict) -> dict:
+        """`DELETE /api/actions/<ID>/subtasks/<N>` {details_version}."""
+        path = self._locked(action_id, payload, {"details_version"}, "subtask")
+        return self._subtask_run(path, action_id, payload, "remove", action_id, f"--index={number}")
 
     def delete_note(self, action_id: str, number: int, payload: dict) -> dict:
         if not isinstance(payload.get("text"), str):
@@ -1875,8 +2022,10 @@ class Store:
 
     # --- Documents ---------------------------------------------------------------------------------------
 
-    def _doc_files(self):
-        """(absolute path, brain-relative id, stat) of every Markdown file: dot-entries, symlinks and oversized files are skipped."""
+    def _doc_files(self, archived: bool = False):
+        """(absolute path, brain-relative id, stat) of every Markdown file: dot-entries, symlinks, oversized files and archived projects are skipped.
+
+        ``archived``: the other way round, only the files of the archived projects (the Archives view, which alone reads them)."""
         stack = [str(self.brain)]
         prefix = len(str(self.brain)) + 1
         while stack:
@@ -1892,21 +2041,24 @@ class Store:
                     if item.is_symlink():
                         continue
                     if item.is_dir(follow_symlinks=False):
-                        stack.append(item.path)
-                    elif item.name.lower().endswith(".md") and item.is_file(follow_symlinks=False):
+                        if archived or not self.archived(item.path):
+                            stack.append(item.path)
+                    elif item.name.lower().endswith(".md") and item.is_file(follow_symlinks=False) and (not archived or self.archived(item.path)):
                         info = item.stat(follow_symlinks=False)
                         if info.st_size <= DOC_SIZE_LIMIT:
                             yield item.path, item.path[prefix:].replace(os.sep, "/"), info
                 except OSError:
                     continue
 
-    def docs(self) -> list[DocEntry]:
-        """Parsed catalogue, cached per file by (path, mtime_ns, size); a changed file is re-read, a vanished one is forgotten."""
+    def docs(self, archived: bool = False) -> list[DocEntry]:
+        """Parsed catalogue, cached per file by (path, mtime_ns, size); a changed file is re-read, a vanished one is forgotten.
+        ``archived``: the catalogue of the archived projects instead, with its own cache."""
         with self._doc_lock:
+            cache = self._archive_cache if archived else self._doc_cache
             fresh: dict[str, DocEntry] = {}
-            for path, doc_id, info in self._doc_files():
+            for path, doc_id, info in self._doc_files(archived):
                 key = (info.st_mtime_ns, info.st_size)
-                entry = self._doc_cache.get(doc_id)
+                entry = cache.get(doc_id)
                 if entry is None or entry.key != key or entry.path != path:
                     try:
                         if not os.path.realpath(path).startswith(str(self.brain) + os.sep):
@@ -1919,13 +2071,23 @@ class Store:
                         continue
                     entry = DocEntry(doc_id, path, key, data.decode("utf-8", "replace").lstrip("﻿"))
                 fresh[doc_id] = entry
-            self._doc_cache = fresh
+            if archived:
+                self._archive_cache = fresh
+            else:
+                self._doc_cache = fresh
             return list(fresh.values())
 
-    def _doc_projects(self) -> list[tuple[str, str, str]]:
-        """(project dir relative to the brain, label, register path), longest directory first."""
-        found = [(info["dir"].relative_to(self.brain).as_posix(), info["label"], info["register"]) for info in self._project_dirs()]
-        found.append((INBOX_DIR, INBOX_LABEL, INBOX_REGISTER))
+    def _doc_projects(self, archived: bool = False) -> list[tuple[str, str, str]]:
+        """(project dir relative to the brain, label, register path), longest directory first.
+        ``archived``: the archived projects instead (no Inbox), and each archived root (a client page has no register: its own path)."""
+        if archived:
+            found = [(path.parent.parent.relative_to(self.brain).as_posix(), action_tool.project_label(path, self.brain), path.relative_to(self.brain).as_posix())
+                     for path in self._archived_registers()]
+            found += [(root.relative_to(self.brain).as_posix(), self._archive_label(root), root.relative_to(self.brain).as_posix())
+                      for root in self.archive_roots()]
+        else:
+            found = [(info["dir"].relative_to(self.brain).as_posix(), info["label"], info["register"]) for info in self._project_dirs()]
+            found.append((INBOX_DIR, INBOX_LABEL, INBOX_REGISTER))
         return sorted(found, key=lambda item: -len(item[0]))
 
     @staticmethod
@@ -1984,16 +2146,17 @@ class Store:
         items.sort(key=lambda item: item["date"], reverse=True)
         return {"docs": items}
 
-    def search(self, query: str, project: str) -> dict:
+    def search(self, query: str, project: str, archived: bool = False) -> dict:
+        """The global search of the documents; ``archived``: of the archived projects only (the Archives view), never both."""
         terms = parse_query(query)
         empty = {"query": query, "terms": terms, "results": [], "total": 0, "truncated": False}
         if not terms:
             return empty
-        projects = self._doc_projects()
+        projects = self._doc_projects(archived)
         folders = {register: folder for folder, _, register in projects}
         now = datetime.now().timestamp()
         matches: list[tuple[float, str, DocEntry, tuple[str, str] | None]] = []
-        for entry in self.docs():
+        for entry in self.docs(archived):
             owner = self._doc_project(entry.id, projects)
             if project == "none" and owner is not None:
                 continue
@@ -2017,8 +2180,9 @@ class Store:
         } for score, _, entry, owner in matches[:SEARCH_RESULT_LIMIT]]
         return {**empty, "results": results, "total": len(matches), "truncated": len(matches) > SEARCH_RESULT_LIMIT}
 
-    def render_doc(self, doc_id: object) -> dict:
-        catalogue = {entry.id: entry for entry in self.docs()}
+    def render_doc(self, doc_id: object, archived: bool = False) -> dict:
+        """A document rendered for the reader; ``archived``: a document of an archived project (read-only, the Archives view), and only those."""
+        catalogue = {entry.id: entry for entry in self.docs(archived)}
         entry = catalogue.get(doc_id) if isinstance(doc_id, str) else None
         if entry is None:
             raise TaskError(HTTPStatus.NOT_FOUND, "Document not found.")
@@ -2030,10 +2194,10 @@ class Store:
         if len(data) > DOC_SIZE_LIMIT:
             raise TaskError(HTTPStatus.NOT_FOUND, "Document not found.")
         text = data.decode("utf-8", "replace").lstrip("﻿")
-        owner = self._doc_project(entry.id, self._doc_projects())
+        owner = self._doc_project(entry.id, self._doc_projects(archived))
         try:
             self._note_entry(entry.id)
-            is_note = True
+            is_note = not archived  # an archived note is read, never edited
         except TaskError:
             is_note = False
         properties, text = split_front_matter(text)
@@ -2041,6 +2205,201 @@ class Store:
         return {"id": entry.id, "title": entry.title,
                 "project": owner[0] if owner else None, "register": owner[1] if owner else None, "html": html,
                 "note": is_note, "deletable": is_note, "version": hashlib.sha256(data).hexdigest()[:16] if is_note else None}
+
+    # --- Archives ----------------------------------------------------------------------------------------
+    # An archived project or client (moved whole into the `archive/` folder at its level by `brain-state.py archive`) is out of every
+    # view and search; the Archives view alone lists and reads them, read-only. Archiving and unarchiving run that tool: a dry run to
+    # show what moves (or what blocks), then the write, one undo step whose undo is the inverse command.
+
+    def _archived_registers(self) -> list[Path]:
+        return [path for path in action_tool.registers(self.brain) if self.archived(path)]
+
+    def archive_roots(self) -> list[Path]:
+        """The archived folders, each one what `unarchive` brings back: a whole client, a client mission, an internal project (the
+        earlier places `projects/archive/<p>` and `projects/clients/<c>/archive/<m>` too). A mission inside an archived client is part of it."""
+        roots: set[Path] = set()
+        for pattern in ARCHIVE_PLACES:
+            for folder in self.projects.glob(pattern):
+                if (folder.name != "archive" and not folder.name.startswith(".") and folder.is_dir() and not folder.is_symlink()
+                        and action_tool.archived_root(folder, self.brain) == folder):
+                    roots.add(folder)
+        return sorted(roots, key=lambda root: (ARCHIVE_KINDS.index(self._archive_kind(root)), self._archive_label(root)))
+
+    def _archive_kind(self, folder: Path) -> str:
+        """`client`, `mission` or `internal`, as the folder reads out of the archive."""
+        parts = action_tool.live_parts(folder.relative_to(self.projects).parts)
+        return "client" if parts[:1] == ("clients",) and len(parts) == 2 else "mission" if parts[:1] == ("clients",) else "internal"
+
+    def _archive_label(self, folder: Path) -> str:
+        """The label of an archived folder as a live one reads (`client / mission`, the project, the client), by folder names."""
+        parts = action_tool.live_parts(folder.relative_to(self.projects).parts)
+        return f"{parts[1]} / {parts[3]}" if parts[:1] == ("clients",) and len(parts) >= 4 else parts[-1]
+
+    def _archived_on(self, folder: Path) -> str | None:
+        """The day Git saw the folder's files appear where they are (the commit of the move); None without Git or before it is saved."""
+        if not (self.brain / ".git").exists():
+            return None
+        try:
+            day = run_git(self.brain, "log", "-1", "--format=%cs", "--diff-filter=A", "--", folder.relative_to(self.brain).as_posix())
+        except TaskError:
+            return None
+        day = day.decode("utf-8", "replace").strip()
+        return day if DATE_RE.match(day) else None
+
+    @staticmethod
+    def _archived_action(entry: dict, folder: str) -> dict:
+        return {**{key: entry[key] for key in ("id", "title", "owner", "state", "done", "due", "project", "register", "group", "priority")},
+                "folder": folder, **({"subtasks": entry["subtasks"]} if "subtasks" in entry else {})}
+
+    def archives(self) -> dict:
+        """`GET /api/archives`: each archived folder (`folder`, `kind`, `label` by folder names, `client`, `archived_on`, its `projects`
+        and the `counts` of its actions), every archived action (for the search of the view) and the display names of the clients."""
+        registers = self._archived_registers()
+        items, actions = [], []
+        for root in self.archive_roots():
+            folder = root.relative_to(self.brain).as_posix()
+            mine = [path for path in registers if path.is_relative_to(root)]
+            entries = [entry for path in mine for entry in action_tool.load(path, self.brain)]
+            done = sum(entry["state"] == "x" for entry in entries)
+            cancelled = sum(entry["state"] == "-" for entry in entries)
+            parts = action_tool.live_parts(root.relative_to(self.projects).parts)
+            items.append({"folder": folder, "kind": self._archive_kind(root), "label": self._archive_label(root),
+                          "client": parts[1] if parts[:1] == ("clients",) else "", "archived_on": self._archived_on(root),
+                          "projects": [{"register": path.relative_to(self.brain).as_posix(), "label": action_tool.project_label(path, self.brain)} for path in mine],
+                          "counts": {"total": len(entries), "done": done, "cancelled": cancelled, "open": len(entries) - done - cancelled}})
+            actions += [self._archived_action(entry, folder) for entry in entries]
+        return {"archives": items, "actions": actions, "clients": client_names(self.brain)}
+
+    def _archive_folder(self, value: object, archived: bool) -> Path:
+        """The folder a request names (brain-relative, `projects/…`): an archived root for ``archived``, else a live project (one with a
+        register) or a live client. Anything else, a path that climbs out or a link included, is refused."""
+        if not isinstance(value, str) or not value.startswith("projects/") or "\\" in value or "\x00" in value:
+            raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid project folder.")
+        value = value.rstrip("/")
+        if any(part in {"", ".", ".."} for part in value.split("/")):
+            raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid project folder.")
+        if archived:
+            known = {root.relative_to(self.brain).as_posix(): root for root in self.archive_roots()}
+        else:
+            known = {path.parent.parent.relative_to(self.brain).as_posix(): path.parent.parent for path in self.registers()}
+            clients = self.projects / "clients"
+            for folder in (sorted(clients.iterdir()) if clients.is_dir() and not clients.is_symlink() else []):
+                if folder.is_dir() and not folder.is_symlink() and not folder.name.startswith(".") and folder.name != "archive":
+                    known[folder.relative_to(self.brain).as_posix()] = folder
+        folder = known.get(value)
+        if folder is None:
+            raise TaskError(HTTPStatus.NOT_FOUND, "Archived project not found." if archived else "Project not found.")
+        return folder
+
+    def archive_project(self, value: object) -> dict:
+        """`GET /api/archives/project?folder=`: an archived folder to read: its page, and for each of its projects the page, the
+        decisions (`state/decisions.md`, read as a document) and the actions; and its documents of the Docs types, newest first."""
+        root = self._archive_folder(value, archived=True)
+        folder = root.relative_to(self.brain).as_posix()
+        catalogue = {entry.id: entry for entry in self.docs(archived=True)}
+
+        def page(directory: Path) -> str | None:
+            doc_id = (directory / f"{directory.name}.md").relative_to(self.brain).as_posix()
+            return doc_id if doc_id in catalogue else None
+
+        projects = []
+        for path in (path for path in self._archived_registers() if path.is_relative_to(root)):
+            directory = path.parent.parent
+            decisions = (directory / "state/decisions.md").relative_to(self.brain).as_posix()
+            projects.append({"register": path.relative_to(self.brain).as_posix(), "label": action_tool.project_label(path, self.brain),
+                             "folder": directory.relative_to(self.brain).as_posix(), "page": page(directory) if directory != root else None,
+                             "decisions": decisions if decisions in catalogue else None,
+                             "actions": action_tool.load(path, self.brain)})
+        owners = self._doc_projects(archived=True)
+        folders = {register: owner_folder for owner_folder, _, register in owners}
+        docs = []
+        for entry in catalogue.values():
+            if not entry.id.startswith(folder + "/"):
+                continue
+            owner = self._doc_project(entry.id, owners)
+            kind = self._doc_kind(entry.id, owner, folders)
+            if kind is not None:
+                docs.append({"id": entry.id, "title": entry.title, "type": kind, "project": owner[0] if owner else None,
+                             "date": doc_date(posixpath.basename(entry.id), entry.mtime)})
+        docs.sort(key=lambda item: item["title"].casefold())
+        docs.sort(key=lambda item: item["date"], reverse=True)
+        return {"folder": folder, "kind": self._archive_kind(root), "label": self._archive_label(root), "archived_on": self._archived_on(root),
+                "page": page(root), "projects": projects, "docs": docs}
+
+    def _run_archive(self, verb: str, folder: Path, write: bool) -> dict:
+        """`brain-state.py archive|unarchive <folder> --brain <name> --json [--write]`, on the Work this brain sits in.
+
+        Run as a command, as action.py is for the actions: the tool owns the rules (finished projects only, `internal/setup` never, the
+        links to rewrite, the exact inverse) and says its refusals in its own words; a 400 carries them, a 409 when open actions block
+        it (with their list) or the place is taken."""
+        if not work_config.is_brain(self.brain):
+            raise TaskError(HTTPStatus.BAD_REQUEST, "Archiving needs a brain of a Work (a folder holding AGENTS.md and .data/).")
+        argv = [sys.executable, str(BRAIN_STATE_SCRIPT), verb, str(folder), "--brain", self.brain.name, "--json", *(["--write"] if write else [])]
+        try:
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=180, check=False, stdin=subprocess.DEVNULL,
+                                    env={**os.environ, "WORK_DIR": str(self.brain.parent)})
+        except (OSError, subprocess.TimeoutExpired):
+            raise TaskError(HTTPStatus.INTERNAL_SERVER_ERROR, "Could not run the archive tool.") from None
+        try:
+            payload = json.loads(result.stdout) if result.stdout.strip() else None
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict) and payload.get("refused") == "open actions":
+            still = payload.get("open_actions") or []
+            raise TaskError(HTTPStatus.CONFLICT, f"{payload.get('project', 'This project')} cannot be archived: {len(still)} "
+                            f"{'action is' if len(still) == 1 else 'actions are'} still to do, in progress or waiting. Close or cancel "
+                            f"{'it' if len(still) == 1 else 'them'} first, then archive again.",
+                            open_actions=[{key: item.get(key, "") for key in ("id", "state", "title", "project")} for item in still])
+        if not isinstance(payload, dict) or "to" not in payload:
+            lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
+            message = lines[-1] if lines else f"The archive tool failed (exit {result.returncode})."
+            raise TaskError(HTTPStatus.CONFLICT if "already exists" in message else HTTPStatus.BAD_REQUEST, message[:1].upper() + message[1:])
+        return payload
+
+    def _archive_summary(self, payload: dict) -> dict:
+        """What the page shows of an archive or unarchive: what moves where, the links rewritten, the mentions left, the link check."""
+        def local(shown: str) -> str:
+            return shown.split("/", 1)[1] if "/" in shown else shown
+        check = payload.get("link_check")
+        return {"verb": payload["command"], "kind": payload["kind"], "label": payload["project"], "from": local(payload["from"]),
+                "to": local(payload["to"]), "write": payload["write"], "files_changed": payload["files_changed"],
+                "links": len(payload["links"]), "link_files": sorted({item["file"] for item in payload["links"]}),
+                "mentions_left": payload["mentions_left"], "created_dirs": [local(item) for item in payload["created_dirs"]],
+                "removed_dirs": [local(item) for item in payload["removed_dirs"]],
+                "link_check": None if check is None else {"ok": check.get("exit") == 0, "problems": check.get("problems", [])[:10]}}
+
+    def archive_plan(self, verb: str, value: object) -> dict:
+        """`GET /api/archives/plan?verb=archive|unarchive&folder=`: the dry run, nothing moves."""
+        return self._archive_summary(self._run_archive(verb, self._archive_folder(value, archived=verb == "unarchive"), write=False))
+
+    def archive_write(self, verb: str, payload: dict) -> dict:
+        """`POST /api/archives/archive|unarchive` {folder}: moves it (the tool checks everything again) and stacks the inverse as its undo."""
+        if set(payload) != {"folder"}:
+            raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid archive data.")
+        folder = self._archive_folder(payload["folder"], archived=verb == "unarchive")
+        summary = self._archive_summary(self._run_archive(verb, folder, write=True))
+        self._doc_cache.clear()
+        self._archive_cache.clear()
+        self.undo_stack.append({"command": "unarchive" if verb == "archive" else "archive", "path": self.brain / summary["to"],
+                                "label": f"{verb} of {summary['label']}", "action_id": None})
+        del self.undo_stack[:-UNDO_LIMIT]
+        return summary
+
+    def _undo_archive(self, entry: dict) -> dict:
+        """The undo of an archive or unarchive: the inverse command on the folder where the move left it (refused when it is gone)."""
+        folder = entry["path"]
+        if not folder.is_dir() or folder.is_symlink():
+            self.undo_stack[:] = [item for item in self.undo_stack if item is not entry]
+            raise TaskError(HTTPStatus.CONFLICT, "The folder moved since; this cannot be undone.")
+        try:
+            self._run_archive(entry["command"], folder, write=True)
+        except TaskError:
+            self.undo_stack[:] = [item for item in self.undo_stack if item is not entry]  # refused (an action reopened meanwhile): dropped
+            raise
+        self._doc_cache.clear()
+        self._archive_cache.clear()
+        self.undo_stack.pop()
+        return {"undone": entry["label"], "action_id": None, "undo": self.undo_state()}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -2118,6 +2477,9 @@ class Handler(BaseHTTPRequestHandler):
         if path in {"/api/search", "/api/docs/render", "/api/docs/recent", "/api/docs/list"}:
             self._docs_request(path, store)
             return
+        if path in {"/api/archives", "/api/archives/project", "/api/archives/plan"}:
+            self._archives_request(path, store)
+            return
         if path == "/api/undo":
             with WRITE_LOCK:
                 self._json(HTTPStatus.OK, store.undo_state())
@@ -2157,20 +2519,50 @@ class Handler(BaseHTTPRequestHandler):
                 raise TaskError(HTTPStatus.BAD_REQUEST, f"Invalid {name} parameter.")
             return values[0]
         try:
+            # `archived=1` (search and reader only): the archived projects instead of the live ones, never both.
+            archived = one("archived", "") if path in {"/api/search", "/api/docs/render"} else ""
+            if archived not in {"", "1"}:
+                raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid archived parameter.")
             if path == "/api/search":
-                result = store.search(one("q", ""), one("project", ""))
+                result = store.search(one("q", ""), one("project", ""), archived=archived == "1")
             elif path == "/api/docs/recent":
                 result = store.recent_docs(one("project", ""))
             elif path == "/api/docs/list":
                 with WRITE_LOCK:  # the notes half is read as `/api/notes` reads it
                     result = store.doc_list()
             else:
-                result = store.render_doc(one("id"))
+                result = store.render_doc(one("id"), archived=archived == "1")
             self._json(HTTPStatus.OK, result)
         except TaskError as error:
             self._json(error.status, {"error": error.message})
         except OSError:
             self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Could not read the documents."})
+
+    def _archives_request(self, path: str, store: Store) -> None:
+        """`GET /api/archives` (the list), `/api/archives/project?folder=` (one to read), `/api/archives/plan?verb=&folder=` (a dry run)."""
+        query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+
+        def one(name: str) -> str:
+            values = query.get(name, [])
+            if len(values) != 1:
+                raise TaskError(HTTPStatus.BAD_REQUEST, f"Invalid {name} parameter.")
+            return values[0]
+        try:
+            with WRITE_LOCK:  # never read halfway through a move
+                if path == "/api/archives":
+                    result = store.archives()
+                elif path == "/api/archives/project":
+                    result = store.archive_project(one("folder"))
+                else:
+                    verb = one("verb")
+                    if verb not in {"archive", "unarchive"}:
+                        raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid verb parameter.")
+                    result = store.archive_plan(verb, one("folder"))
+            self._json(HTTPStatus.OK, result)
+        except TaskError as error:
+            self._json(error.status, {"error": error.message, **error.extra})
+        except OSError:
+            self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Could not read the archives."})
 
     def _brain_name(self, required: bool = False) -> str | None:
         """The `brain=<name>` query parameter as written (None when absent, unless `required`)."""
@@ -2275,6 +2667,14 @@ class Handler(BaseHTTPRequestHandler):
                     if not match:
                         raise TaskError(HTTPStatus.NOT_FOUND, "Action not found.")
                     status, result = HTTPStatus.CREATED, store.add_note(match.group(1), payload)
+                elif kind == "archive":
+                    result = store.archive_write(ARCHIVE_VERBS[path], payload)
+                elif kind == "add_subtask":
+                    status, result = HTTPStatus.CREATED, store.add_subtask(SUBTASKS_ROUTE.fullmatch(path).group(1), payload)
+                elif kind in {"change_subtask", "remove_subtask"}:
+                    match = SUBTASK_ROUTE.fullmatch(path)
+                    change = store.change_subtask if kind == "change_subtask" else store.remove_subtask
+                    result = change(match.group(1), int(match.group(2)), payload)
                 elif kind == "note_create":
                     status, result = HTTPStatus.CREATED, store.create_note(payload)
                 elif kind == "note_update":
@@ -2313,6 +2713,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if re.fullmatch(r"/api/actions/[A-Z]{2,5}-\d{3}/notes", path):
             self._write_request("add_note")
+            return
+        if SUBTASKS_ROUTE.fullmatch(path):
+            self._write_request("add_subtask")
+            return
+        if path in ARCHIVE_VERBS:
+            self._write_request("archive")
             return
         if path == "/api/undo":
             self._write_request("undo")
@@ -2366,12 +2772,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.BAD_REQUEST, {"error": "Invalid JSON."})
 
     def do_PATCH(self) -> None:
-        self._write_request("note_update" if urlsplit(self.path).path == "/api/notes" else "update")
+        path = urlsplit(self.path).path
+        self._write_request("note_update" if path == "/api/notes" else "change_subtask" if SUBTASK_ROUTE.fullmatch(path) else "update")
 
     def do_DELETE(self) -> None:
         path = urlsplit(self.path).path
         if path == "/api/notes":
             self._write_request("note_delete")
+            return
+        if SUBTASK_ROUTE.fullmatch(path):
+            self._write_request("remove_subtask")
             return
         is_action = re.fullmatch(r"/api/actions/[A-Z]{2,5}-\d{3}", path)
         self._write_request("delete_action" if is_action else "delete_note")
@@ -2446,21 +2856,25 @@ class TaskServer(ThreadingHTTPServer):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--brain", type=Path, default=None,
-                        help="default brain (default: the default brain of Work); the other brains of Work are chosen in the page")
+                        help="default brain (default: the default brain of Work); a relative path is read from the Work root (WORK_DIR, "
+                             "else this checkout), not from the current directory; the other brains of Work are chosen in the page")
     parser.add_argument("--port", type=int, default=8765, help="local port (default: 8765)")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("invalid port")
     try:
-        brain = args.brain or default_brain_dir()
+        brain = brain_option(args.brain, WORK) if args.brain else default_brain_dir()
     except work_config.ConfigError as error:
         parser.error(f"work config error: {error}")
+    except ValueError as error:
+        parser.error(str(error))
     try:
         store = Store(brain)
     except ValueError as error:
         parser.error(f"{error}" + ("" if args.brain else " (no default brain: set \"defaultBrain\" in work-config.local.json, or pass --brain)"))
     with TaskServer(("127.0.0.1", args.port), store) as server:
         print(f"Actions: http://127.0.0.1:{server.server_port}/ (Ctrl+C to stop)", flush=True)
+        print(f"Default brain: {store.brain} (Work root: {server.work})", flush=True)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

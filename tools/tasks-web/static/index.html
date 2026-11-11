@@ -61,6 +61,10 @@
       </div>
       <div class="sidebar-footer">
         <div class="footer-nav">
+          <button id="archivesButton" class="nav-item nav-compact" type="button" data-view="archives" title="The archived clients, missions and projects, read-only; unarchive one to work on it again.">
+            <svg class="nav-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3" width="11" height="3" rx="1"/><path d="M3.5 6v6.5h9V6M6.5 8.75h3"/></svg>
+            <span class="nav-label">Archives</span>
+          </button>
           <button id="toolsButton" class="nav-item nav-compact" type="button" data-view="tools" title="Workspace commands: nothing is sent to an external service, and those that change the brain ask for confirmation.">
             <svg class="nav-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 5.5h10M3 10.5h10"/><circle cx="6" cy="5.5" r="1.5"/><circle cx="10" cy="10.5" r="1.5"/></svg>
             <span class="nav-label">Tools</span>
@@ -125,8 +129,12 @@
             <span class="chip-key">Project</span><span id="projectChipValue" class="chip-value"></span>
             <button id="projectChipClear" class="chip-clear" type="button" aria-label="Remove the project filter" title="Remove the project filter"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 5l6 6M11 5l-6 6"/></svg></button>
           </span>
+          <button id="archiveScopeButton" class="link-button" type="button" hidden>Archive…</button>
           <label id="ownerChip" class="chip chip-select"><span class="chip-key">Owner</span><span class="chip-value" aria-hidden="true"></span>
             <select id="ownerFilter"><option value="">Everyone</option><option value="mine">Me</option></select></label>
+          <label id="boardOwnerChip" class="chip chip-select" hidden><span class="chip-key">Owner</span><span class="chip-value" aria-hidden="true"></span>
+            <select id="boardOwner"><option value="">Everyone</option><option value="mine" selected>Me</option></select></label>
+          <button id="boardEveryone" class="tl-switch" type="button" role="switch" aria-checked="false" title="Show the cards of every owner, not only yours" hidden><span class="tl-switch-track" aria-hidden="true"></span><span>Everyone</span></button>
           <label id="scopeChip" class="chip chip-select"><span class="chip-key">Status</span><span class="chip-value" aria-hidden="true"></span>
             <select id="scopeFilter"><option value="active">Open</option><option value="all">All</option><option value="closed">Done and cancelled</option></select></label>
           <label id="groupChip" class="chip chip-select"><span class="chip-key">Group</span><span class="chip-value" aria-hidden="true"></span>
@@ -175,6 +183,26 @@
               <div id="timelineTrayBody" class="tl-tray-body"><div id="timelineTrayList"></div></div>
             </section>
           </div>
+        </div>
+        <div id="archivesView" class="docs-view archives-view" hidden>
+          <section class="docs-side" aria-label="Archived projects">
+            <p id="archiveStatus" class="doc-status" role="status" aria-live="polite"></p>
+            <div id="archiveList" class="doc-list"></div>
+          </section>
+          <section id="archivePane" class="doc-pane" aria-labelledby="archivePaneTitle">
+            <div class="doc-pane-head">
+              <button id="archiveBack" class="link-button doc-back" type="button" hidden>Back</button>
+              <div class="doc-pane-heading">
+                <h2 id="archivePaneTitle" tabindex="-1">Archives</h2>
+                <p id="archivePaneMeta" class="doc-pane-meta"></p>
+              </div>
+              <div class="doc-pane-actions">
+                <button id="archiveUnarchive" class="button" type="button" hidden>Unarchive…</button>
+              </div>
+            </div>
+            <p id="archivePaneEmpty" class="doc-pane-empty">Choose an archived project to read it. Archived projects stay out of the other views and of the search.</p>
+            <div id="archiveBody" class="archive-body" hidden></div>
+          </section>
         </div>
         <div id="docsView" class="docs-view" hidden>
           <section class="docs-side" aria-label="Documents">
@@ -251,6 +279,21 @@
               </div>
             </div>
           </div>
+          <section id="editorSubtasks" class="subtasks" aria-labelledby="editorSubtasksTitle" hidden>
+            <div class="history-head">
+              <h3 id="editorSubtasksTitle">Subtasks</h3><span id="editorSubtasksCount" class="history-count"></span>
+              <span id="editorSubtasksBar" class="fold-progress" aria-hidden="true" hidden><span></span></span>
+            </div>
+            <ol id="editorSubtaskList" class="subtask-list" aria-labelledby="editorSubtasksTitle"></ol>
+            <div id="subtaskForm" class="subtask-form">
+              <label class="subtask-add"><span class="sr-only">New subtask</span><input id="subtaskInput" maxlength="300" autocomplete="off" spellcheck="true" placeholder="Add a subtask" aria-describedby="subtaskHint"></label>
+              <button id="submitSubtask" class="icon-button" type="button" aria-label="Add the subtask" title="Add the subtask (Enter)">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>
+              </button>
+            </div>
+            <p id="subtaskHint" class="field-hint subtask-hint"></p>
+            <p id="subtaskError" class="form-error" role="alert" hidden></p>
+          </section>
           <section id="editorHistory" class="history" aria-labelledby="editorHistoryTitle" hidden>
             <div class="history-head">
               <h3 id="editorHistoryTitle">History and notes</h3><span id="editorHistoryCount" class="history-count"></span>
@@ -258,13 +301,13 @@
                 <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>
               </button>
             </div>
-            <ol id="editorHistoryList" class="note-list" aria-labelledby="editorHistoryTitle"></ol>
             <div id="noteForm" class="note-form" hidden>
               <label><span class="sr-only">New note</span><textarea id="noteInput" rows="2" maxlength="1000" placeholder="New note, dated today"></textarea></label>
-              <p id="noteHint" class="field-hint">Enter adds the note to the register, Esc closes the field.</p>
+              <p id="noteHint" class="field-hint">Enter adds the note to the register, Esc closes the field. <span id="noteWords" class="word-count"></span></p>
               <div class="note-form-actions"><button id="submitNote" class="button button-primary button-small" type="button">Add</button><button id="closeNoteForm" class="button button-small" type="button">Close</button></div>
             </div>
             <p id="noteError" class="form-error" role="alert" hidden></p>
+            <ol id="editorHistoryList" class="note-list" aria-labelledby="editorHistoryTitle"></ol>
           </section>
           <dl id="editorStamps" class="stamps" hidden></dl>
         </div>
@@ -314,6 +357,15 @@
       <p id="gitConfirmText" class="dialog-intro"></p>
       <ul id="gitConfirmList" class="git-confirm-list"></ul>
       <div class="dialog-actions"><button class="button" type="submit" value="cancel" autofocus>Cancel</button><button id="gitConfirmGo" class="button button-primary" type="button">Save and send</button></div>
+    </form>
+  </dialog>
+  <dialog id="archiveDialog" class="dialog dialog-small" aria-labelledby="archiveHeading" aria-describedby="archiveText">
+    <form method="dialog">
+      <h2 id="archiveHeading">Archive?</h2>
+      <p id="archiveText" class="dialog-intro"></p>
+      <ul id="archiveDialogList" class="git-confirm-list archive-dialog-list" hidden></ul>
+      <p id="archiveDialogError" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button id="archiveCancel" class="button" type="submit" value="cancel" autofocus>Cancel</button><button id="archiveConfirm" class="button button-primary" type="button" disabled>Archive</button></div>
     </form>
   </dialog>
   <dialog id="gitChangesDialog" class="dialog dialog-wide" aria-labelledby="gitChangesTitle">

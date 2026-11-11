@@ -4,11 +4,13 @@ const token = document.querySelector('meta[name="csrf-token"]').content;
 const ids = Object.fromEntries([
   'app', 'sidebar', 'scrim', 'sidebarToggle', 'brainMini', 'sidebarClose', 'mainContent',
   'brainSwitch', 'brainStatic', 'brainStaticName', 'brainButton', 'brainName', 'brainMenu',
-  'todayButton', 'listButton', 'boardButton', 'timelineButton', 'docsButton', 'toolsButton', 'gitButton',
+  'todayButton', 'listButton', 'boardButton', 'timelineButton', 'docsButton', 'archivesButton', 'toolsButton', 'gitButton',
+  'archiveScopeButton', 'archivesView', 'archiveStatus', 'archiveList', 'archivePane', 'archiveBack', 'archivePaneTitle', 'archivePaneMeta', 'archiveUnarchive',
+  'archivePaneEmpty', 'archiveBody', 'archiveDialog', 'archiveHeading', 'archiveText', 'archiveDialogList', 'archiveDialogError', 'archiveCancel', 'archiveConfirm',
   'todayCount', 'openCount', 'gitCount', 'projectNav', 'lastSync',
   'moreButton', 'moreMenu', 'refreshButton', 'undoButton', 'undoLabel', 'shortcutsButton', 'quitButton',
   'viewTitle', 'resultCount', 'gitStatus', 'searchField', 'searchInput', 'newNoteButton', 'newButton',
-  'filters', 'projectChip', 'projectChipValue', 'projectChipClear', 'ownerChip', 'ownerFilter', 'scopeChip', 'scopeFilter',
+  'filters', 'projectChip', 'projectChipValue', 'projectChipClear', 'ownerChip', 'ownerFilter', 'boardOwnerChip', 'boardOwner', 'boardEveryone', 'scopeChip', 'scopeFilter',
   'groupChip', 'groupFilter', 'docProjectChip', 'docProject', 'docTypeChip', 'docType', 'resetFilters', 'foldAllButton', 'errorBanner',
   'todayView', 'listView', 'boardView', 'timelineView', 'timelineBack', 'timelineToday', 'timelineForward', 'timelineLate', 'timelineDone', 'timelineScale', 'timelineSummary',
   'timelineScroll', 'timelineTray', 'timelineTrayToggle', 'timelineTrayCount', 'timelineTrayMore', 'timelineTrayHint', 'timelineTraySearch',
@@ -20,7 +22,8 @@ const ids = Object.fromEntries([
   'editor', 'editorForm', 'editorTitle', 'editorHint', 'closeEditor', 'editorProjectField', 'editorProject', 'editorActionTitle',
   'editorState', 'editorOwner', 'editorDue', 'editorScheduled', 'editorPriority', 'editorGroup', 'editorGroupNewLabel',
   'editorGroupNew', 'editorGroupHint', 'editorHistory', 'editorHistoryCount', 'addNoteButton', 'editorHistoryList', 'noteForm',
-  'noteInput', 'submitNote', 'closeNoteForm', 'noteError', 'editorStamps', 'editorError', 'deleteEditor', 'cancelEditor', 'saveEditor',
+  'editorSubtasks', 'editorSubtasksCount', 'editorSubtasksBar', 'editorSubtaskList', 'subtaskForm', 'subtaskInput', 'submitSubtask', 'subtaskHint', 'subtaskError',
+  'noteInput', 'noteWords', 'submitNote', 'closeNoteForm', 'noteError', 'editorStamps', 'editorError', 'deleteEditor', 'cancelEditor', 'saveEditor',
   'popover', 'newNoteDialog', 'newNoteForm', 'closeNewNote', 'newNoteTitle', 'newNoteProject', 'newNoteWhere', 'newNoteToolbar', 'newNoteContent',
   'newNoteError', 'cancelNewNote', 'saveNewNote', 'deleteNoteDialog', 'deleteNoteHeading', 'deleteNoteText', 'deleteNoteLinks', 'deleteNoteError', 'deleteNoteCancel', 'deleteNoteConfirm', 'quitDialog', 'quitConfirm', 'shortcutsDialog', 'toast', 'toastText', 'toastAction'
 ].map(id => [id, document.getElementById(id)]));
@@ -38,10 +41,10 @@ function readUIState() {
 }
 const savedUI = readUIState();
 // `search` is the results page of the header field: no button, no digit, never restored (it has no query to show).
-const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'tools', 'git'];
+const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git'];
 const ACTION_VIEWS = ['today', 'list', 'board', 'timeline'];
-const VIEW_TITLES = {today: 'Today', list: 'Actions', board: 'Board', timeline: 'Timeline', docs: 'Docs', search: 'Search', tools: 'Tools', git: 'Sync'};
-const NAV_BUTTONS = {today: 'todayButton', list: 'listButton', board: 'boardButton', timeline: 'timelineButton', docs: 'docsButton', tools: 'toolsButton', git: 'gitButton'};
+const VIEW_TITLES = {today: 'Today', list: 'Actions', board: 'Board', timeline: 'Timeline', docs: 'Docs', search: 'Search', archives: 'Archives', tools: 'Tools', git: 'Sync'};
+const NAV_BUTTONS = {today: 'todayButton', list: 'listButton', board: 'boardButton', timeline: 'timelineButton', docs: 'docsButton', archives: 'archivesButton', tools: 'toolsButton', git: 'gitButton'};
 // The Docs view was called Notes: a view saved under the old name opens it.
 let view = VIEWS.includes(savedUI.view) && savedUI.view !== 'search' ? savedUI.view : savedUI.view === 'notes' ? 'docs' : 'today';
 let searchReturn = 'today'; // the view the results page goes back to
@@ -101,7 +104,7 @@ function saveUIState() {
   try {
     sessionStorage.setItem(UI_STATE_KEY, JSON.stringify({
       view: view === 'search' ? searchReturn : view, project: projectScope, group: ids.groupFilter.value || pendingGroup,
-      owner: ids.ownerFilter.value, scope: ids.scopeFilter.value,
+      owner: ids.ownerFilter.value, boardOwner: ids.boardOwner.value, scope: ids.scopeFilter.value,
       docProject: ids.docProject.value, docType: ids.docType.value, foldedGroups: [...foldedGroups], brain: currentBrain, timelineRange, timelineDone, timelineTray: timelineTrayOpen, timelineFolded: [...timelineFolded]
     }));
   } catch { /* The interface remains usable when browser storage is unavailable. */ }
@@ -138,6 +141,10 @@ const ICONS = {
   chevron: '<path d="M4.5 6.25 8 9.75l3.5-3.5"/>',
   calendar: '<rect x="2.75" y="3.5" width="10.5" height="9.5" rx="1.5"/><path d="M2.75 6.5h10.5M5.5 2.5v2M10.5 2.5v2"/>',
   check: '<path d="M3.5 8.5l3 3 6-6.5"/>',
+  edit: '<path d="M3 13l.8-3.2L10.6 3a1.5 1.5 0 0 1 2.1 0l.3.3a1.5 1.5 0 0 1 0 2.1L6.2 12.2z"/><path d="M9.2 4.4l2.4 2.4"/>',
+  up: '<path d="M8 12.5v-9M4.5 7 8 3.5 11.5 7"/>',
+  archive: '<rect x="2.5" y="3" width="11" height="3" rx="1"/><path d="M3.5 6v6.5h9V6M6.5 8.75h3"/>',
+  down: '<path d="M8 3.5v9M4.5 9 8 12.5 11.5 9"/>',
   // Markdown toolbar
   bold: '<path stroke-width="1.9" d="M4.75 3h3.5a2.25 2.25 0 0 1 0 4.5h-3.5zM4.75 7.5h4a2.5 2.5 0 0 1 0 5h-4z"/>',
   italic: '<path d="M10 3H7M9 13H6M9.2 3 6.8 13"/>',
@@ -197,6 +204,26 @@ function relativeDay(iso) {
 function closed(action) { return action.state === 'x' || action.state === '-'; }
 // The mission part of "client / mission" (the whole label otherwise), for narrow places; the full label goes in the tooltip.
 function shortProject(label) { return label.split(' / ').at(-1); }
+// Clients by their display name ("ACME", "Globex Industries": the first heading of the client page, else the folder name capitalised),
+// from the server (`clients` of the snapshot and of the archives). The server's labels (`acme / demo`, by folder names) are renamed
+// once, as they arrive (`nameSnapshot`, the document lists): every view then shows the names. Requests address projects by path.
+let clientNames = {};
+function displayClient(folder) { return clientNames[folder] || folder; }
+function displayProject(label) {
+  if (typeof label !== 'string' || !label.includes(' / ')) return label;
+  const [client, ...rest] = label.split(' / ');
+  return clientNames[client] ? [clientNames[client], ...rest].join(' / ') : label;
+}
+function nameSnapshot(data) {
+  clientNames = {...clientNames, ...(data.clients || {})};
+  for (const action of data.actions || []) {
+    action.project_key = action.project; // the label by folder names: still found by the search
+    action.project = displayProject(action.project);
+  }
+  for (const register of data.registers || []) register.label = displayProject(register.label);
+  return data;
+}
+function nameDocs(items) { return (items || []).map(item => ({...item, project: displayProject(item.project)})); }
 function dueState(action) {
   if (!action.due) return '';
   if (closed(action)) return 'closed';
@@ -241,6 +268,21 @@ function priorityNode(action) {
   }
   return node;
 }
+// The progress of an action's subtasks (`subtasks` of the snapshot: done, total, texts), only when it has some: a small `d/t`
+// pill, in the done colours once every subtask is ticked. The pill is for the eye; `subtaskSummary` says it in words to the
+// screen readers (in the name of the row's button, of the chip or of the tray row).
+function subtaskSummary(action) {
+  const progress = action.subtasks;
+  return progress?.total ? `${progress.done} of ${plural(progress.total, 'subtask')} done` : '';
+}
+function subtaskPill(action) {
+  const progress = action.subtasks;
+  if (!progress?.total) return null;
+  const pill = element('span', `subtask-pill${progress.done === progress.total ? ' is-complete' : ''}`, `${progress.done}/${progress.total}`);
+  pill.setAttribute('aria-hidden', 'true');
+  pill.title = `Subtasks: ${subtaskSummary(action)}`;
+  return pill;
+}
 
 // ---------- Groups ----------
 function groupLabel(slug) {
@@ -272,19 +314,84 @@ function isMine(action) {
   const me = snapshot.owner.toLocaleLowerCase(LOCALE);
   return action.owner.toLocaleLowerCase(LOCALE).includes(me);
 }
-// What the global search reads of an action: ID, title, owner, project and group.
+// What the global search reads of an action: ID, title, owner, project, group and the texts of its subtasks.
 function actionSearchText(action) {
-  return `${action.id} ${action.title} ${action.owner} ${action.project} ${action.group ? `${groupLabel(action.group)} ${action.group}` : ''}`;
+  return `${action.id} ${action.title} ${action.owner} ${action.project} ${action.project_key || ""} ${action.group ? `${groupLabel(action.group)} ${action.group}` : ''} ${(action.subtasks?.texts || []).join(' ')}`;
+}
+// The owner filter: '' (everyone), 'mine', or a person, `o:<owner as written in the registers>`. The Board keeps its own
+// choice, which starts on 'mine' (a board of everyone's to-dos hides one's own); the other views start on everyone.
+const OWNER_MINE = 'mine';
+const OWNER_PREFIX = 'o:';
+function isPerson(choice) { return choice.startsWith(OWNER_PREFIX) && choice.length > OWNER_PREFIX.length; }
+function ownerSelect() { return view === 'board' ? ids.boardOwner : ids.ownerFilter; }
+function ownerMatches(action, choice) {
+  return !choice || (choice === OWNER_MINE ? isMine(action) : action.owner === choice.slice(OWNER_PREFIX.length));
+}
+// The owners as written, the ones with the most open actions first (then the most actions, then by name).
+function ownerCounts(actions) {
+  const counts = new Map();
+  for (const action of actions) {
+    if (!counts.has(action.owner)) counts.set(action.owner, {owner: action.owner, open: 0, total: 0});
+    const entry = counts.get(action.owner);
+    entry.total += 1;
+    if (!closed(action)) entry.open += 1;
+  }
+  return [...counts.values()].sort((a, b) => b.open - a.open || b.total - a.total || a.owner.localeCompare(b.owner, LOCALE));
+}
+function ownerOption(owner, open) {
+  const option = new Option(open ? `${owner} (${open})` : owner, OWNER_PREFIX + owner);
+  option.dataset.name = owner; // what the chip shows: the name without the count
+  return option;
+}
+// A saved choice comes back before the actions are read: a person gets an option right away, counted by the next populateOwnerFilters.
+function restoreOwner(select, saved, fallback) {
+  const choice = typeof saved === 'string' && (saved === '' || saved === OWNER_MINE || isPerson(saved)) ? saved : fallback;
+  if (isPerson(choice)) select.append(ownerOption(choice.slice(OWNER_PREFIX.length), 0));
+  select.value = choice;
+}
+// Both owner filters: Everyone, Me, then the people with their number of open actions. A chosen person stays offered when no
+// action carries the name any more (reassigned or deleted meanwhile): the empty view says so and offers to clear the filters.
+function populateOwnerFilters() {
+  const people = ownerCounts(snapshot.actions);
+  for (const select of [ids.ownerFilter, ids.boardOwner]) {
+    const chosen = select.value;
+    const options = people.map(entry => ownerOption(entry.owner, entry.open));
+    if (isPerson(chosen) && !options.some(option => option.value === chosen)) options.push(ownerOption(chosen.slice(OWNER_PREFIX.length), 0));
+    const section = document.createElement('optgroup');
+    section.label = 'People';
+    section.append(...options);
+    select.replaceChildren(new Option('Everyone', ''), new Option('Me', OWNER_MINE), ...(options.length ? [section] : []));
+    select.value = chosen;
+  }
+}
+// The Board's switch (one's own cards, or everyone's) is a preference of the browser, kept beyond the tab like the sidebar's;
+// a person chosen there is a filter of the tab, kept with the other filters.
+const BOARD_EVERYONE_KEY = 'actions-brain-board-everyone-v1';
+function readBoardEveryone() {
+  try { return localStorage.getItem(BOARD_EVERYONE_KEY) === 'yes'; } catch { return false; }
+}
+function storeBoardEveryone() {
+  if (isPerson(ids.boardOwner.value)) return;
+  try { localStorage.setItem(BOARD_EVERYONE_KEY, ids.boardOwner.value === '' ? 'yes' : 'no'); } catch { /* Not remembered. */ }
+}
+// A person belongs to the brain whose registers name them: on another brain the choice goes back to everyone (on the Board, to
+// the position of its switch). "Everyone" and "Me" mean the same in every brain and stay.
+function dropPersonFilters() {
+  if (isPerson(ids.ownerFilter.value)) ids.ownerFilter.value = '';
+  if (isPerson(ids.boardOwner.value)) ids.boardOwner.value = readBoardEveryone() ? '' : OWNER_MINE;
 }
 function filteredBase() {
-  const mine = ids.ownerFilter.value === 'mine';
+  const owner = ownerSelect().value;
   const group = ids.groupFilter.value;
   return snapshot.actions.filter(action =>
     inScope(action.register) &&
     (!group || (group === 'none' ? !action.group : Boolean(action.group) && groupKey(action) === group)) &&
-    (!mine || isMine(action))
+    ownerMatches(action, owner)
   );
 }
+// One register in scope (a project chosen in the sidebar, a client with a single mission, a brain with a single project):
+// a row need not repeat it.
+function singleProject() { return snapshot.registers.filter(register => inScope(register.path)).length === 1; }
 function scoped(actions) {
   const scope = ids.scopeFilter.value;
   return actions.filter(action => scope === 'all' || (scope === 'active' ? !closed(action) : closed(action)));
@@ -303,20 +410,35 @@ function byDue(actions) {
   return [...actions].sort((a, b) =>
     (a.due || '9999').localeCompare(b.due || '9999') || PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || a.id.localeCompare(b.id));
 }
-// Today: my late, due or scheduled work, my work in progress, what waits on others (state w or someone else's), then the week ahead.
+// Today: my late, due or scheduled work, my work in progress, what others are late on (someone else's, due date passed), what else
+// waits on others (state w or someone else's), then the week ahead.
 function todaySections(actions) {
   const day = today();
   const week = addDays(day, 7);
-  const sections = {late: [], today: [], doing: [], waiting: [], week: []};
+  const sections = {late: [], today: [], doing: [], othersLate: [], waiting: [], week: []};
   for (const action of actions) {
     if (closed(action)) continue;
-    if (action.state === 'w' || !isMine(action)) sections.waiting.push(action);
+    const mine = isMine(action);
+    if (!mine && action.due && action.due < day) sections.othersLate.push(action);
+    else if (action.state === 'w' || !mine) sections.waiting.push(action);
     else if (action.due && action.due < day) sections.late.push(action);
     else if (action.due === day || (action.scheduled && action.scheduled <= day)) sections.today.push(action);
     else if (action.state === '/') sections.doing.push(action);
     else if ((action.due && action.due <= week) || (action.scheduled && action.scheduled <= week)) sections.week.push(action);
   }
-  return {late: byDue(sections.late), today: sortActions(sections.today), doing: byDue(sections.doing), waiting: byDue(sections.waiting), week: byDue(sections.week)};
+  return {late: byDue(sections.late), today: sortActions(sections.today), doing: byDue(sections.doing),
+    othersLate: byDue(sections.othersLate), waiting: byDue(sections.waiting), week: byDue(sections.week)};
+}
+// The actions of a section by owner (as written), in the order they came. First the owners with overdue actions (`late`: owner →
+// number of them, the most first), then the ones with the most actions here, then by name.
+function ownerGroups(actions, late) {
+  const groups = new Map();
+  for (const action of actions) {
+    if (!groups.has(action.owner)) groups.set(action.owner, {owner: action.owner, actions: []});
+    groups.get(action.owner).actions.push(action);
+  }
+  return [...groups.values()].sort((a, b) =>
+    (late.get(b.owner) || 0) - (late.get(a.owner) || 0) || b.actions.length - a.actions.length || a.owner.localeCompare(b.owner, LOCALE));
 }
 
 // ---------- Projects (sidebar) ----------
@@ -475,27 +597,35 @@ function rowActions(action) {
 function actionClasses(base, action) {
   return `${base}${closed(action) ? ' is-closed' : ''}${action.state === '-' ? ' is-cancelled' : ''}`;
 }
-function actionRow(action, {project = false} = {}) {
-  const row = element('div', actionClasses(project ? 'row with-project' : 'row', action));
+// A row of the lists. project: show the project column (Today, when several projects are in scope). owner: show the owner
+// column (not under a heading that already names the owner).
+function actionRow(action, {project = false, owner = true} = {}) {
+  const row = element('div', actionClasses(`row${project ? ' with-project' : ''}${owner ? '' : ' no-owner'}`, action));
   row.dataset.id = action.id;
   row.setAttribute('role', 'listitem');
-  const title = element('button', 'row-title', action.title);
+  const title = element('button', 'row-title');
   title.type = 'button';
   title.tabIndex = -1;
   title.title = action.title;
+  title.append(element('span', 'row-title-text', action.title));
+  const pill = subtaskPill(action);
+  if (pill) title.append(pill, element('span', 'sr-only', `, ${subtaskSummary(action)}`));
   const parts = [statusButton(action), element('span', 'row-id', action.id), title];
+  const meta = element('span', 'row-meta');
+  meta.append(element('span', '', action.id));
   if (project) {
     const where = element('span', 'row-project', action.project);
     where.title = action.project;
     parts.push(where);
+    meta.append(element('span', '', action.project));
   }
-  const owner = element('span', 'row-owner', action.owner);
-  owner.title = `Owner: ${action.owner}`;
-  const meta = element('span', 'row-meta');
-  meta.append(element('span', '', action.id));
-  if (project) meta.append(element('span', '', action.project));
-  meta.append(element('span', '', action.owner));
-  parts.push(owner, dueButton(action), priorityNode(action), rowActions(action), meta);
+  if (owner) {
+    const who = element('span', 'row-owner', action.owner);
+    who.title = `Owner: ${action.owner}`;
+    parts.push(who);
+    meta.append(element('span', '', action.owner));
+  }
+  parts.push(dueButton(action), priorityNode(action), rowActions(action), meta);
   row.append(...parts);
   row.addEventListener('click', event => {
     if (event.target.closest('.status-button, .due-button, .row-action')) return;
@@ -551,6 +681,19 @@ function addButton(label, preset) {
   button.addEventListener('click', event => { event.stopPropagation(); openEditor(null, preset); });
   return button;
 }
+// "Archive…" on a project header (Actions): the dry run first, then a confirmation (see `askArchive`).
+function archiveButton(label, register) {
+  const button = iconButton('icon-button fold-add fold-archive', `Archive ${label}…`, ICONS.archive, `Archive ${label}: check what moves first`);
+  button.addEventListener('click', event => { event.stopPropagation(); askArchive('archive', registerFolder(register), label, button); });
+  return button;
+}
+function registerFolder(register) { return register.replace(/\/state\/actions\.md$/, ''); }
+// What the sidebar project can archive: a project (one register) or a whole client (`projects/clients/<client>/`); else nothing.
+function scopeArchive(scope = projectScope) {
+  if (snapshot.registers.some(register => register.path === scope)) return {folder: registerFolder(scope), kind: 'project', label: scopeLabel(scope)};
+  const client = /^(projects\/clients\/[^/]+)\/$/.exec(scope);
+  return client && client[1].split('/')[2] !== 'archive' ? {folder: client[1], kind: 'client', label: scopeLabel(scope)} : null;
+}
 // Progress over the members of a project or group (cancelled left out, Status filter ignored).
 function progressStats(members) {
   const counted = members.filter(action => action.state !== '-');
@@ -581,8 +724,10 @@ function foldSection(key, headClass, toggle, extra, body) {
 }
 
 // ---------- Today ----------
+// On the Board, "Me" and "Everyone" are the two positions of its switch, not a filter to clear: only a person is.
 function actionFiltersActive() {
-  return Boolean(projectScope || ids.ownerFilter.value || ids.groupFilter.value || (view !== 'today' && view !== 'timeline' && ids.scopeFilter.value !== 'active'));
+  const owner = view === 'board' ? isPerson(ids.boardOwner.value) : Boolean(ids.ownerFilter.value);
+  return Boolean(projectScope || owner || ids.groupFilter.value || (view !== 'today' && view !== 'timeline' && ids.scopeFilter.value !== 'active'));
 }
 // With filters on, the empty view offers to clear them; otherwise to create an action.
 function emptyState(title, text, withButton = true) {
@@ -605,14 +750,29 @@ function emptyState(title, text, withButton = true) {
   }
   return box;
 }
+// One owner of a "from others" section: a heading with the name and the count, then the rows (which do not repeat the name).
+function ownerBlock(id, group, options) {
+  const block = element('div', 'owner-group');
+  block.setAttribute('role', 'group');
+  block.setAttribute('aria-labelledby', id);
+  const heading = element('h3', 'owner-head');
+  heading.id = id;
+  const name = element('span', 'owner-name', group.owner);
+  name.title = `Owner: ${group.owner}`;
+  heading.append(name, element('span', 'section-count', String(group.actions.length)));
+  block.append(heading, rowList(group.actions, {...options, owner: false}));
+  return block;
+}
 function renderToday(base) {
   const sections = todaySections(base);
+  // The last element is true for the sections split by owner.
   const definitions = [
-    ['late', 'Overdue', sections.late, ''],
-    ['today', 'Today', sections.today, ''],
-    ['doing', 'In progress', sections.doing, ''],
-    ['waiting', 'Waiting on others', sections.waiting, 'waiting, or assigned to someone else'],
-    ['week', 'This week', sections.week, `until ${DAY_FORMAT.format(parseDay(addDays(today(), 7)))}`]
+    ['late', 'Overdue', sections.late, '', false],
+    ['today', 'Today', sections.today, '', false],
+    ['doing', 'In progress', sections.doing, '', false],
+    ['others-late', 'Late from others', sections.othersLate, 'assigned to someone else, due date passed', true],
+    ['waiting', 'Waiting on others', sections.waiting, 'waiting, or assigned to someone else', true],
+    ['week', 'This week', sections.week, `until ${DAY_FORMAT.format(parseDay(addDays(today(), 7)))}`, false]
   ];
   const total = definitions.reduce((sum, [, , actions]) => sum + actions.length, 0);
   ids.resultCount.textContent = plural(total, 'action');
@@ -620,8 +780,14 @@ function renderToday(base) {
     ids.todayView.replaceChildren(emptyState('Nothing urgent for today.', 'Overdue actions, actions due today, work in progress and what waits on others appear here.'));
     return;
   }
+  const options = {project: !singleProject()};
+  // Who is late, over both "from others" sections: those owners lead each of them.
+  const late = new Map();
+  for (const action of [...sections.othersLate, ...sections.waiting]) {
+    if (action.due && action.due < today()) late.set(action.owner, (late.get(action.owner) || 0) + 1);
+  }
   const nodes = [];
-  for (const [key, title, actions, note] of definitions) {
+  for (const [key, title, actions, note, byOwner] of definitions) {
     if (!actions.length) continue;
     const section = element('section', `section section-${key}`);
     section.setAttribute('aria-labelledby', `today-${key}`);
@@ -630,7 +796,9 @@ function renderToday(base) {
     heading.id = `today-${key}`;
     head.append(heading, element('span', 'section-count', String(actions.length)));
     if (note) head.append(element('span', 'section-note', note));
-    section.append(head, rowList(actions, {project: true}));
+    section.append(head);
+    if (byOwner) ownerGroups(actions, late).forEach((group, index) => section.append(ownerBlock(`today-${key}-owner-${index}`, group, options)));
+    else section.append(rowList(actions, options));
     nodes.push(section);
   }
   ids.todayView.replaceChildren(...nodes);
@@ -685,7 +853,7 @@ function renderList(actions) {
     const stats = progressStats(members);
     const toggle = foldToggle(`p:${register}`, `${label}, ${stats.done} of ${stats.total} done`);
     toggle.append(element('span', 'fold-label', label), foldMeta(stats));
-    nodes.push(foldSection(`p:${register}`, 'project-head', toggle, [addButton(label, {register})], body));
+    nodes.push(foldSection(`p:${register}`, 'project-head', toggle, [addButton(label, {register}), archiveButton(label, register)], body));
   }
   ids.listView.replaceChildren(...nodes);
   applyFolds();
@@ -704,6 +872,11 @@ function makeCard(action, grouped = false) {
   top.append(statusButton(action), title);
   const meta = element('div', 'card-meta');
   meta.append(element('span', 'row-id', action.id));
+  const pill = subtaskPill(action);
+  if (pill) {
+    meta.append(pill);
+    title.append(element('span', 'sr-only', `, ${subtaskSummary(action)}`));
+  }
   if (!grouped) {
     const where = element('span', 'card-project', shortProject(action.project));
     where.title = action.project;
@@ -832,6 +1005,7 @@ function entryName(entry) {
   else parts.push(`Due ${dayText(entry.date)}${entry.overdue ? `, ${plural(entry.overdue, 'day')} overdue` : ''}${entry.done ? ' (done)' : ''}`);
   if (entry.scheduled) parts.push(`Scheduled ${dayText(entry.scheduled)}`);
   parts.push(`Project: ${action.project}`, `Owner: ${action.owner}`);
+  if (action.subtasks?.total) parts.push(`Subtasks: ${subtaskSummary(action)}`);
   return `${parts.join('. ')}.`;
 }
 function entryTitle(entry) {
@@ -894,6 +1068,8 @@ function timelineChip(entry, {when = false, where = false, spot = ''} = {}) {
   button.title = entryTitle(entry);
   const top = element('span', 'tl-chip-top');
   top.append(statusIcon(action.state), element('span', 'tl-chip-id', action.id));
+  const pill = subtaskPill(action);
+  if (pill) top.append(pill);
   const badge = ownerBadge(action);
   if (badge) top.append(badge);
   // The overdue zone says "overdue" and has little room: its chips carry no flag and no hourglass (the tooltip has the scheduled date).
@@ -1179,10 +1355,12 @@ function trayCard(action, text) {
   const main = element('button', 'tl-card-main');
   main.type = 'button';
   main.tabIndex = -1;
-  main.setAttribute('aria-label', `${action.id}: ${action.title}. Status: ${statusLabel(action.state)}. ${text ? `Deadline: ${text}` : 'No deadline'}. Project: ${action.project}. Owner: ${action.owner}.`);
+  main.setAttribute('aria-label', `${action.id}: ${action.title}. Status: ${statusLabel(action.state)}. ${text ? `Deadline: ${text}` : 'No deadline'}. Project: ${action.project}. Owner: ${action.owner}.${action.subtasks?.total ? ` Subtasks: ${subtaskSummary(action)}.` : ''}`);
   main.title = `${action.id} ${action.title}\n${action.project} · ${action.owner}${text ? `\nDeadline: ${text}` : ''}\nDrag onto a day to plan it`;
   const line = element('span', 'tl-card-line');
   line.append(statusIcon(action.state), element('span', 'tl-card-id', action.id), element('span', 'tl-card-title', action.title));
+  const pill = subtaskPill(action);
+  if (pill) line.append(pill);
   const badge = ownerBadge(action);
   if (badge) line.append(badge);
   main.append(line);
@@ -1635,27 +1813,40 @@ function renderFilterChips() {
   ids.filters.classList.toggle('is-empty', !actionView && !docs);
   ids.projectChip.hidden = !projectScope || !(actionView || docs);
   ids.projectChipValue.textContent = scopeLabel(projectScope);
-  ids.ownerChip.hidden = !actionView;
+  const board = view === 'board';
+  ids.ownerChip.hidden = !actionView || board;
+  ids.boardOwnerChip.hidden = !board;
+  ids.boardEveryone.hidden = !board;
+  ids.boardEveryone.setAttribute('aria-checked', String(ids.boardOwner.value === ''));
   ids.scopeChip.hidden = !(view === 'list' || view === 'board');
   ids.groupChip.hidden = !actionView;
   ids.docProjectChip.hidden = !docs;
   ids.docTypeChip.hidden = !docsList;
   ids.ownerChip.classList.toggle('is-active', ids.ownerFilter.value !== '');
+  ids.boardOwnerChip.classList.toggle('is-active', ids.boardOwner.value !== '');
   ids.scopeChip.classList.toggle('is-active', ids.scopeFilter.value !== 'active');
   ids.groupChip.classList.toggle('is-active', ids.groupFilter.value !== '');
   ids.docProjectChip.classList.toggle('is-active', ids.docProject.value !== '');
   ids.docTypeChip.classList.toggle('is-active', ids.docType.value !== '');
-  for (const select of [ids.ownerFilter, ids.scopeFilter, ids.groupFilter, ids.docProject, ids.docType]) {
-    select.parentElement.querySelector('.chip-value').textContent = select.selectedOptions[0]?.textContent || '';
+  for (const select of [ids.ownerFilter, ids.boardOwner, ids.scopeFilter, ids.groupFilter, ids.docProject, ids.docType]) {
+    const chosen = select.selectedOptions[0];
+    select.parentElement.querySelector('.chip-value').textContent = chosen?.dataset.name || chosen?.textContent || '';
   }
   const active = actionView ? actionFiltersActive() : docs ? Boolean(projectScope || ids.docProject.value || (docsList && ids.docType.value)) : false;
   ids.resetFilters.hidden = !active;
   ids.foldAllButton.hidden = view !== 'list' || !listProjectKeys().length;
+  const archivable = (actionView || view === 'docs') && scopeArchive();
+  ids.archiveScopeButton.hidden = !archivable;
+  if (archivable) {
+    ids.archiveScopeButton.textContent = archivable.kind === 'client' ? 'Archive this client…' : 'Archive this project…';
+    ids.archiveScopeButton.title = `Archive ${archivable.label}: check what moves first`;
+  }
 }
 function render() {
   closePopover(false);
   if (view === 'tools') countTools();
   else if (view === 'git') renderGit();
+  else if (view === 'archives') renderArchives();
   else if (isDocsView()) renderDocsView();
   else {
     const base = filteredBase();
@@ -1677,6 +1868,10 @@ function setView(next, persist = true) {
   ids.timelineView.hidden = next !== 'timeline';
   if (next === 'timeline') timelineAnchor = true;
   ids.docsView.hidden = !isDocsView();
+  ids.archivesView.hidden = next !== 'archives';
+  if (next !== 'archives') archiveSearch = null;
+  ids.searchInput.placeholder = next === 'archives' ? 'Search the archives' : 'Search actions and documents';
+  ids.searchInput.setAttribute('aria-label', next === 'archives' ? 'Search the archived projects (words or "exact phrase")' : 'Search the actions and the documents of the brain (words or "exact phrase")');
   ids.toolsView.hidden = next !== 'tools';
   ids.gitView.hidden = next !== 'git';
   ids.syncInfo.hidden = next !== 'git';
@@ -1696,6 +1891,7 @@ function setView(next, persist = true) {
   render();
   if (next === 'tools' && !tools.length) loadTools();
   if (next === 'git') loadGit();
+  if (next === 'archives') loadArchives();
   if (isDocsView()) refreshDocsView();
   if (persist) {
     saveUIState();
@@ -1706,6 +1902,7 @@ function populateProjects() {
   const editing = ids.editorProject.value;
   ids.editorProject.replaceChildren(...snapshot.registers.map(register => new Option(register.label, register.path)));
   populateGroupFilter();
+  populateOwnerFilters();
   ids.editorProject.value = editing || defaultRegister();
   if (!editorOpen()) fillGroupOptions();
 }
@@ -1825,9 +2022,14 @@ function openEditor(action = null, preset = null, {focus = 'auto'} = {}) {
   noteBusy = false;
   closeNoteForm(false);
   ids.noteInput.value = '';
+  updateNoteWords();
   ids.addNoteButton.disabled = true;
   ids.editorHistoryList.replaceChildren(element('li', 'note-empty', 'Loading…'));
   ids.editorHistoryCount.textContent = '';
+  ids.editorSubtasks.hidden = !action;
+  ids.subtaskInput.value = '';
+  ids.subtaskError.hidden = true;
+  renderSubtasks({subtasks: []});
   ids.editorOwner.value = action?.owner || snapshot.owner;
   ids.editorState.value = action?.state || (!action && preset?.state) || ' ';
   ids.editorPriority.value = action?.priority || '';
@@ -1849,7 +2051,7 @@ function openEditor(action = null, preset = null, {focus = 'auto'} = {}) {
   if (action) {
     loadDetails(action).then(details => {
       if (historyRequest !== editorHistoryRequest || !editorOpen()) return;
-      renderNotes(details);
+      renderDetails(details);
     }).catch(error => {
       if (historyRequest !== editorHistoryRequest || !editorOpen()) return;
       ids.editorHistoryList.replaceChildren(element('li', 'note-empty', `History unavailable: ${error.message}`));
@@ -1880,9 +2082,11 @@ function syncEditorAfterRefresh() {
   if (!fresh) { closeEditor({force: true, refocus: false}); return; }
   if (fresh.version !== editorAction.version && !editorDirty()) openEditor(fresh, null, {focus: 'none'});
 }
+// The history, newest first: the register appends, so the last sub-bullet leads and the source closes the list. Only the order
+// on screen changes: each note keeps its `index` in the register, which is what a deletion sends.
 function renderNotes(details) {
   noteState = {id: details.id, version: details.details_version, notes: details.notes};
-  const shown = details.notes.filter(note => !/^-?\s*(created|updated)\s*:/i.test(note.text));
+  const shown = details.notes.filter(note => !/^-?\s*(created|updated)\s*:/i.test(note.text)).reverse();
   ids.editorHistoryList.replaceChildren();
   if (!shown.length) ids.editorHistoryList.append(element('li', 'note-empty', 'No notes yet.'));
   for (const note of shown) {
@@ -1904,16 +2108,36 @@ function renderNotes(details) {
   ids.editorHistoryCount.textContent = count ? String(count) : '';
   setNoteBusy(false);
 }
+// The details of the open action: its history and its subtasks, which share one version (the lock of every write to them).
+function renderDetails(details) {
+  renderNotes(details);
+  renderSubtasks(details);
+}
+// A write to the details (history or subtasks) is in flight: both wait for it, since the next one needs the version it returns.
 function setNoteBusy(busy) {
   noteBusy = busy;
   ids.addNoteButton.disabled = busy || !noteState;
   ids.submitNote.disabled = busy || !noteState;
   ids.editorHistoryList.querySelectorAll('.note-delete').forEach(button => { button.disabled = busy; });
+  setSubtaskBusy(busy);
 }
 function showNoteError(error) {
   ids.noteError.textContent = error.status === 409 ? 'The history changed in the register: close and reopen the action to reload it.' : error.message;
   ids.noteError.hidden = false;
 }
+// Words as the actions tool counts them: separated by spaces, a Markdown link counting as its label.
+function wordCount(text) { return text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').split(/\s+/).filter(Boolean).length; }
+const HISTORY_WORDS = 35; // the caps of tools/brain/action.py, which refuses more (and says so)
+const SUBTASK_WORDS = 15;
+const SUBTASKS_MAX = 10;
+// "12/35 words" next to the field, in the danger colour past the cap: the tool would refuse the note.
+function wordMeter(node, text, cap) {
+  const words = wordCount(text);
+  node.textContent = words ? `${words}/${cap} words` : '';
+  node.classList.toggle('is-over', words > cap);
+  return words;
+}
+function updateNoteWords() { wordMeter(ids.noteWords, ids.noteInput.value, HISTORY_WORDS); }
 function forgetDetails(id, fresh) {
   for (const key of [...detailCache.keys()]) if (key.startsWith(`${id}:`)) detailCache.delete(key);
   detailCache.set(`${id}:${fresh.version}`, Promise.resolve(fresh));
@@ -1930,17 +2154,20 @@ function closeNoteForm(focus = true) {
   ids.addNoteButton.setAttribute('aria-expanded', 'false');
   if (focus && editorOpen()) ids.addNoteButton.focus();
 }
-async function changeNotes(send) {
+// One write to the details of the open action (`send` returns the refreshed details), then the panel and the lists follow.
+// A refusal goes to `onError` (the history's or the subtasks' message line), with the tool's own words for a 400.
+async function changeDetails(send, onError) {
   const session = editorHistoryRequest;
   const id = noteState.id;
   setNoteBusy(true);
   ids.noteError.hidden = true;
+  ids.subtaskError.hidden = true;
   try {
     const fresh = await send();
     setUndo(fresh.undo);
     forgetDetails(id, fresh);
     if (session !== editorHistoryRequest || !editorOpen()) return null;
-    renderNotes(fresh);
+    renderDetails(fresh);
     // The action line changed ("updated"): its new version keeps the panel and later saves in step.
     editorAction = {...editorAction, version: fresh.version, updated_at: fresh.updated_at};
     ids.editor.dataset.version = fresh.version;
@@ -1950,11 +2177,12 @@ async function changeNotes(send) {
   } catch (error) {
     if (session === editorHistoryRequest && editorOpen()) {
       setNoteBusy(false);
-      showNoteError(error);
+      onError(error);
     }
     return null;
   }
 }
+function changeNotes(send) { return changeDetails(send, showNoteError); }
 async function submitNote() {
   if (noteBusy || !noteState) return;
   const note = ids.noteInput.value.replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ').trim();
@@ -1968,10 +2196,12 @@ async function submitNote() {
     method: 'POST', headers: {'Content-Type': 'application/json', 'X-Tasks-Token': token},
     body: JSON.stringify({details_version: version, note})
   }));
-  if (fresh) {
+  if (fresh?.unchanged) showNoteError(new Error('This note is already in the history: nothing was added.'));
+  else if (fresh) {
     ids.noteInput.value = '';
-    ids.noteInput.focus();
-  } else if (editorOpen()) ids.noteInput.focus();
+    updateNoteWords();
+  }
+  if (editorOpen()) ids.noteInput.focus();
 }
 async function deleteNote(note) {
   if (noteBusy || !noteState || !confirm('Delete this note from the register?')) return;
@@ -1982,6 +2212,191 @@ async function deleteNote(note) {
   }));
   if (!editorOpen()) return;
   (ids.editorHistoryList.querySelector('.note-delete') || ids.addNoteButton).focus();
+}
+
+// ---------- Subtasks (detail panel) ----------
+// The checklist of the open action, in the register's order (the owner orders it; a ticked step stays where it is, struck
+// through). Tick in place, add, rename, move up or down, delete: each is one write of `action.py subtask` under the details
+// version, one undo step, and the answer is the refreshed details.
+let subtaskState = []; // the subtasks of the open action, as the last details gave them
+let subtaskEditing = -1; // the index being renamed
+function renderSubtasks(details) {
+  subtaskState = details.subtasks || [];
+  subtaskEditing = -1;
+  const done = subtaskState.filter(item => item.done).length;
+  const total = subtaskState.length;
+  ids.editorSubtasksCount.textContent = total ? `${done}/${total}` : '';
+  ids.editorSubtasksCount.title = total ? `${done} of ${plural(total, 'subtask')} done` : '';
+  ids.editorSubtasksBar.hidden = !total;
+  ids.editorSubtasksBar.style.setProperty('--p', total ? done / total : 0);
+  renderSubtaskList();
+  ids.subtaskForm.hidden = total >= SUBTASKS_MAX;
+  updateSubtaskHint();
+}
+function renderSubtaskList() {
+  subtaskEditing = -1;
+  ids.editorSubtaskList.replaceChildren(...subtaskState.map(subtaskItem));
+  ids.editorSubtaskList.hidden = !subtaskState.length;
+  setSubtaskBusy(noteBusy);
+}
+function subtaskItem(item) {
+  const li = element('li', `subtask-item${item.done ? ' is-done' : ''}`);
+  li.dataset.index = String(item.index);
+  const tick = element('label', 'subtask-tick'); // the box with room around it to hit; the text is its label too
+  const box = element('input', 'subtask-check');
+  box.type = 'checkbox';
+  box.id = `subtask-${item.index}`;
+  box.checked = item.done;
+  box.addEventListener('change', () => tickSubtask(item, box.checked));
+  box.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); box.click(); } }); // not the panel's form
+  tick.append(box);
+  const text = element('label', 'subtask-text', item.text);
+  text.htmlFor = box.id;
+  if (item.done_on) text.title = `Done on ${formatDay(item.done_on)}`;
+  const tools = element('span', 'subtask-actions');
+  const last = subtaskState.length - 1;
+  const up = subtaskButton('subtask-up', `Move “${item.text}” up`, ICONS.up, 'Move up', item.index === 0, () => moveSubtask(item, -1));
+  const down = subtaskButton('subtask-down', `Move “${item.text}” down`, ICONS.down, 'Move down', item.index === last, () => moveSubtask(item, 1));
+  const rename = subtaskButton('subtask-rename-button', `Rename “${item.text}”`, ICONS.edit, 'Rename', false, () => startSubtaskRename(item.index));
+  const remove = subtaskButton('subtask-delete', `Delete “${item.text}”`, ICONS.trash, 'Delete (can be undone)', false, () => removeSubtask(item));
+  tools.append(up, down, rename, remove);
+  li.append(tick, text, tools);
+  return li;
+}
+// `edge`: the first one cannot go up, the last one down; it stays disabled whatever the busy state.
+function subtaskButton(className, label, icon, title, edge, onClick) {
+  const button = iconButton(`icon-button ${className}`, label, icon, title);
+  if (edge) button.dataset.edge = '1';
+  button.disabled = edge;
+  button.addEventListener('click', onClick);
+  return button;
+}
+function setSubtaskBusy(busy) {
+  const off = busy || !noteState;
+  ids.subtaskInput.disabled = off;
+  ids.submitSubtask.disabled = off;
+  for (const control of ids.editorSubtaskList.querySelectorAll('input, button')) control.disabled = off || control.dataset.edge === '1';
+}
+// The limits are shown before the write: the words of the text being typed, and how many subtasks the action holds.
+function updateSubtaskHint(text = subtaskEditing >= 0 ? '' : ids.subtaskInput.value) {
+  const total = subtaskState.length;
+  const words = wordCount(text);
+  ids.subtaskHint.classList.toggle('is-over', words > SUBTASK_WORDS);
+  if (total >= SUBTASKS_MAX && subtaskEditing < 0) {
+    ids.subtaskHint.textContent = `${SUBTASKS_MAX} subtasks, the most an action holds: split the work into several actions.`;
+    return;
+  }
+  const length = words ? `${words}/${SUBTASK_WORDS} words` : `${SUBTASK_WORDS} words at most`;
+  ids.subtaskHint.textContent = `${length} · ${total} of ${SUBTASKS_MAX} subtasks${words > SUBTASK_WORDS ? ': too long, name one step' : ''}`;
+}
+function showSubtaskError(error) {
+  if (error.status === 409) {
+    ids.subtaskError.textContent = 'The action changed in the register: its subtasks were reloaded. Try again.';
+    reloadDetails();
+  } else {
+    ids.subtaskError.textContent = error.message;
+    renderSubtaskList(); // a refused tick goes back to what the register says
+  }
+  ids.subtaskError.hidden = false;
+}
+function subtaskSend(method, suffix, body) {
+  const {id, version} = noteState;
+  return () => request(`/api/actions/${encodeURIComponent(id)}/subtasks${suffix}`, {
+    method, headers: {'Content-Type': 'application/json', 'X-Tasks-Token': token},
+    body: JSON.stringify({details_version: version, ...body})
+  });
+}
+// After a write the list is drawn again: the focus goes back to the same place (`part` of the item at `index`, else the field).
+function focusSubtask(index, part = '.subtask-check') {
+  if (!editorOpen()) return;
+  const items = [...ids.editorSubtaskList.querySelectorAll('.subtask-item')];
+  const item = items[Math.min(index, items.length - 1)];
+  const target = item && [item.querySelector(part), item.querySelector('.subtask-check')].find(control => control && !control.disabled);
+  (target || (ids.subtaskForm.hidden ? null : ids.subtaskInput))?.focus();
+}
+async function addSubtask() {
+  if (noteBusy || !noteState) return;
+  const text = ids.subtaskInput.value.replace(/\s+/g, ' ').trim();
+  if (!text) {
+    showSubtaskError(new Error('Enter a subtask before adding it.'));
+    ids.subtaskInput.focus();
+    return;
+  }
+  const fresh = await changeDetails(subtaskSend('POST', '', {text}), showSubtaskError);
+  if (fresh) ids.subtaskInput.value = '';
+  updateSubtaskHint();
+  if (editorOpen()) (ids.subtaskForm.hidden ? focusSubtask(subtaskState.length - 1) : ids.subtaskInput.focus());
+}
+async function tickSubtask(item, done) {
+  if (noteBusy || !noteState) return;
+  await changeDetails(subtaskSend('PATCH', `/${item.index}`, {done}), showSubtaskError);
+  focusSubtask(item.index);
+}
+async function moveSubtask(item, step) {
+  if (noteBusy || !noteState) return;
+  const to = item.index + step;
+  const fresh = await changeDetails(subtaskSend('PATCH', `/${item.index}`, {to}), showSubtaskError);
+  focusSubtask(fresh ? to : item.index, step < 0 ? '.subtask-up' : '.subtask-down');
+}
+async function removeSubtask(item) {
+  if (noteBusy || !noteState) return;
+  const fresh = await changeDetails(subtaskSend('DELETE', `/${item.index}`, {}), showSubtaskError);
+  if (fresh) {
+    showToast('Subtask deleted', {undo: true});
+    if (subtaskState.length) focusSubtask(item.index); else ids.subtaskInput.focus();
+  }
+}
+// Rename in place: Enter (or leaving the field) saves, Esc puts the text back.
+function startSubtaskRename(index) {
+  if (noteBusy || !noteState) return;
+  renderSubtaskList();
+  const item = subtaskState[index];
+  const li = ids.editorSubtaskList.querySelector(`.subtask-item[data-index="${index}"]`);
+  if (!item || !li) return;
+  subtaskEditing = index;
+  const input = element('input', 'subtask-rename');
+  input.value = item.text;
+  input.maxLength = 300;
+  input.autocomplete = 'off';
+  input.setAttribute('aria-label', `New text of “${item.text}”`);
+  input.setAttribute('aria-describedby', 'subtaskHint');
+  li.classList.add('is-editing');
+  li.querySelector('.subtask-text').replaceWith(input);
+  let settled = false;
+  const finish = async save => {
+    if (settled) return;
+    settled = true;
+    const text = input.value.replace(/\s+/g, ' ').trim();
+    if (!save || !text || text === item.text) {
+      renderSubtaskList();
+      updateSubtaskHint();
+      focusSubtask(index, '.subtask-rename-button');
+      return;
+    }
+    const fresh = await changeDetails(subtaskSend('PATCH', `/${index}`, {text}), showSubtaskError);
+    updateSubtaskHint();
+    focusSubtask(index, fresh ? '.subtask-check' : '.subtask-rename-button');
+  };
+  input.addEventListener('input', () => updateSubtaskHint(input.value));
+  input.addEventListener('keydown', event => {
+    if (event.isComposing) return;
+    if (event.key === 'Enter') { event.preventDefault(); finish(true); }
+    else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finish(false); }
+  });
+  input.addEventListener('blur', () => { if (input.isConnected) finish(true); });
+  input.focus();
+  input.select();
+  updateSubtaskHint(input.value);
+}
+// The details of the open action read again (after an undo, or when the register changed under a write).
+function reloadDetails() {
+  const action = editorAction && findAction(editorAction.id);
+  if (!action || !editorOpen()) return;
+  const session = editorHistoryRequest;
+  for (const key of [...detailCache.keys()]) if (key.startsWith(`${action.id}:`)) detailCache.delete(key);
+  loadDetails(action).then(details => {
+    if (session === editorHistoryRequest && editorOpen() && !noteBusy) renderDetails(details);
+  }).catch(() => { /* The next refresh will catch up. */ });
 }
 function setEditorBusy(busy) {
   ids.saveEditor.disabled = busy || (Boolean(editorAction) && !editorDirty());
@@ -2044,12 +2459,13 @@ async function saveEditor(event) {
   setEditorBusy(true);
   try {
     if (id) {
-      setUndo((await request(`/api/actions/${encodeURIComponent(id)}`, {
+      const result = await request(`/api/actions/${encodeURIComponent(id)}`, {
         method: 'PATCH', headers: {'Content-Type': 'application/json', 'X-Tasks-Token': token},
         body: JSON.stringify({version: ids.editor.dataset.version, action})
-      })).undo);
+      });
+      setUndo(result.undo);
       editorInitial = editorSignature(); // saved: the panel follows the fresh line after the refresh
-      showToast('Action updated', {undo: true});
+      showToast('Action updated', {undo: true, warnings: result.warnings || []});
       await refresh();
       if (editorOpen()) ids.editorTitle.focus({preventScroll: true});
     } else {
@@ -2077,14 +2493,15 @@ async function patchAction(action, changes, message, {anchor = null, part = 'tit
   const keepFocus = anchor !== null || (document.activeElement && activeRoot()?.contains(document.activeElement));
   if (anchor) anchor.disabled = true;
   try {
-    setUndo((await request(`/api/actions/${encodeURIComponent(action.id)}`, {
+    const result = await request(`/api/actions/${encodeURIComponent(action.id)}`, {
       method: 'PATCH', headers: {'Content-Type': 'application/json', 'X-Tasks-Token': token},
       body: JSON.stringify({version: action.version, action: {
         title: action.raw_title, owner: action.owner, state: action.state, priority: action.priority,
         due: action.due, scheduled: action.scheduled, ...changes
       }})
-    })).undo);
-    showToast(message, {undo: true});
+    });
+    setUndo(result.undo);
+    showToast(message, {undo: true, warnings: result.warnings || []});
     await refresh();
   } catch (error) {
     await refresh();
@@ -2248,11 +2665,21 @@ function adoptBrain(name) {
   renderBrainSwitch();
 }
 // What a brain owns: project filter, group folds, selection, panel, open documents and Git detail, tool output, undo.
-// The text typed in the search boxes and the owner and scope filters are not tied to a brain: they stay.
+// The text typed in the search boxes and the owner (Everyone or Me) and status filters are not tied to a brain: they stay.
+// A person chosen as owner is: the choice goes.
 function resetBrainState() {
   projectScope = '';
   pendingGroup = '';
   ids.groupFilter.value = '';
+  dropPersonFilters();
+  clientNames = {};
+  archivesData = null;
+  archivesRequest += 1;
+  archiveError = '';
+  archiveSearch = null;
+  archiveAsk = null;
+  if (ids.archiveDialog.open) ids.archiveDialog.close();
+  closeArchive();
   ids.docProject.value = '';
   ids.editorProject.replaceChildren();
   foldedGroups.clear();
@@ -2348,6 +2775,7 @@ async function loadBrains({initial = false} = {}) {
     if (savedUI.brain && savedUI.brain !== currentBrain) {
       projectScope = '';
       pendingGroup = '';
+      dropPersonFilters();
       ids.docProject.value = '';
       foldedGroups.clear();
       timelineFolded.clear();
@@ -2359,6 +2787,429 @@ async function loadBrains({initial = false} = {}) {
   }
   renderBrainSwitch();
   return false;
+}
+
+// ---------- Archives ----------
+// The archived clients, missions and internal projects (moved whole into an `archive/` folder by `brain-state.py archive`): out of every
+// other view and of the global search, listed and read here, read-only. While this view is open, the header field searches the archives
+// alone. Archive (a project header in Actions, or the filter row when a project or a client is chosen in the sidebar) and Unarchive
+// (here) run the tool's dry run first and show what moves, or what blocks; the write is one undo step, whose undo is the inverse command.
+const ARCHIVE_KIND_LABELS = {client: 'Client', mission: 'Mission', internal: 'Internal project'};
+const ARCHIVE_KIND_HEADINGS = {client: 'Clients', mission: 'Missions', internal: 'Internal projects'};
+let archivesData = null; // GET /api/archives: {archives, actions, clients}
+let archivesRequest = 0;
+let archiveError = '';
+let archiveSelected = ''; // the folder open in the pane
+let archiveProject = null; // GET /api/archives/project of it ({error} when it could not be read)
+let archiveDocOpen = null; // one of its documents, open in the pane (Back returns to the project)
+let archivePaneRequest = 0;
+let archiveDocRequest = 0;
+let archiveSearch = null; // {query, terms, actions, docs, total, pending, error} while the header field holds a query in this view
+let archiveSearchRequest = 0;
+let archiveAsk = null; // the open confirmation: {verb, folder, label, ready, busy, returnFocus}
+
+function archiveName(item) { return item.kind === 'client' ? displayClient(item.client) : displayProject(item.label); }
+function archiveCounts(counts) {
+  if (!counts.total) return 'No action';
+  return `${plural(counts.total, 'action')}: ${counts.done} done, ${counts.cancelled} cancelled${counts.open ? `, ${counts.open} open` : ''}`;
+}
+function setArchiveStatus(message, failed = false) {
+  ids.archiveStatus.textContent = message;
+  ids.archiveStatus.classList.toggle('doc-status-error', failed);
+}
+async function loadArchives() {
+  const requestId = ++archivesRequest;
+  if (!archivesData && view === 'archives') setArchiveStatus('Loading…');
+  try {
+    const data = await request('/api/archives');
+    if (requestId !== archivesRequest) return;
+    clientNames = {...clientNames, ...(data.clients || {})};
+    for (const action of data.actions) {
+      action.project_key = action.project;
+      action.project = displayProject(action.project);
+    }
+    archivesData = data;
+    archiveError = '';
+    setArchiveStatus('');
+    if (archiveSelected && !data.archives.some(item => item.folder === archiveSelected)) closeArchive();
+    else if (archiveSelected && !archiveDocOpen) openArchive(archiveSelected, {quiet: true});
+    if (archiveSearch) runArchiveSearch();
+    else if (view === 'archives') renderArchives();
+  } catch (error) {
+    if (requestId !== archivesRequest || error.stale) return;
+    archiveError = error.message;
+    setArchiveStatus('');
+    if (view === 'archives') renderArchives();
+  }
+}
+function renderArchives() {
+  renderArchiveList();
+  renderArchivePane();
+}
+function archiveListItem(item) {
+  const li = element('li');
+  const button = element('button', 'doc-item archive-item');
+  button.type = 'button';
+  button.dataset.folder = item.folder;
+  button.setAttribute('aria-pressed', String(item.folder === archiveSelected));
+  const meta = element('span', 'doc-item-meta');
+  meta.append(element('span', 'doc-item-type', ARCHIVE_KIND_LABELS[item.kind]));
+  if (item.archived_on) meta.append(element('span', 'doc-item-date', `Archived ${formatDay(item.archived_on)}`));
+  meta.append(element('span', '', archiveCounts(item.counts)));
+  button.append(element('span', 'doc-item-title', archiveName(item)), meta);
+  button.addEventListener('click', () => openArchive(item.folder));
+  li.append(button);
+  return li;
+}
+function renderArchiveList() {
+  if (archiveSearch) { renderArchiveSearch(); return; }
+  const items = archivesData?.archives || [];
+  ids.resultCount.textContent = archivesData ? plural(items.length, 'archive') : '';
+  if (archiveError) { ids.archiveList.replaceChildren(docEmpty('The archives could not be read.', archiveError)); return; }
+  if (!archivesData) { ids.archiveList.replaceChildren(); return; }
+  if (!items.length) {
+    ids.archiveList.replaceChildren(docEmpty('Nothing is archived.', 'A finished project archived from its header in Actions, or from the filter row when a project or a client is chosen in the sidebar, appears here.'));
+    return;
+  }
+  const nodes = [];
+  for (const kind of ['client', 'mission', 'internal']) {
+    const group = items.filter(item => item.kind === kind).sort((a, b) => archiveName(a).localeCompare(archiveName(b), LOCALE));
+    if (!group.length) continue;
+    const list = element('ul', 'doc-items');
+    list.append(...group.map(archiveListItem));
+    nodes.push(searchHead(ARCHIVE_KIND_HEADINGS[kind], String(group.length)), list);
+  }
+  ids.archiveList.replaceChildren(...nodes);
+}
+async function openArchive(folder, {quiet = false, action = ''} = {}) {
+  archiveSelected = folder;
+  if (!quiet) {
+    archiveProject = null;
+    archiveDocOpen = null;
+    archiveDocRequest += 1;
+  }
+  const requestId = ++archivePaneRequest;
+  if (!quiet) renderArchivePane();
+  try {
+    const data = await request(`/api/archives/project?${new URLSearchParams({folder})}`);
+    if (requestId !== archivePaneRequest) return;
+    archiveProject = data;
+  } catch (error) {
+    if (requestId !== archivePaneRequest || error.stale) return;
+    archiveProject = {error: error.message};
+  }
+  if (archiveDocOpen) return; // a document opened meanwhile stays on screen
+  renderArchivePane();
+  const row = action && ids.archiveBody.querySelector(`details[data-id="${CSS.escape(action)}"]`);
+  if (row) {
+    row.open = true;
+    row.scrollIntoView({block: 'center'});
+    row.querySelector('summary').focus({preventScroll: true});
+  } else if (!quiet) ids.archivePaneTitle.focus({preventScroll: true});
+}
+function closeArchive() {
+  archiveSelected = '';
+  archiveProject = null;
+  archiveDocOpen = null;
+  archivePaneRequest += 1;
+  archiveDocRequest += 1;
+}
+// A document of an archived project, read-only (`archived=1`: the server reads only those there). From a search result, the archive it
+// belongs to becomes the selected one, so that Back leads to it.
+async function openArchiveDoc(id) {
+  const owner = archivesData?.archives.find(item => id.startsWith(`${item.folder}/`));
+  if (owner && owner.folder !== archiveSelected) {
+    archiveSelected = owner.folder;
+    archiveProject = null;
+    openArchive(owner.folder, {quiet: true});
+  }
+  const requestId = ++archiveDocRequest;
+  try {
+    const doc = await request(`/api/docs/render?${new URLSearchParams({id, archived: '1'})}`);
+    if (requestId !== archiveDocRequest) return;
+    doc.project = displayProject(doc.project);
+    archiveDocOpen = doc;
+    renderArchivePane();
+    ids.archivePaneTitle.focus({preventScroll: true});
+  } catch (error) {
+    if (requestId !== archiveDocRequest || error.stale) return;
+    showToast(error.message);
+  }
+}
+function archiveMeta(parts) {
+  ids.archivePaneMeta.replaceChildren(...parts.filter(Boolean).map(text => element('span', '', text)));
+}
+function renderArchivePane() {
+  const item = archivesData?.archives.find(entry => entry.folder === archiveSelected);
+  ids.archivesView.classList.toggle('has-doc', Boolean(archiveSelected));
+  for (const button of ids.archiveList.querySelectorAll('.archive-item')) button.setAttribute('aria-pressed', String(button.dataset.folder === archiveSelected));
+  ids.archivePaneEmpty.hidden = Boolean(archiveSelected);
+  ids.archiveBody.hidden = !archiveSelected;
+  ids.archiveBack.hidden = !archiveDocOpen;
+  ids.archiveUnarchive.hidden = !item || Boolean(archiveDocOpen);
+  if (!archiveSelected) {
+    ids.archivePaneTitle.textContent = 'Archives';
+    archiveMeta([]);
+    ids.archiveBody.replaceChildren();
+    return;
+  }
+  if (archiveDocOpen) {
+    ids.archivePaneTitle.textContent = archiveDocOpen.title;
+    archiveMeta([archiveDocOpen.project, 'Archived, read-only']);
+    const article = element('article', 'markdown-body archive-doc');
+    article.innerHTML = archiveDocOpen.html; // rendered by the server: raw HTML of the document escaped, links checked
+    ids.archiveBody.replaceChildren(article);
+    ids.archiveBody.scrollTop = 0;
+    return;
+  }
+  ids.archivePaneTitle.textContent = item ? archiveName(item) : 'Archive';
+  archiveMeta(item ? [ARCHIVE_KIND_LABELS[item.kind], item.archived_on ? `Archived ${formatDay(item.archived_on)}` : '', archiveCounts(item.counts), 'Read-only'] : []);
+  if (!archiveProject) { ids.archiveBody.replaceChildren(element('p', 'archive-loading', 'Loading…')); return; }
+  if (archiveProject.error) { ids.archiveBody.replaceChildren(element('p', 'form-error', archiveProject.error)); return; }
+  const nodes = [];
+  if (archiveProject.page) nodes.push(archivePage(archiveProject.page));
+  const several = archiveProject.projects.length > 1 || archiveProject.kind === 'client';
+  for (const project of archiveProject.projects) nodes.push(archiveProjectSection(project, several));
+  if (archiveProject.docs.length) nodes.push(archiveDocsSection(archiveProject.docs));
+  ids.archiveBody.replaceChildren(...nodes);
+}
+// The page of the archive, read in place (its links to other archived documents open them here).
+function archivePage(id) {
+  const article = element('article', 'markdown-body archive-page');
+  article.append(element('p', 'archive-loading', 'Loading the page…'));
+  const requestId = archivePaneRequest;
+  request(`/api/docs/render?${new URLSearchParams({id, archived: '1'})}`).then(doc => {
+    if (requestId === archivePaneRequest && article.isConnected) article.innerHTML = doc.html;
+  }).catch(error => { if (article.isConnected) article.replaceChildren(element('p', 'form-error', error.message)); });
+  return article;
+}
+function archiveProjectSection(project, named) {
+  const section = element('section', 'archive-section');
+  const head = element('div', 'archive-section-head');
+  head.append(element('h3', '', named ? displayProject(project.label) : `Actions`), element('span', 'section-count', String(project.actions.length)));
+  for (const [id, label] of [[project.page, 'Page'], [project.decisions, 'Decisions']]) {
+    if (!id) continue;
+    const button = element('button', 'link-button', label);
+    button.type = 'button';
+    button.setAttribute('aria-label', `${label} of ${displayProject(project.label)}`);
+    button.addEventListener('click', () => openArchiveDoc(id));
+    head.append(button);
+  }
+  section.append(head);
+  const list = element('ul', 'archive-actions');
+  list.setAttribute('aria-label', `Actions of ${displayProject(project.label)}`);
+  if (!project.actions.length) list.append(element('li', 'note-empty', 'No action.'));
+  for (const action of sortActions(project.actions)) list.append(archiveActionItem(action));
+  section.append(list);
+  return section;
+}
+// An archived action: one line, read-only; opening it shows its subtasks and its history (newest first), nothing to edit.
+function archiveActionItem(action) {
+  const item = element('li');
+  const details = element('details', `archive-action${closed(action) ? ' is-closed' : ''}${action.state === '-' ? ' is-cancelled' : ''}`);
+  details.dataset.id = action.id;
+  const summary = element('summary', 'archive-action-line');
+  const state = statusIcon(action.state);
+  state.setAttribute('role', 'img');
+  state.setAttribute('aria-label', statusLabel(action.state));
+  const title = element('span', 'archive-action-title', action.title);
+  summary.append(state, element('span', 'row-id', action.id), title);
+  const pill = subtaskPill(action);
+  if (pill) summary.append(pill);
+  summary.append(element('span', 'archive-action-owner', action.owner));
+  if (action.done) summary.append(element('span', 'due due-closed', formatDay(action.done)));
+  const body = element('div', 'archive-action-body');
+  details.append(summary, body);
+  details.addEventListener('toggle', () => {
+    if (!details.open || body.dataset.loaded) return;
+    body.dataset.loaded = '1';
+    body.replaceChildren(element('p', 'archive-loading', 'Loading…'));
+    request(`/api/actions/${encodeURIComponent(action.id)}/details`).then(found => {
+      const nodes = [];
+      if (found.subtasks?.length) {
+        const steps = element('ul', 'archive-subtasks');
+        steps.setAttribute('aria-label', 'Subtasks');
+        for (const step of found.subtasks) steps.append(element('li', step.done ? 'is-done' : '', `${step.done ? '☑' : '☐'} ${step.text}`));
+        nodes.push(steps);
+      }
+      const notes = found.notes.filter(note => !/^-?\s*(created|updated)\s*:/i.test(note.text)).reverse();
+      const history = element('ul', 'archive-history');
+      history.setAttribute('aria-label', 'History');
+      for (const note of notes) history.append(element('li', '', note.text.replace(/^-\s+/, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')));
+      if (!notes.length) history.append(element('li', 'note-empty', 'No history.'));
+      nodes.push(history);
+      body.replaceChildren(...nodes);
+    }).catch(error => { body.replaceChildren(element('p', 'form-error', error.message)); delete body.dataset.loaded; });
+  });
+  item.append(details);
+  return item;
+}
+function archiveDocsSection(docs) {
+  const section = element('section', 'archive-section');
+  const head = element('div', 'archive-section-head');
+  head.append(element('h3', '', 'Documents'), element('span', 'section-count', String(docs.length)));
+  const list = element('ul', 'archive-docs');
+  for (const doc of docs) {
+    const li = element('li');
+    const button = element('button', 'archive-doc-link');
+    button.type = 'button';
+    button.append(element('span', 'doc-item-type', DOC_TYPE_LABELS[doc.type] || doc.type), element('span', 'archive-doc-title', doc.title));
+    if (doc.date) button.append(element('span', 'doc-item-date', formatDay(doc.date)));
+    button.addEventListener('click', () => openArchiveDoc(doc.id));
+    li.append(button);
+    list.append(li);
+  }
+  section.append(head, list);
+  return section;
+}
+// The header field, in this view: the archived actions (matched here, at once) and the documents of the archived projects (the server).
+function runArchiveSearch() {
+  clearTimeout(docTimer);
+  const query = ids.searchInput.value.trim();
+  const requestId = ++archiveSearchRequest;
+  if (!query) {
+    archiveSearch = null;
+    if (view === 'archives') renderArchives();
+    return;
+  }
+  const terms = searchTerms(query);
+  archiveSearch = {query, terms, actions: terms.length ? (archivesData?.actions || []).filter(action => actionMatches(action, terms)) : [],
+    docs: [], total: 0, pending: terms.length > 0, error: ''};
+  renderArchives();
+  if (!terms.length) return;
+  request(`/api/search?${new URLSearchParams({q: query, archived: '1'})}`).then(data => {
+    if (requestId !== archiveSearchRequest || !archiveSearch) return;
+    Object.assign(archiveSearch, {docs: nameDocs(data.results), total: data.total, terms: data.terms, pending: false});
+    if (view === 'archives') renderArchives();
+  }).catch(error => {
+    if (requestId !== archiveSearchRequest || error.stale || !archiveSearch) return;
+    Object.assign(archiveSearch, {pending: false, error: error.message});
+    if (view === 'archives') renderArchives();
+  });
+}
+function renderArchiveSearch() {
+  const found = archiveSearch;
+  ids.resultCount.textContent = found.terms.length ? `${plural(found.actions.length, 'action')}, ${found.pending ? '…' : plural(found.total, 'document')}` : '';
+  if (!found.terms.length) { ids.archiveList.replaceChildren(searchNone('Type two letters or more.')); return; }
+  const actions = element('ul', 'doc-items');
+  for (const action of found.actions.slice(0, SEARCH_ACTION_LIMIT)) {
+    const li = element('li');
+    const button = element('button', 'doc-item');
+    button.type = 'button';
+    const title = element('span', 'doc-item-title');
+    title.append(docMarked(action.title, docFindRanges(action.title, found.terms)));
+    const meta = element('span', 'doc-item-meta');
+    meta.append(element('span', 'doc-item-id', action.id), element('span', '', action.project), element('span', '', statusLabel(action.state)));
+    button.append(title, meta);
+    button.addEventListener('click', () => openArchive(action.folder, {action: action.id}));
+    li.append(button);
+    actions.append(li);
+  }
+  const docs = element('ul', 'doc-items');
+  for (const item of found.docs) {
+    const li = element('li');
+    const button = element('button', 'doc-item');
+    button.type = 'button';
+    const title = element('span', 'doc-item-title');
+    title.append(docMarked(item.title, docFindRanges(item.title, found.terms)));
+    const meta = element('span', 'doc-item-meta');
+    if (DOC_TYPE_LABELS[item.type]) meta.append(element('span', 'doc-item-type', DOC_TYPE_LABELS[item.type]));
+    meta.append(element('span', '', item.project || ''));
+    button.append(title, meta);
+    for (const snippet of item.snippets || []) button.append(docSnippetNode(snippet));
+    button.addEventListener('click', () => openArchiveDoc(item.id));
+    li.append(button);
+    docs.append(li);
+  }
+  ids.archiveList.replaceChildren(
+    searchHead('Archived actions', String(found.actions.length)), found.actions.length ? actions : searchNone('No archived action matches.'),
+    searchHead('Archived documents', found.pending ? '…' : String(found.total)),
+    found.error ? searchNone(found.error, true) : found.pending ? searchNone('Searching…') : found.docs.length ? docs : searchNone('No archived document matches.'));
+}
+// Archive or unarchive: the dry run (what moves, the links rewritten), or the refusal with the actions that block it; then the write.
+async function askArchive(verb, folder, label, returnFocus = document.activeElement) {
+  if (archiveAsk?.busy) return;
+  const ask = {verb, folder, label, ready: false, busy: false, returnFocus};
+  archiveAsk = ask;
+  const word = verb === 'archive' ? 'Archive' : 'Unarchive';
+  ids.archiveHeading.textContent = `${word} ${label}?`;
+  ids.archiveText.textContent = 'Checking what would move…';
+  ids.archiveDialogList.replaceChildren();
+  ids.archiveDialogList.hidden = true;
+  ids.archiveDialogError.hidden = true;
+  ids.archiveConfirm.textContent = word;
+  ids.archiveConfirm.hidden = false;
+  ids.archiveConfirm.disabled = true;
+  ids.archiveCancel.textContent = 'Cancel';
+  if (!ids.archiveDialog.open) ids.archiveDialog.showModal();
+  try {
+    const plan = await request(`/api/archives/plan?${new URLSearchParams({verb, folder})}`);
+    if (archiveAsk !== ask) return;
+    ask.ready = true;
+    ids.archiveText.textContent = verb === 'archive'
+      ? 'It leaves every view and the search, and stays readable in Archives. Undo, or Unarchive there, brings it back.'
+      : 'It comes back to the views and the search, where it was.';
+    const lines = [`Moves ${plan.from} to ${plan.to}.`,
+      plan.links ? `Rewrites ${plural(plan.links, 'link')} in ${plural(plan.link_files.length, 'file')}, so that they still lead to it.` : 'No link to rewrite.'];
+    if (plan.mentions_left.length) lines.push(`Not links, left as they are: ${plan.mentions_left.map(item => `${item.file} (${item.count})`).join(', ')}.`);
+    ids.archiveDialogList.replaceChildren(...lines.map(text => element('li', '', text)));
+    ids.archiveDialogList.hidden = false;
+    ids.archiveConfirm.disabled = false;
+    ids.archiveConfirm.focus();
+  } catch (error) {
+    if (archiveAsk !== ask) return;
+    showArchiveRefusal(error);
+  }
+}
+function showArchiveRefusal(error) {
+  const blocking = error.data?.open_actions || [];
+  // The tool names the project by its folders (`client acme`, `acme / demo`): the dialog says it as its heading does.
+  const message = blocking.length && archiveAsk ? error.message.replace(/^.*? cannot be archived/, `${archiveAsk.label} cannot be archived`) : nameLabels(error.message);
+  ids.archiveText.textContent = message ? message[0].toLocaleUpperCase(LOCALE) + message.slice(1) : '';
+  ids.archiveDialogList.replaceChildren(...blocking.map(item => {
+    const li = element('li');
+    const button = element('button', 'link-button archive-blocking', `${item.id} — ${item.title}`);
+    button.type = 'button';
+    button.title = `Open ${item.id}`;
+    button.addEventListener('click', () => {
+      const action = findAction(item.id);
+      ids.archiveDialog.close();
+      if (action) openEditor(action);
+    });
+    li.append(button);
+    return li;
+  }));
+  ids.archiveDialogList.hidden = !blocking.length;
+  ids.archiveConfirm.hidden = true;
+  ids.archiveCancel.textContent = 'Close';
+  ids.archiveCancel.focus();
+}
+async function confirmArchive() {
+  const ask = archiveAsk;
+  if (!ask?.ready || ask.busy) return;
+  ask.busy = true;
+  ids.archiveConfirm.disabled = true;
+  ids.archiveConfirm.setAttribute('aria-busy', 'true');
+  ids.archiveDialogError.hidden = true;
+  ids.archiveText.textContent = ask.verb === 'archive' ? 'Archiving…' : 'Unarchiving…';
+  try {
+    const result = await request(`/api/archives/${ask.verb}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json', 'X-Tasks-Token': token}, body: JSON.stringify({folder: ask.folder})
+    });
+    setUndo(result.undo);
+    ask.busy = false;
+    archiveAsk = null;
+    ids.archiveDialog.close();
+    if (ask.verb === 'unarchive' && archiveSelected === ask.folder) closeArchive();
+    await refresh();
+    loadArchives();
+    const warnings = result.link_check && !result.link_check.ok ? ['The link check of the brain reported problems: ask your agent to look at them.'] : [];
+    showToast(`${ask.verb === 'archive' ? 'Archived' : 'Unarchived'} ${ask.label}`, {undo: true, warnings});
+  } catch (error) {
+    ask.busy = false;
+    ids.archiveConfirm.removeAttribute('aria-busy');
+    if (archiveAsk === ask) showArchiveRefusal(error);
+  }
 }
 
 // ---------- Tools ----------
@@ -2838,7 +3689,9 @@ ids.gitChangesDialog.addEventListener('click', event => { if (event.target === i
 
 // ---------- Undo ----------
 // Undo labels come from the server ("status of ABC-001 → In progress"): the arrow is shown as "to" in the interface.
-function undoText(label) { return String(label || '').replace(/\s*→\s*/g, ' to '); }
+// The client part of a project label (`acme / demo`) is shown by the client's name, as everywhere else.
+function nameLabels(text) { return String(text || '').replace(/([^\s/]+) \/ /g, (whole, client) => `${displayClient(client)} / `); }
+function undoText(label) { return nameLabels(String(label || '').replace(/\s*→\s*/g, ' to ')); }
 function setUndo(state) {
   undoState = state || {available: false, label: null, depth: 0};
   renderUndo();
@@ -2866,6 +3719,8 @@ async function undoLast() {
     detailCache.clear();
     await refresh();
     if (result.restored && isDocsView()) openDoc(result.action_id, {nav: 'root'}); // a deleted note is back: show it
+    // An undone note or subtask leaves the action's line as it was: the open panel reads its details again.
+    if (editorOpen() && editorAction?.id === result.action_id) reloadDetails();
     showToast(`Undone: ${undoText(result.undone)}`);
   } catch (error) {
     showToast(error.message);
@@ -2900,8 +3755,9 @@ function showError(message) {
 async function refresh() {
   loadGit({quiet: view !== 'git'}); // the number next to Git follows the writes made from the page
   if (isDocsView()) refreshDocsView();
+  if (view === 'archives' || archivesData) loadArchives(); // an archive or an unarchive changes both lists
   try {
-    snapshot = await request('/api/actions');
+    snapshot = nameSnapshot(await request('/api/actions'));
     detailCache.clear();
     loadUndo();
     ids.errorBanner.hidden = true;
@@ -2921,7 +3777,7 @@ async function refresh() {
 // Counters and rows follow a write made from the panel (a note), without moving the focus.
 async function refreshQuietly() {
   try {
-    snapshot = await request('/api/actions');
+    snapshot = nameSnapshot(await request('/api/actions'));
     loadGit({quiet: true});
     setSummary();
     const scrolls = viewScrolls();
@@ -3157,7 +4013,7 @@ async function loadNotes() {
   try {
     const data = await request('/api/docs/list');
     if (requestId !== notesRequest) return;
-    docsData = data.docs;
+    docsData = nameDocs(data.docs);
     notesLoaded = true;
     if (view === 'docs') setDocStatus('');
     if (isDocsView()) renderDocsView();
@@ -3177,6 +4033,7 @@ function resetSearchResults() {
   docPending = false;
 }
 async function runDocSearch() {
+  if (view === 'archives') { runArchiveSearch(); return; } // in Archives the field searches the archives alone
   clearTimeout(docTimer);
   const query = ids.searchInput.value.trim();
   const requestId = ++docSearchRequest;
@@ -3198,7 +4055,7 @@ async function runDocSearch() {
   try {
     const data = await request(`/api/search?${new URLSearchParams({q: query, project: docProjectParam()})}`);
     if (requestId !== docSearchRequest) return;
-    docResults = data.results;
+    docResults = nameDocs(data.results);
     docTotal = data.total;
     docTruncated = data.truncated;
     docTerms = data.terms;
@@ -3321,6 +4178,7 @@ async function openDoc(id, {nav = 'root', terms = [], anchor = ''} = {}) {
   try {
     const doc = await request(`/api/docs/render?id=${encodeURIComponent(id)}`);
     if (requestId !== docRenderRequest) return;
+    doc.project = displayProject(doc.project);
     docCurrent = doc;
     renderDocPane();
     showDocArticle(doc.html, docMarks, anchor, quiet);
@@ -3563,12 +4421,15 @@ async function createNote(event) {
 
 // ---------- Toast ----------
 function hideToast() { ids.toast.hidden = true; }
-function showToast(message, {undo = false} = {}) {
-  ids.toastText.textContent = message;
+// `warnings`: what the actions tool said about a write that went through (open subtasks left unticked by a closing): added to the
+// message, which then stays longer and takes the warning style.
+function showToast(message, {undo = false, warnings = []} = {}) {
+  ids.toastText.textContent = warnings.length ? `${message}. ${warnings.join(' ')}` : message;
+  ids.toast.classList.toggle('is-warning', warnings.length > 0);
   ids.toastAction.hidden = !undo || !undoState.available;
   ids.toast.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(hideToast, undo ? 6000 : 3500);
+  toastTimer = setTimeout(hideToast, warnings.length ? 10000 : undo ? 6000 : 3500);
 }
 ids.toast.addEventListener('mouseenter', () => clearTimeout(toastTimer));
 ids.toast.addEventListener('focusin', () => clearTimeout(toastTimer));
@@ -3700,7 +4561,7 @@ document.addEventListener('keydown', event => {
     undoLast();
     return;
   }
-  if ((event.metaKey || event.ctrlKey) && key === 'Enter' && editorOpen() && ids.editor.contains(event.target) && !ids.noteForm.contains(event.target)) {
+  if ((event.metaKey || event.ctrlKey) && key === 'Enter' && editorOpen() && ids.editor.contains(event.target) && !ids.noteForm.contains(event.target) && !ids.editorSubtasks.contains(event.target)) {
     event.preventDefault();
     ids.editorForm.requestSubmit();
     return;
@@ -3906,6 +4767,35 @@ ids.sidebarToggle.addEventListener('click', toggleSidebar);
 ids.sidebarClose.addEventListener('click', () => closeDrawer());
 ids.scrim.addEventListener('click', () => closeDrawer());
 ids.projectChipClear.addEventListener('click', () => { setProjectScope(''); ids.resultCount.focus(); });
+// Archives: archive the project or client chosen in the sidebar, unarchive the one open, read its documents, confirm.
+ids.archiveScopeButton.addEventListener('click', () => {
+  const target = scopeArchive();
+  if (target) askArchive('archive', target.folder, target.label, ids.archiveScopeButton);
+});
+ids.archiveUnarchive.addEventListener('click', () => {
+  const item = archivesData?.archives.find(entry => entry.folder === archiveSelected);
+  if (item) askArchive('unarchive', item.folder, archiveName(item), ids.archiveUnarchive);
+});
+ids.archiveBack.addEventListener('click', () => {
+  archiveDocOpen = null;
+  archiveDocRequest += 1;
+  if (archiveProject) renderArchivePane(); else if (archiveSelected) openArchive(archiveSelected);
+  ids.archivePaneTitle.focus({preventScroll: true});
+});
+ids.archiveBody.addEventListener('click', event => {
+  const link = event.target.closest('a.doc-link');
+  if (!link || !ids.archiveBody.contains(link)) return;
+  event.preventDefault();
+  openArchiveDoc(link.dataset.doc);
+});
+ids.archiveConfirm.addEventListener('click', confirmArchive);
+ids.archiveDialog.addEventListener('cancel', event => { if (archiveAsk?.busy) event.preventDefault(); }); // never closed halfway through a move
+ids.archiveDialog.addEventListener('close', () => {
+  const ask = archiveAsk;
+  if (ask?.busy) return;
+  archiveAsk = null;
+  if (ask?.returnFocus?.isConnected && !editorOpen()) ask.returnFocus.focus({preventScroll: true});
+});
 ids.searchInput.addEventListener('input', () => { if (ids.searchInput.value.trim()) scheduleDocSearch(); else runDocSearch(); });
 ids.searchInput.addEventListener('keydown', event => {
   if (event.isComposing) return;
@@ -3945,9 +4835,17 @@ ids.newNoteProject.addEventListener('change', updateNewNoteWhere);
 ids.closeNewNote.addEventListener('click', () => ids.newNoteDialog.close());
 ids.cancelNewNote.addEventListener('click', () => ids.newNoteDialog.close());
 ids.groupFilter.addEventListener('change', titleGroupFilter);
-for (const node of [ids.groupFilter, ids.ownerFilter, ids.scopeFilter]) {
+ids.boardOwner.addEventListener('change', storeBoardEveryone);
+for (const node of [ids.groupFilter, ids.ownerFilter, ids.boardOwner, ids.scopeFilter]) {
   node.addEventListener('change', () => { render(); saveUIState(); });
 }
+// The Board's switch: everyone's cards, or back to one's own.
+ids.boardEveryone.addEventListener('click', () => {
+  ids.boardOwner.value = ids.boardOwner.value === '' ? OWNER_MINE : '';
+  storeBoardEveryone();
+  render();
+  saveUIState();
+});
 ids.resetFilters.addEventListener('click', () => {
   projectScope = '';
   if (isDocsView()) {
@@ -3956,7 +4854,9 @@ ids.resetFilters.addEventListener('click', () => {
     refreshDocLists();
   } else {
     ids.groupFilter.value = '';
-    ids.ownerFilter.value = '';
+    // Each view clears the owner filter it shows; on the Board a person gives way to the position the switch was left in.
+    if (view !== 'board') ids.ownerFilter.value = '';
+    else if (isPerson(ids.boardOwner.value)) ids.boardOwner.value = readBoardEveryone() ? '' : OWNER_MINE;
     ids.scopeFilter.value = 'active';
   }
   populateGroupFilter();
@@ -4013,6 +4913,21 @@ ids.submitNote.addEventListener('click', submitNote);
 ids.noteInput.addEventListener('keydown', event => {
   if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeNoteForm(); }
   else if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); if (!event.shiftKey) submitNote(); }
+});
+ids.noteInput.addEventListener('input', updateNoteWords);
+ids.submitSubtask.addEventListener('click', addSubtask);
+ids.subtaskInput.addEventListener('input', () => updateSubtaskHint());
+ids.subtaskInput.addEventListener('keydown', event => {
+  if (event.isComposing) return;
+  // Enter adds the subtask (never submits the panel); Esc clears a typed text, and closes the panel on an empty field.
+  if (event.key === 'Enter') { event.preventDefault(); addSubtask(); }
+  else if (event.key === 'Escape' && ids.subtaskInput.value) {
+    event.preventDefault();
+    event.stopPropagation();
+    ids.subtaskInput.value = '';
+    ids.subtaskError.hidden = true;
+    updateSubtaskHint();
+  }
 });
 
 // Timeline controls
@@ -4144,7 +5059,8 @@ new ResizeObserver(() => {
 applyAccent(brainFromUrl() || readStoredBrain());
 if (!narrowQuery.matches && readSidebarCollapsed()) ids.app.classList.add('sidebar-collapsed');
 updateSidebarToggle();
-ids.ownerFilter.value = savedUI.owner === 'mine' ? 'mine' : '';
+restoreOwner(ids.ownerFilter, savedUI.owner, '');
+restoreOwner(ids.boardOwner, savedUI.boardOwner, readBoardEveryone() ? '' : OWNER_MINE);
 ids.scopeFilter.value = ['active', 'all', 'closed'].includes(savedUI.scope) ? savedUI.scope : 'active';
 ids.docProject.value = ['', INBOX_REGISTER, 'none'].includes(savedUI.docProject) ? savedUI.docProject : '';
 ids.docType.value = ['', ...Object.keys(DOC_TYPE_LABELS)].includes(savedUI.docType) ? savedUI.docType : '';
