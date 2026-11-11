@@ -28,24 +28,51 @@ of the title, just before the Tasks emojis (`… Title #group/ingestion-workshop
 `--group SLUG` writes it (`--group ""` on `update` removes it, no option keeps it); a `--title`
 that itself ends with a valid `#group/…` tag is refused (use `--group`).
 
+A subtask is one step of an action's short checklist: a checkbox sub-bullet `    - [ ] text`
+or `    - [x] text ✅ YYYY-MM-DD` (the date Obsidian Tasks appends when the box is ticked there),
+written directly under the action line, before every other sub-bullet. It has no ID, owner or
+date of its own: it inherits the action's. At most 15 words, at most 10 per action. A subtask
+change refreshes `updated:` and adds no history entry; closing an action leaves its open subtasks
+unticked and says so in `warnings`. The history (`notes` of `show`, the indices of `history edit`
+and `remove`) leaves the subtasks out, which have their own indices (`subtasks` of `show`).
+
+A history entry holds at most 35 words (`history add` and `edit`; the `moved from …` entry that
+`move` writes itself is exempt): one change of state, owner, due date or blocker, the source
+linked once. A text that starts with the entry's own `DD/MM:` loses it; another date is refused.
+
 A brain written with the earlier French labels is converted once with
 `uv run tools/brain/migrate-english.py`.
 
 Commands (from the Work root, `uv run tools/brain/action.py <command> --help` for details):
 
-    list      [--project P] [--state open|closed|all] [--owner O] [--table]
+    list      [--project P] [--state open|closed|all] [--owner O] [--due-before D] [--limit N] [--table]
+              [--archived]
     board     [--write [PATH]] [--watch]     complete view by project (terminal, VS Code preview)
-    show      ID
+    show      ID [--text [--last N]]         an archived action too, flagged `archived`; --text: compact
+                                             plain text with the last N history entries (default 3, 0: all)
     create    --project P --title T --owner O --source S [--state] [--priority] [--due]
               [--scheduled] [--due-note N] [--group SLUG] [--prefix XXX]
+              (--prefix: only for an empty register whose header and archives give none)
     update    ID [--title] [--owner] [--state] [--priority] [--due] [--scheduled] [--group SLUG]
               [--closed-on D]
     history   add ID --text T [--date D]  |  edit ID --index N --text T [--date D]  |  remove ID --index N
+    subtask   add ID --text T [--position N]  |  toggle ID --index N [--done|--undone]  |  edit ID --index N --text T
+              |  remove ID --index N  |  move ID --index N --to M          (indices from 0, as `show` gives them)
     move      ID --to P                      to another register of the same client, ID unchanged
-    check     [--register R]                 format errors (exit 1) and warnings of the registers
+    check     [--register R] [--archived]    format errors (exit 1) and warnings of the registers
     delete    ID
     sweep     [--write|--check] [--archive] [--register R]   put each action under its state's section
     archive   [--write|--check] [--days N] [--today D]       move old closures to actions-archive-YYYY.md
+
+An archived project (moved whole by `brain-state.py archive` into the `archive/` folder at its own
+level: `projects/clients/<client>/missions/archive/<mission>/`, `projects/internal/archive/<project>/`,
+or with its whole client `projects/clients/archive/<client>/`; the earlier places `projects/archive/<project>/`
+and `projects/clients/<client>/archive/<mission>/` still count) keeps its label (`acme / demo`) and is out of the context:
+`list`, `board`, `sweep`, `archive` and `check` leave it out (`--archived` brings it back into `list`,
+where its actions carry `"project_archived": true`, and into the format part of `check`; its IDs always
+count for duplicates and for the next ID); `create`, `update`, `history`, `subtask`, `move` and `delete`
+refuse its actions (exit code 2: unarchive it first); `show` still reads them, flagged
+`"project_archived": true` (`(archived project)` with `--text`).
 
 Every write accepts `--dry-run` (print the result, write nothing) and the optimistic-lock options
 `--expect-version` (hash of the action line) and `--expect-details-version` (hash of the block)
@@ -53,7 +80,12 @@ used by the web interface. A status change moves the action to the section of it
 `sweep`, for this action only); a closure gets `✅`/`❌` with today's date, or
 `--closed-on` for the date of the evidence; a reopening drops it.
 
-Output is JSON on stdout. Exit codes: 0 done, 2 invalid request, 3 not found, 4 conflict.
+Output is JSON on stdout, except the text of `list --table` and `show --text`: `show ID --text`
+prints the action line as written, one line of dates (project, due date and note, created, updated,
+closed), the subtasks under `subtasks, 1 of 3 done:`, the source, the latest history entries under
+`history, last 3 of 12:` and the `file:line` of the action from the Work root, flagged `(archived)`
+when it comes from an archive. `list --table` and `board` show the subtask progress (` 1/3`) after the title.
+Exit codes: 0 done, 2 invalid request, 3 not found, 4 conflict.
 `--brain PATH` or BRAIN_DIR selects another brain; ACTION_NOW (`YYYY-MM-DD HH:MM`) fixes the
 clock for tests.
 """
@@ -530,6 +562,7 @@ def run_sweep(register: Path, name: str, today: date, args: argparse.Namespace) 
 
 ACTION_RE = re.compile(r"^- \[([ /wx-])\] \*\*([A-Z]{2,5}-\d{3})\*\* — ([^—]+?) — (.+)$")
 ID_RE = re.compile(r"\b([A-Z]{2,5})-(\d{3})\b")
+RESERVED_PREFIX = re.compile(r"(?i:pr[eé]fix\w*)[^`\n]{0,40}`([A-Z]{2,5})`")  # "Reserved prefix: `SET`" in a register header
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 CLOSURE_RE = re.compile(r"\s+[✅❌]\s+(\d{4}-\d{2}-\d{2})$")
 CREATED_RE = re.compile(r"\s+➕\s+(\d{4}-\d{2}-\d{2})")
@@ -544,6 +577,7 @@ HISTORY_DATE_RE = re.compile(r"^    - (\d{2}/\d{2}: )")
 MD_LINK_RE = re.compile(r"(\]\()([^)\s]+)(\))")
 LOOSE_ACTION_RE = re.compile(r"^\s*[-*] \[.?\]\s*\*\*([A-Z]{2,5}-\d{3})\*\*")
 PROTECTED_RE = re.compile(r"-\s*(source|created|updated)\s*:", re.IGNORECASE)
+DUE_NOTE_RE = re.compile(r"-\s*due\s*:\s*(.*)", re.IGNORECASE)
 STATUS = {" ", "/", "w", "x", "-"}
 PRIORITY = {"", "⏫", "🔼", "🔽"}
 STATE_LABELS = {" ": "To do", "/": "In progress", "w": "Waiting", "x": "Done", "-": "Cancelled"}
@@ -561,6 +595,14 @@ PRIORITY_ALIASES = {
     "🔽": "🔽", "low": "🔽",
 }
 RESERVED = ("➕", "📅", "⏳", "⏫", "🔼", "🔽", "✅", "❌")
+HISTORY_WORDS = 35  # words of one history entry (a link counts as its label)
+SUBTASK_WORDS = 15  # words of one subtask
+SUBTASKS_MAX = 10  # subtasks of one action
+SUBTASK_RE = re.compile(r"^- \[(.)\](?:\s+(.*))?$")  # first line of a checkbox sub-bullet, without its four spaces
+SUBTASK_DONE_RE = re.compile(r"\s*✅\s*(\d{4}-\d{2}-\d{2})\s*$")  # the done date Obsidian Tasks appends
+HISTORY_LEAD_RE = re.compile(r"^(\d{2})/(\d{2}) ?:\s*")  # a `DD/MM:` the text itself starts with
+STRONG_ID_RE = re.compile(r"\*\*[A-Z]{2,5}-\d{3}\*\*")
+TASKS_META_RE = re.compile(r"\s+(?:#group/\S+\s*)?(?:[⏫🔼🔽➕📅⏳]|$)")  # where a line's group tag and Tasks metadata start
 GROUP_LIMIT = 40
 GROUP_SLUG = r"[a-z0-9]+(?:-[a-z0-9]+)*"
 GROUP_RE = re.compile(GROUP_SLUG)
@@ -652,6 +694,47 @@ def clean_note(value: object) -> str:
     return note
 
 
+def word_count(text: str) -> int:
+    """Whitespace-separated words, each Markdown link `[label](target)` counting as its label."""
+    return len(LINK_RE.sub(r"\1", text).split())
+
+
+def clean_history(value: object, prefix: str | None) -> str:
+    """A history text within the cap; a leading `DD/MM:` equal to ``prefix`` (the entry's `DD/MM: `) is dropped, another is refused.
+
+    ``prefix`` None: the entry has no date, so a leading date is the entry's own and stays."""
+    note = clean_note(value)
+    while prefix is not None and (lead := HISTORY_LEAD_RE.match(note)):
+        written = f"{lead.group(1)}/{lead.group(2)}"
+        if f"{written}: " != prefix:
+            raise ActionError("bad_request", f"The text starts with the date {written} but the entry is dated {prefix[:5]}: "
+                                             "give the date of the event with --date YYYY-MM-DD and leave it out of the text.")
+        note = clean_note(note[lead.end():])
+    words = word_count(note)
+    if words > HISTORY_WORDS:
+        raise ActionError("bad_request", f"History entry has {words} words; the cap is {HISTORY_WORDS}. Write one change of state, owner, "
+                                         "due date or blocker and link the source once; the detail stays in the source.")
+    return note
+
+
+def clean_subtask(value: object) -> str:
+    """A subtask text: one line, at most SUBTASK_WORDS words, no Tasks metadata and no action ID (it inherits its action's)."""
+    if not isinstance(value, str):
+        raise ActionError("bad_request", "Subtask text is required.")
+    text = value.strip()
+    if not text or len(text) > 300 or text.splitlines() != [text] or "\x00" in text:
+        raise ActionError("bad_request", "A subtask must be 1 to 300 characters on one line.")
+    if any(marker in text for marker in RESERVED):
+        raise ActionError("bad_request", "A subtask carries no Tasks metadata (📅 ⏳ ➕ ✅ ❌ or a priority): it inherits its action's.")
+    if STRONG_ID_RE.search(text):
+        raise ActionError("bad_request", "A subtask carries no action ID (**ID**): a step that needs one is an action of its own.")
+    words = word_count(text)
+    if words > SUBTASK_WORDS:
+        raise ActionError("bad_request", f"Subtask has {words} words; the cap is {SUBTASK_WORDS}. Name one step; "
+                                         "a step that needs more is an action of its own.")
+    return text
+
+
 def state_of(value: str) -> str:
     key = value if value in STATUS else value.strip().lower()
     if key not in STATE_ALIASES:
@@ -670,6 +753,7 @@ def priority_of(value: str) -> str:
 
 
 def registers(brain: Path) -> list[Path]:
+    """Every action register of the brain, those of the archived projects included (see `live_registers`)."""
     root = (brain / "projects").resolve()
     found = []
     for path in sorted(root.glob("**/state/actions.md")):
@@ -679,9 +763,73 @@ def registers(brain: Path) -> list[Path]:
     return found
 
 
+def live_parts(parts: tuple[str, ...]) -> tuple[str, ...]:
+    """The parts of a path below `projects/` as they read out of the archive, which sits at the level of what it holds:
+    `clients/archive/<client>/…` (a whole client), `clients/<client>/missions/archive/<mission>/…`, `internal/archive/<project>/…`,
+    and the earlier places `archive/<project>/…` (an internal project) and `clients/<client>/archive/<mission>/…`.
+    A path outside any archive comes back unchanged; so a label, a client or an ID scope reads the same archived or not."""
+    found = list(parts)
+    if found[:1] == ["archive"]:
+        found[0] = "internal"
+    if found[:2] in (["clients", "archive"], ["internal", "archive"]):
+        del found[1]
+    if found[:1] == ["clients"] and len(found) > 2 and found[2] == "archive":
+        found[2] = "missions"
+    if found[:1] == ["clients"] and len(found) > 3 and found[2:4] == ["missions", "archive"]:
+        del found[3]
+    return tuple(found)
+
+
+def in_archived_project(path: Path | str, brain: Path) -> bool:
+    """True for a path inside an archived project or client (see `live_parts`), the `archive/` folders themselves included.
+
+    ``path`` is absolute, or relative to ``brain``; a path outside the brain is never archived."""
+    path = Path(path)
+    try:
+        parts = path.relative_to(brain).parts if path.is_absolute() else path.parts
+    except ValueError:
+        return False
+    return len(parts) > 1 and parts[0] == "projects" and live_parts(parts[1:]) != parts[1:]
+
+
+def archived_root(path: Path, brain: Path) -> Path | None:
+    """The archived folder that holds ``path`` (absolute): what `brain-state.py unarchive` brings back, the outermost one."""
+    parts = path.relative_to(brain / "projects").parts
+    for end in range(1, len(parts) + 1):
+        head = parts[:end]
+        if head[-1] != "archive" and live_parts(head) != head:
+            return brain / "projects" / Path(*head)
+    return None
+
+
+def live_registers(brain: Path) -> list[Path]:
+    """The registers of the projects that are not archived: what every listing, view and maintenance command reads."""
+    return [path for path in registers(brain) if not in_archived_project(path, brain)]
+
+
+def archived_error(register: Path, brain: Path, read_option: str | None = None) -> ActionError:
+    """The refusal for a project that is archived: how to read it (``read_option``), how to bring it back."""
+    root = archived_root(register, brain) or register.parent.parent
+    folder = f"{brain.name}/{root.relative_to(brain).as_posix()}"
+    read = f"add {read_option} to read it, or " if read_option else ""
+    return ActionError("bad_request", f"The project {project_label(register, brain)} is archived ({folder}): {read}unarchive it first "
+                                      f"with `uv run tools/brain/brain-state.py unarchive {folder} --write`.")
+
+
+def archives_of(register: Path) -> list[Path]:
+    """The action archives (`actions-archive-YYYY.md`) that sit next to a register."""
+    return [path for path in sorted(register.parent.glob("actions-archive-*.md")) if path.is_file() and not path.is_symlink()]
+
+
 def project_label(register: Path, brain: Path) -> str:
-    parts = register.relative_to(brain / "projects").parts[:-2]
+    """`client / mission`, else the project folder name; the same for an archived project (see `live_parts`)."""
+    parts = live_parts(register.relative_to(brain / "projects").parts[:-2])
     return f"{parts[1]} / {parts[3]}" if parts[0] == "clients" and len(parts) >= 4 else parts[-1]
+
+
+def id_scope(register: Path, brain: Path) -> tuple[str, ...]:
+    """The folder whose IDs a register shares, as `live_parts` reads it: `clients/<client>` or `internal/<project>`."""
+    return live_parts(register.relative_to(brain / "projects").parts)[:2]
 
 
 def line_version(line: str) -> str:
@@ -754,6 +902,51 @@ def items(lines: list[str], index: int, last: int) -> list[tuple[int, int]]:
 
 def item_text(lines: list[str], start: int, end: int) -> str:
     return "\n".join(line[4:] if line.strip() else "" for line in lines[start:end])
+
+
+def subtask_of(text: str) -> re.Match | None:
+    """The checkbox of a sub-bullet's text (first line, from `item_text`): state and text; None when it is not a subtask."""
+    return SUBTASK_RE.match(text.split("\n", 1)[0])
+
+
+def block_items(lines: list[str], index: int) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """(history, subtasks): the line ranges of the action's top-level sub-bullets, checkboxes apart, each in block order.
+
+    The history list is every other sub-bullet (`source`, `created`… included): its ranks are the history indices."""
+    history: list[tuple[int, int]] = []
+    subtasks: list[tuple[int, int]] = []
+    for start, end in items(lines, index, last_detail(lines, index)):
+        (subtasks if subtask_of(item_text(lines, start, end)) else history).append((start, end))
+    return history, subtasks
+
+
+def subtask_info(text: str, number: int) -> dict:
+    """A subtask as JSON: its index, its text without the done date, whether it is ticked and the `✅` date ("" when none)."""
+    match = subtask_of(text)
+    assert match is not None
+    rest = (match.group(2) or "").rstrip()
+    closed = SUBTASK_DONE_RE.search(rest)
+    done = match.group(1) in {"x", "X"}
+    return {"index": number, "text": rest[:closed.start()].rstrip() if closed else rest, "done": done,
+            "done_on": closed.group(1) if closed and done else ""}
+
+
+def subtasks_of(lines: list[str], index: int) -> list[dict]:
+    return [subtask_info(item_text(lines, start, end), number) for number, (start, end) in enumerate(block_items(lines, index)[1])]
+
+
+def history_end(lines: list[str], index: int) -> int:
+    """Where a new history entry goes: the end of the block, or right after the last other sub-bullet when subtasks end it."""
+    last = last_detail(lines, index)
+    history, subtasks = block_items(lines, index)
+    if subtasks and history and subtasks[-1][0] > history[-1][0]:
+        return history[-1][1]
+    return last + 1
+
+
+def block_version(lines: list[str], index: int) -> str:
+    """The `details_version` of the action at ``index``: hash of its line and its block."""
+    return hashlib.sha256("\n".join([lines[index], *lines[index + 1:last_detail(lines, index) + 1]]).encode("utf-8")).hexdigest()[:16]
 
 
 def stamp_of(lines: list[str], index: int, pattern: re.Pattern, fallback: str) -> str:
@@ -873,37 +1066,89 @@ def load(register: Path, brain: Path) -> list[dict]:
     for index, line in enumerate(lines):
         action = parse_action(line, register, brain, index + 1)
         if action:
-            found.append(with_stamps(action, lines, index))
+            action = with_stamps(action, lines, index)
+            subtasks = subtasks_of(lines, index)
+            if subtasks:  # only then: an action without subtasks keeps its JSON
+                action["subtasks"] = {"done": sum(item["done"] for item in subtasks), "total": len(subtasks)}
+            found.append(action)
     return found
 
 
-def find(brain: Path, action_id: str) -> tuple[Path, list[str], int, dict]:
-    found = []
-    for path in registers(brain):
-        lines = path.read_text(encoding="utf-8").splitlines()
-        for index, line in enumerate(lines):
-            action = parse_action(line, path, brain, index + 1)
-            if action and action["id"] == action_id:
-                found.append((path, lines, index, with_stamps(action, lines, index)))
+def find(brain: Path, action_id: str, archived: bool = False) -> tuple[Path, list[str], int, dict]:
+    """The one action with this ID in the registers. ``archived``, for reading only, also looks in their archives when no register holds it.
+
+    Without ``archived`` (every write), an action of an archived project is refused: the project must be unarchived first."""
+    def scan(paths: list[Path]) -> list[tuple[Path, list[str], int, dict]]:
+        found = []
+        for path in paths:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for index, line in enumerate(lines):
+                action = parse_action(line, path, brain, index + 1)
+                if action and action["id"] == action_id:
+                    found.append((path, lines, index, with_stamps(action, lines, index)))
+        return found
+
+    live = registers(brain)
+    found = scan(live)
+    if not found and archived:
+        found = scan([archive for register in live for archive in archives_of(register)])
     if len(found) != 1:
         raise ActionError("not_found" if not found else "conflict", "Action not found or duplicate ID.")
+    if not archived and in_archived_project(found[0][0], brain):
+        raise archived_error(found[0][0], brain)
     return found[0]
 
 
 def details(brain: Path, action_id: str) -> dict:
-    _, lines, index, action = find(brain, action_id)
+    """An action with its sub-bullets; an archived one too, flagged ``archived`` (every write still refuses it as not found).
+
+    `notes` is the history (every sub-bullet but the subtasks), indexed as `history edit` and `remove` address it;
+    `subtasks`, `subtasks_done` and `subtasks_total` come only when the action has subtasks."""
+    path, lines, index, action = find(brain, action_id, archived=True)
     last = last_detail(lines, index)
     block = lines[index + 1:last + 1]
     while block and not block[0].strip():
         block.pop(0)
+    history, _ = block_items(lines, index)
     notes = [{"index": number, "text": (text := item_text(lines, start, end)), "deletable": not PROTECTED_RE.match(text)}
-             for number, (start, end) in enumerate(items(lines, index, last))]
-    version = hashlib.sha256("\n".join([lines[index], *lines[index + 1:last + 1]]).encode("utf-8")).hexdigest()[:16]
-    return {**action, "details": [line[4:] if line.strip() else "" for line in block], "notes": notes, "details_version": version}
+             for number, (start, end) in enumerate(history)]
+    subtasks = subtasks_of(lines, index)
+    progress = {"subtasks": subtasks, "subtasks_done": sum(item["done"] for item in subtasks), "subtasks_total": len(subtasks)} if subtasks else {}
+    return {**action, "details": [line[4:] if line.strip() else "" for line in block], "notes": notes, **progress,
+            "details_version": block_version(lines, index), **({"archived": True} if path.name != "actions.md" else {}),
+            **({"project_archived": True} if in_archived_project(path, brain) else {})}
 
 
-def resolve_register(brain: Path, project: str) -> Path:
-    """A register from its path (brain- or Work-relative), its project folder, `client/mission` or label."""
+def show_text(brain: Path, action_id: str, last: int = 3) -> str:
+    """An action as compact text, each piece once: its line as written, its dates, its source, its history, where it is.
+
+    The history is every sub-bullet but the subtasks, `source`, `due`, `created` and `updated`; ``last`` keeps the latest
+    entries (0: all). The subtasks, all of them as written, come between the dates and the source.
+    An archived action is read as `details` reads it and flagged on the last line (`file:line`, from the Work root)."""
+    if last < 0:
+        raise ActionError("bad_request", "--last must be zero or positive.")
+    path, lines, index, action = find(brain, action_id, archived=True)
+    history_items, subtask_items = block_items(lines, index)
+    notes = [item_text(lines, start, end) for start, end in history_items]
+    subtasks = subtasks_of(lines, index)
+    checklist = ([f"subtasks, {sum(item['done'] for item in subtasks)} of {len(subtasks)} done:",
+                  *(item_text(lines, start, end) for start, end in subtask_items)] if subtasks else [])
+    due_note = next((found.group(1).strip(" —–-") for note in notes if (found := DUE_NOTE_RE.match(note))), "")  # `due: —` says nothing
+    due = " ".join(part for part in (action["due"], f"({due_note})" if due_note and action["due"] else due_note) if part)
+    dates = (("due", due), ("created", action["created_at"]), ("updated", action["updated_at"] if updated_item(lines, index) else ""),
+             ("closed", action["done"]))
+    history = [note for note in notes if not PROTECTED_RE.match(note) and not DUE_NOTE_RE.match(note)]
+    kept = history[-last:] if 0 < last < len(history) else history
+    count = (f"history, last {len(kept)} of {len(history)}:" if len(kept) < len(history)
+             else f"history, {len(history)} entr{'y' if len(history) == 1 else 'ies'}:" if history else "history: none")
+    where = (f"{display(path)}:{index + 1}" + (" (archived)" if path.name != "actions.md" else "")
+             + (" (archived project)" if in_archived_project(path, brain) else ""))
+    return "\n".join([lines[index].rstrip(), " · ".join([action["project"], *(f"{label} {value}" for label, value in dates if value)]),
+                      *checklist, *(note for note in notes if SOURCE_RE.match(note)), count, *kept, where])
+
+
+def matching_registers(brain: Path, project: str) -> list[Path]:
+    """The registers named by ``project``: path (brain- or Work-relative), project folder, `client/mission` or label."""
     wanted = project.strip().strip("/")
     if not wanted:
         raise ActionError("bad_request", "Invalid project.")
@@ -911,11 +1156,29 @@ def resolve_register(brain: Path, project: str) -> Path:
     for path in registers(brain):
         relative = path.relative_to(brain).as_posix()
         folder = path.parent.parent.relative_to(brain / "projects").parts
-        short = f"{folder[1]}/{folder[3]}" if folder[0] == "clients" and len(folder) >= 4 else folder[-1]
-        candidates = {relative, f"{brain.name}/{relative}", path.parent.parent.relative_to(brain).as_posix(),
+        live = live_parts(folder)
+        short = f"{live[1]}/{live[3]}" if live[0] == "clients" and len(live) >= 4 else live[-1]
+        project_dir = path.parent.parent.relative_to(brain).as_posix()
+        candidates = {relative, f"{brain.name}/{relative}", project_dir, f"{brain.name}/{project_dir}",
                       "/".join(folder), short, project_label(path, brain)}
         if wanted in candidates:
             matches.append(path)
+    return matches
+
+
+def resolve_register(brain: Path, project: str, archived: bool = False, read_option: str | None = None) -> Path:
+    """A register from its path (brain- or Work-relative), its project folder, `client/mission` or label.
+
+    An archived project resolves only with ``archived`` (a read); otherwise it is refused with the way to bring it back,
+    and ``read_option`` (`--archived`) when the command can read it. A live project wins over an archived one of the same name."""
+    matches = matching_registers(brain, project)
+    live = [path for path in matches if not in_archived_project(path, brain)]
+    if not archived:
+        if not live and matches:
+            raise archived_error(matches[0], brain, read_option)
+        matches = live
+    elif live:
+        matches = live
     if len(matches) != 1:
         raise ActionError("bad_request", "Unknown project." if not matches else "Ambiguous project: give the register path.")
     return matches[0]
@@ -966,6 +1229,17 @@ def check_versions(brain: Path, action_id: str, line_v: str | None, details_v: s
         raise ActionError("conflict", "The history changed in the register. Reopen the action before retrying.")
 
 
+def fallback_prefix(register: Path, lines: list[str]) -> str | None:
+    """The ID prefix of a register that holds no action: the one its header reserves, else the single one of its archives."""
+    header = next((index for index, line in enumerate(lines) if line.startswith("## ")), len(lines))
+    reserved = RESERVED_PREFIX.search("\n".join(lines[:header]))
+    if reserved:
+        return reserved.group(1)
+    archived = {match.group(2).split("-")[0] for archive in archives_of(register)
+                for match in map(ACTION_RE.match, archive.read_text(encoding="utf-8").splitlines()) if match}
+    return next(iter(archived)) if len(archived) == 1 else None
+
+
 def next_id(brain: Path, register: Path, lines: list[str], prefix: str | None) -> str:
     own = {match.group(2).split("-")[0] for match in map(ACTION_RE.match, lines) if match}
     if prefix:
@@ -974,17 +1248,22 @@ def next_id(brain: Path, register: Path, lines: list[str], prefix: str | None) -
             raise ActionError("bad_request", "Invalid ID prefix for this register.")
     elif len(own) == 1:
         prefix = next(iter(own))
+    elif not own and (fallback := fallback_prefix(register, lines)):
+        prefix = fallback
     else:
         raise ActionError("conflict", "Set an ID prefix in the register before creating actions.")
-    parts = register.relative_to(brain / "projects").parts
-    scope = brain / "projects" / parts[0] / parts[1]
+    axis, name = id_scope(register, brain)
+    places = [Path(axis, name), Path(axis, "archive", name)] + ([Path("archive", name)] if axis == "internal" else [])
     highest = 0
-    for md in scope.rglob("*.md"):
-        if md.is_symlink() or not md.resolve().is_relative_to(scope.resolve()):
+    for scope in [brain / "projects" / place for place in places]:  # the live folder and its archived place: IDs are never reused
+        if not scope.is_dir() or scope.is_symlink():
             continue
-        for match in ID_RE.finditer(md.read_text(encoding="utf-8")):
-            if match.group(1) == prefix:
-                highest = max(highest, int(match.group(2)))
+        for md in scope.rglob("*.md"):
+            if md.is_symlink() or not md.resolve().is_relative_to(scope.resolve()):
+                continue
+            for match in ID_RE.finditer(md.read_text(encoding="utf-8")):
+                if match.group(1) == prefix:
+                    highest = max(highest, int(match.group(2)))
     if highest >= 999:
         raise ActionError("conflict", "The ID series is exhausted.")
     return f"{prefix}-{highest + 1:03d}"
@@ -1053,6 +1332,9 @@ def update(brain: Path, action_id: str, *, title: str | None = None, owner: str 
         closure = closed_on or current["done"]
     else:
         closure = closed_on or today()
+    still_open = sum(not item["done"] for item in subtasks_of(lines, index))
+    warnings = [f"{still_open} subtask{'s' if still_open > 1 else ''} of {action_id} still open, left unticked."] \
+        if still_open and new["state"] in {"x", "-"} and new["state"] != current["state"] else []
     before = block_signature(lines, index)
     lines[index] = action_line(action_id, new["title"], new["owner"], new["state"], new["priority"], current["created"],
                                new["due"], new["scheduled"], closure, new["group"])
@@ -1069,22 +1351,27 @@ def update(brain: Path, action_id: str, *, title: str | None = None, owner: str 
     write(path, existing, lines, dry_run)
     return {"id": action_id, "register": path.relative_to(brain).as_posix(), "label": label,
             "line": next(line for line in lines if f"**{action_id}**" in line and ACTION_RE.match(line)),
-            "updated_changed": updated_changed, "dry_run": dry_run}
+            "updated_changed": updated_changed, "dry_run": dry_run, **({"warnings": warnings} if warnings else {})}
 
 
 def add_history(brain: Path, action_id: str, text: str, when: str | None = None, expect_details_version: str | None = None,
                 dry_run: bool = False) -> dict:
-    note = clean_note(text)
+    """Append a dated history entry after the last one (never among the subtasks); an exact duplicate writes nothing."""
     day = parse_date(when, "Date") if when else today()
+    note = clean_history(text, history_prefix(day))
     check_versions(brain, action_id, None, expect_details_version)
     path, lines, index, _ = find(brain, action_id)
     existing = path.read_text(encoding="utf-8")
+    entry = f"- {history_prefix(day)}{note}"
+    if any(item_text(lines, start, end).split("\n", 1)[0].rstrip() == entry for start, end in block_items(lines, index)[0]):
+        return {"id": action_id, "register": path.relative_to(brain).as_posix(), "label": f"note already in {action_id}",
+                "updated_changed": False, "unchanged": True, "dry_run": dry_run}
     before = block_signature(lines, index)
-    lines.insert(last_detail(lines, index) + 1, f"    - {history_prefix(day)}{note}")
+    lines.insert(history_end(lines, index), f"    {entry}")
     updated_changed = refresh_updated(lines, index, before, path)
     write(path, existing, lines, dry_run)
     return {"id": action_id, "register": path.relative_to(brain).as_posix(), "label": f"note added to {action_id}",
-            "updated_changed": updated_changed, "dry_run": dry_run}
+            "updated_changed": updated_changed, "unchanged": False, "dry_run": dry_run}
 
 
 def remove_history(brain: Path, action_id: str, number: int, expect_text: str | None = None,
@@ -1092,7 +1379,7 @@ def remove_history(brain: Path, action_id: str, number: int, expect_text: str | 
     check_versions(brain, action_id, None, expect_details_version)
     path, lines, index, _ = find(brain, action_id)
     existing = path.read_text(encoding="utf-8")
-    found = items(lines, index, last_detail(lines, index))
+    found = block_items(lines, index)[0]  # the subtasks are never history
     if not 0 <= number < len(found):
         raise ActionError("bad_request", "Note not found.")
     start, end = found[number]
@@ -1114,11 +1401,12 @@ def remove_history(brain: Path, action_id: str, number: int, expect_text: str | 
 def edit_history(brain: Path, action_id: str, number: int, text: str, when: str | None = None, expect_text: str | None = None,
                  expect_details_version: str | None = None, dry_run: bool = False) -> dict:
     """Rewrite one history entry (its first line); its date is kept unless ``when`` is given, its sub-lines stay."""
-    note = clean_note(text)
+    clean_note(text)
+    day = parse_date(when, "Date") if when else None
     check_versions(brain, action_id, None, expect_details_version)
     path, lines, index, _ = find(brain, action_id)
     existing = path.read_text(encoding="utf-8")
-    found = items(lines, index, last_detail(lines, index))
+    found = block_items(lines, index)[0]  # the subtasks are never history
     if not 0 <= number < len(found):
         raise ActionError("bad_request", "Note not found.")
     start, end = found[number]
@@ -1128,16 +1416,121 @@ def edit_history(brain: Path, action_id: str, number: int, text: str, when: str 
     if PROTECTED_RE.match(current):
         raise ActionError("bad_request", "The source, created and updated lines cannot be edited.")
     dated = HISTORY_DATE_RE.match(lines[start])
-    if when:
-        prefix = history_prefix(parse_date(when, "Date"))
+    if day:
+        prefix = history_prefix(day)
     else:
         prefix = dated.group(1) if dated else ""
+    note = clean_history(text, prefix or None)
     before = block_signature(lines, index)
     lines[start] = f"    - {prefix}{note}"
     updated_changed = refresh_updated(lines, index, before, path)
     write(path, existing, lines, dry_run)
     return {"id": action_id, "register": path.relative_to(brain).as_posix(), "label": f"note edited on {action_id}",
             "before": current, "updated_changed": updated_changed, "dry_run": dry_run}
+
+
+def subtask_line(state: str, text: str, done_on: str = "") -> str:
+    return f"    - [{state}] {text}" + (f" ✅ {done_on}" if done_on else "")
+
+
+def put_subtasks(lines: list[str], index: int, groups: list[list[str]]) -> None:
+    """Write the subtasks of the action at ``index``, each with its sub-lines, in order right under the action line.
+
+    They are first taken out wherever they sit, so that a hand-made one placed lower in the block comes back to the top."""
+    for start, end in reversed(block_items(lines, index)[1]):
+        del lines[start:end]
+        while start < len(lines) and not lines[start].strip() and not lines[start - 1].strip():
+            del lines[start]
+    lines[index + 1:index + 1] = [line for group in groups for line in group]
+
+
+def change_subtasks(brain: Path, action_id: str, change, expect_details_version: str | None, dry_run: bool) -> dict:
+    """Apply ``change`` to the subtasks of an action, then write them back; `updated:` is settled, no history entry is added.
+
+    ``change(groups)`` edits the list of subtasks (each the lines of one sub-bullet) in place and returns (label, index of
+    the subtask concerned or None, extra fields of the result)."""
+    check_versions(brain, action_id, None, expect_details_version)
+    path, lines, index, _ = find(brain, action_id)
+    existing = path.read_text(encoding="utf-8")
+    groups = [lines[start:end] for start, end in block_items(lines, index)[1]]
+    label, focus, extra = change(groups)
+    before = block_signature(lines, index)
+    put_subtasks(lines, index, groups)
+    updated_changed = refresh_updated(lines, index, before, path)
+    text = write(path, existing, lines, dry_run)
+    subtasks = subtasks_of(lines, index)
+    return {"id": action_id, "register": path.relative_to(brain).as_posix(), "label": label,
+            **({"index": focus, "subtask": subtasks[focus]} if focus is not None else {}), **extra,
+            "subtasks": subtasks, "subtasks_done": sum(item["done"] for item in subtasks), "subtasks_total": len(subtasks),
+            "details_version": block_version(lines, index), "updated_changed": updated_changed, "unchanged": text == existing,
+            "dry_run": dry_run}
+
+
+def subtask_at(groups: list[list[str]], number: int) -> dict:
+    if not 0 <= number < len(groups):
+        raise ActionError("bad_request", "Subtask not found.")
+    return subtask_info(item_text(groups[number], 0, len(groups[number])), number)
+
+
+def add_subtask(brain: Path, action_id: str, text: str, position: int | None = None, expect_details_version: str | None = None,
+                dry_run: bool = False) -> dict:
+    """A new open subtask at ``position`` (0: first; default: last)."""
+    text = clean_subtask(text)
+
+    def change(groups: list[list[str]]) -> tuple:
+        if len(groups) >= SUBTASKS_MAX:
+            raise ActionError("bad_request", f"An action holds at most {SUBTASKS_MAX} subtasks: split the work into several actions.")
+        at = len(groups) if position is None else position
+        if not 0 <= at <= len(groups):
+            raise ActionError("bad_request", f"The position must be 0 to {len(groups)}.")
+        groups.insert(at, [subtask_line(" ", text)])
+        return f"subtask added to {action_id}", at, {}
+    return change_subtasks(brain, action_id, change, expect_details_version, dry_run)
+
+
+def toggle_subtask(brain: Path, action_id: str, number: int, done: bool | None = None, expect_details_version: str | None = None,
+                   dry_run: bool = False) -> dict:
+    """Tick (with today's `✅` date) or untick (dropping it) a subtask; ``done`` forces a state, a subtask already in it is left as is."""
+    def change(groups: list[list[str]]) -> tuple:
+        current = subtask_at(groups, number)
+        target = not current["done"] if done is None else done
+        if target != current["done"]:
+            groups[number][0] = subtask_line("x", current["text"], today()) if target else subtask_line(" ", current["text"])
+        return f"subtask {'ticked' if target else 'unticked'} on {action_id}", number, {}
+    return change_subtasks(brain, action_id, change, expect_details_version, dry_run)
+
+
+def edit_subtask(brain: Path, action_id: str, number: int, text: str, expect_details_version: str | None = None,
+                 dry_run: bool = False) -> dict:
+    """Rewrite the text of a subtask; its state, its `✅` date and its sub-lines stay."""
+    text = clean_subtask(text)
+
+    def change(groups: list[list[str]]) -> tuple:
+        current = subtask_at(groups, number)
+        state = subtask_of(groups[number][0][4:]).group(1)  # type: ignore[union-attr]
+        groups[number][0] = subtask_line(state, text, current["done_on"])
+        return f"subtask edited on {action_id}", number, {"before": current["text"]}
+    return change_subtasks(brain, action_id, change, expect_details_version, dry_run)
+
+
+def remove_subtask(brain: Path, action_id: str, number: int, expect_details_version: str | None = None, dry_run: bool = False) -> dict:
+    def change(groups: list[list[str]]) -> tuple:
+        removed = subtask_at(groups, number)
+        del groups[number]
+        return f"subtask removed from {action_id}", None, {"removed": removed}
+    return change_subtasks(brain, action_id, change, expect_details_version, dry_run)
+
+
+def move_subtask(brain: Path, action_id: str, number: int, to: int, expect_details_version: str | None = None,
+                 dry_run: bool = False) -> dict:
+    """Move a subtask so that its index becomes ``to``; the others keep their order."""
+    def change(groups: list[list[str]]) -> tuple:
+        subtask_at(groups, number)
+        if not 0 <= to < len(groups):
+            raise ActionError("bad_request", f"The target index must be 0 to {len(groups) - 1}.")
+        groups.insert(to, groups.pop(number))
+        return f"subtask moved on {action_id}", to, {}
+    return change_subtasks(brain, action_id, change, expect_details_version, dry_run)
 
 
 def relink(text: str, old_dir: Path, new_dir: Path) -> str:
@@ -1158,8 +1551,7 @@ def move(brain: Path, action_id: str, project: str, dry_run: bool = False) -> di
     target = resolve_register(brain, project)
     if target == source:
         raise ActionError("bad_request", "The action is already in this register.")
-    scope = lambda path: path.relative_to(brain / "projects").parts[:2]  # noqa: E731
-    if scope(target) != scope(source):
+    if id_scope(target, brain) != id_scope(source, brain):
         raise ActionError("bad_request", "A move is limited to registers of the same client or project (IDs depend on it).")
     existing, target_existing = source.read_text(encoding="utf-8"), target.read_text(encoding="utf-8")
     end = last_detail(lines, index) + 1
@@ -1168,7 +1560,7 @@ def move(brain: Path, action_id: str, project: str, dry_run: bool = False) -> di
         block.pop()
     day = now()
     target_lines = target_existing.splitlines()
-    block.insert(last_detail(block, 0) + 1, f"    - {history_prefix(day.date().isoformat())}moved from {project_label(source, brain)}")
+    block.insert(history_end(block, 0), f"    - {history_prefix(day.date().isoformat())}moved from {project_label(source, brain)}")  # exempt from the word cap
     stamp_updated(block, 0, f"{day:%Y-%m-%d %H:%M}")  # always a real change (the history entry above): no need to compare
     del lines[index:end]
     if index and not lines[index - 1].strip():
@@ -1196,14 +1588,40 @@ def move(brain: Path, action_id: str, project: str, dry_run: bool = False) -> di
             "label": f"move of {action_id}", "dry_run": False}
 
 
-def check(brain: Path, only: set[Path] | None = None) -> dict:
-    """Format errors (blocking) and warnings of the action registers; IDs are checked across each client folder."""
+def subtask_warnings(lines: list[str], name: str, action_id: str, history: list[tuple[int, int]],
+                     subtasks: list[tuple[int, int]]) -> list[str]:
+    """`check` warnings about the subtasks of one action: too many, metadata, an ID, a state other than [ ] or [x], misplaced."""
+    found = []
+    if len(subtasks) > SUBTASKS_MAX:
+        found.append(f"{name}:{subtasks[0][0] + 1}: {action_id} has {len(subtasks)} subtasks (at most {SUBTASKS_MAX})")
+    for start, end in subtasks:
+        match = subtask_of(item_text(lines, start, end))
+        assert match is not None
+        state, text, where = match.group(1), (match.group(2) or "").rstrip(), f"{name}:{start + 1}"
+        if state not in {" ", "x"}:
+            found.append(f"{where}: {action_id} subtask in state [{state}] (only [ ] and [x])")
+        closed = SUBTASK_DONE_RE.search(text) if state in {"x", "X"} else None
+        if any(marker in (text[:closed.start()] if closed else text) for marker in RESERVED):
+            found.append(f"{where}: {action_id} subtask with Tasks metadata (it inherits the action's)")
+        if STRONG_ID_RE.search(text) and not LOOSE_ACTION_RE.match(lines[start]):  # an indented action line is already an error
+            found.append(f"{where}: {action_id} subtask carrying an action ID")
+        if history and start > history[0][0]:
+            found.append(f"{where}: {action_id} subtask after other sub-bullets (subtasks go right under the action line; "
+                         "any `action.py subtask` write puts them back)")
+    return found
+
+
+def check(brain: Path, only: set[Path] | None = None, archived: bool = False) -> dict:
+    """Format errors (blocking) and warnings of the action registers; IDs are checked across each client folder.
+
+    The registers of the archived projects are format-checked only with ``archived`` or when ``only`` names them; their
+    IDs always count, so that a live action never takes the ID of an archived one."""
     errors: list[str] = []
     warnings: list[str] = []
     seen: dict[tuple, dict[str, str]] = {}
     for path in registers(brain):
-        scope = path.relative_to(brain / "projects").parts[:2]
-        bucket = seen.setdefault(scope, {})
+        ids_only = in_archived_project(path, brain) and not archived and (only is None or path not in only)
+        bucket = seen.setdefault(id_scope(path, brain), {})
         files = [path] + sorted(path.parent.glob("actions-archive-*.md"))
         for file in files:
             lines = file.read_text(encoding="utf-8").splitlines()
@@ -1218,7 +1636,7 @@ def check(brain: Path, only: set[Path] | None = None) -> dict:
                     errors.append(f"{where}: {action_id} already present ({bucket[action_id]})")
                 else:
                     bucket[action_id] = where
-                if file != path or (only is not None and path not in only):
+                if file != path or ids_only or (only is not None and path not in only):
                     continue
                 match = ACTION_RE.match(line)
                 if not match:
@@ -1244,9 +1662,11 @@ def check(brain: Path, only: set[Path] | None = None) -> dict:
                     errors.append(f"{where}: {action_id} open but carries a closing date")
                 if state == "x" and "❌" in line or state == "-" and "✅" in line:
                     errors.append(f"{where}: {action_id} closing mark inconsistent with the state")
-                block = [item_text(lines, a, b) for a, b in items(lines, number - 1, last_detail(lines, number - 1))]
+                history, subtasks = block_items(lines, number - 1)
+                block = [item_text(lines, a, b) for a, b in history]  # a checkbox is a subtask, never a source
                 if not any(re.match(r"-\s*(\[?source|\[)", entry, re.IGNORECASE) for entry in block):
                     warnings.append(f"{where}: {action_id} without a source sub-bullet")
+                warnings += subtask_warnings(lines, name, action_id, history, subtasks)
     return {"errors": errors, "warnings": warnings}
 
 
@@ -1266,16 +1686,30 @@ def delete(brain: Path, action_id: str, expect_version: str | None = None, expec
     return {"deleted": action_id, "register": path.relative_to(brain).as_posix(), "label": f"deletion of {action_id}", "dry_run": dry_run}
 
 
-def listing(brain: Path, project: str | None, state: str, owner: str | None) -> list[dict]:
-    paths = [resolve_register(brain, project)] if project else registers(brain)
-    found = [action for path in paths for action in load(path, brain)]
+def listing(brain: Path, project: str | None, state: str, owner: str | None, due_before: str | None = None,
+            limit: int | None = None, archived: bool = False) -> list[dict]:
+    """The actions of one register or of all; ``due_before`` keeps those due strictly before that day (earliest first).
+
+    The archived projects are left out unless ``archived``; their actions then carry `"project_archived": true`."""
+    if due_before is not None:
+        due_before = parse_date(due_before, "Due date limit")
+    if limit is not None and limit < 0:
+        raise ActionError("bad_request", "The limit must be zero or positive.")
+    if project:
+        paths = [resolve_register(brain, project, archived, "--archived")]
+    else:
+        paths = registers(brain) if archived else live_registers(brain)
+    found = [{**action, "project_archived": True} if in_archived_project(path, brain) else action
+             for path in paths for action in load(path, brain)]
     if state == "open":
         found = [a for a in found if a["state"] in {" ", "/", "w"}]
     elif state == "closed":
         found = [a for a in found if a["state"] in {"x", "-"}]
     if owner:
         found = [a for a in found if owner.lower() in a["owner"].lower()]
-    return found
+    if due_before is not None:
+        found = sorted((a for a in found if a["due"] and a["due"] < due_before), key=lambda a: a["due"])
+    return found if limit is None else found[:limit]
 
 
 # --- Board (formerly tasks-board.py) -------------------------------------------------------------
@@ -1309,17 +1743,29 @@ def board_owner(brain: Path) -> str:
     return name
 
 
+def with_progress(title: str, subtasks: list[dict]) -> str:
+    """``title`` with the subtask progress (` 1/3`) after its words, before its group tag and Tasks metadata; as is without subtasks."""
+    if not subtasks:
+        return title
+    progress = f" {sum(item['done'] for item in subtasks)}/{len(subtasks)}"
+    meta = TASKS_META_RE.search(title)
+    return title[:meta.start()] + progress + title[meta.start():] if meta else title + progress
+
+
 def board_load(brain: Path) -> list[BoardItem]:
     found = []
     for register in sorted((brain / "projects").glob("**/state/actions.md")):
-        for number, text in enumerate(register.read_text(encoding="utf-8").splitlines(), start=1):
+        if in_archived_project(register, brain):
+            continue
+        lines = register.read_text(encoding="utf-8").splitlines()
+        for number, text in enumerate(lines, start=1):
             match = re.match(r"^- \[(.)\] \*\*([A-Z]{2,5}-\d{3})\*\* — ([^—]+?) — (.*)$", text)
             if not match:
                 continue
             state, action_id, owner, rest = match.groups()
             done = BOARD_DONE.search(rest)
             # Links in a title are relative to the register: keep their text only.
-            title = LINK_RE.sub(r"\1", BOARD_DONE.sub("", rest)).strip()
+            title = with_progress(LINK_RE.sub(r"\1", BOARD_DONE.sub("", rest)).strip(), subtasks_of(lines, number - 1))
             found.append(BoardItem(state, action_id, owner.strip(), title, done.group(1) if done else None, register, number,
                                    project_label(register, brain)))
     return found
@@ -1420,7 +1866,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--project", help="register, project folder, client/mission or label")
     p.add_argument("--state", choices=("open", "closed", "all"), default="open")
     p.add_argument("--owner")
+    p.add_argument("--due-before", metavar="YYYY-MM-DD", help="only the actions due strictly before that day, earliest first (no due date: left out)")
+    p.add_argument("--limit", type=int, metavar="N", help="at most N actions")
     p.add_argument("--table", action="store_true", help="one line per action instead of JSON")
+    p.add_argument("--archived", action="store_true",
+                   help="also list the archived projects (left out by default); --project may then name one")
 
     p = sub.add_parser("board", help="complete view by project, for the terminal or a Markdown preview (read-only)")
     p.add_argument("--write", nargs="?", const=str(WORK / "agents/tasks-board.md"), metavar="PATH",
@@ -1429,6 +1879,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("show", help="show an action and its history")
     p.add_argument("id")
+    p.add_argument("--text", action="store_true",
+                   help="compact plain text instead of JSON: the line as written, its dates, the source, the latest history entries, file:line")
+    p.add_argument("--last", type=int, metavar="N", help="with --text: history entries shown, the latest ones (default 3, 0 for all)")
 
     p = sub.add_parser("create", help="create an action at the end of the Open section")
     p.add_argument("--project", required=True, help="register, project folder, client/mission or label")
@@ -1476,6 +1929,28 @@ def build_parser() -> argparse.ArgumentParser:
     h.add_argument("--expect-details-version")
     writable(h)
 
+    p = sub.add_parser("subtask", help="add, tick, edit, remove or move a subtask (a step of the action's checklist)")
+    steps = p.add_subparsers(dest="operation", required=True)
+    index_help = "index of the subtask, from 0 (the `index` of `subtasks` in show)"
+    for name, text in (("add", "append an open subtask (or insert it at --position)"), ("toggle", "tick or untick a subtask"),
+                       ("edit", "rewrite the text of a subtask"), ("remove", "remove a subtask"), ("move", "move a subtask to index --to")):
+        s = steps.add_parser(name, help=text)
+        s.add_argument("id")
+        if name != "add":
+            s.add_argument("--index", type=int, required=True, help=index_help)
+        if name in {"add", "edit"}:
+            s.add_argument("--text", required=True, help=f"one line, {SUBTASK_WORDS} words at most, no Tasks metadata, no **ID**")
+        if name == "add":
+            s.add_argument("--position", type=int, help="index of the new subtask, from 0 (default: after the last one)")
+        if name == "toggle":
+            state = s.add_mutually_exclusive_group()
+            state.add_argument("--done", dest="done", action="store_const", const=True, default=None, help="tick it (no change if ticked)")
+            state.add_argument("--undone", dest="done", action="store_const", const=False, help="untick it (no change if open)")
+        if name == "move":
+            s.add_argument("--to", type=int, required=True, help="its index after the move, from 0")
+        s.add_argument("--expect-details-version")
+        writable(s)
+
     for name, text in (("sweep", "put each action under the section of its state (Open, Done, Cancelled)"),
                        ("archive", "move the actions closed for more than --days days to state/actions-archive-YYYY.md")):
         p = sub.add_parser(name, help=text)
@@ -1498,6 +1973,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("check", help="check the format of the registers (exit code 1 on error)")
     p.add_argument("--register", action="append", type=Path, metavar="PATH", help="limit the format check to these registers (IDs are still checked across the whole client)")
     p.add_argument("--quiet", action="store_true", help="print only the errors")
+    p.add_argument("--archived", action="store_true",
+                   help="also check the format of the archived projects' registers (their IDs always count for duplicates)")
 
     p = sub.add_parser("delete", help="delete an action and its block")
     p.add_argument("id")
@@ -1528,6 +2005,10 @@ def maintain(args: argparse.Namespace) -> int:
             if only_registers is not None and register not in only_registers:
                 continue
             name = display(register)
+            if in_archived_project(register, brain):  # an archived project is left as it was moved
+                if only_registers is not None and not args.quiet:
+                    print(f"{name}: skipped, archived project")
+                continue
             for operation, runner in (("sweep", run_sweep), ("archive", run_archive)):
                 if not operations[operation]:
                     continue
@@ -1556,9 +2037,11 @@ def run(args: argparse.Namespace) -> object:
     if not (brain / "projects").is_dir():
         raise ActionError("not_found", f"Registers not found under {brain / 'projects'}")
     if args.command == "list":
-        return listing(brain, args.project, args.state, args.owner)
+        return listing(brain, args.project, args.state, args.owner, args.due_before, args.limit, args.archived)
     if args.command == "show":
-        return details(brain, args.id)
+        if args.last is not None and not args.text:
+            raise ActionError("bad_request", "--last goes with --text.")
+        return show_text(brain, args.id, 3 if args.last is None else args.last) if args.text else details(brain, args.id)
     if args.command == "create":
         return create(brain, args.project, args.title, args.owner, args.source, args.state, args.priority, args.due,
                       args.scheduled, args.due_note, args.prefix, args.dry_run, args.group)
@@ -1570,6 +2053,17 @@ def run(args: argparse.Namespace) -> object:
         return add_history(brain, args.id, args.text, args.date, args.expect_details_version, args.dry_run)
     if args.command == "history" and args.operation == "edit":
         return edit_history(brain, args.id, args.index, args.text, args.date, args.expect_text, args.expect_details_version, args.dry_run)
+    if args.command == "subtask":
+        lock = {"expect_details_version": args.expect_details_version, "dry_run": args.dry_run}
+        if args.operation == "add":
+            return add_subtask(brain, args.id, args.text, args.position, **lock)
+        if args.operation == "toggle":
+            return toggle_subtask(brain, args.id, args.index, args.done, **lock)
+        if args.operation == "edit":
+            return edit_subtask(brain, args.id, args.index, args.text, **lock)
+        if args.operation == "remove":
+            return remove_subtask(brain, args.id, args.index, **lock)
+        return move_subtask(brain, args.id, args.index, args.to, **lock)
     if args.command == "move":
         return move(brain, args.id, args.to, args.dry_run)
     if args.command == "history":
@@ -1585,7 +2079,7 @@ def main() -> int:
         return board(args)
     if args.command == "check":
         brain = (args.brain[0] if args.brain else BRAIN).expanduser().resolve()
-        result = check(brain, {path.expanduser().resolve() for path in args.register} if args.register else None)
+        result = check(brain, {path.expanduser().resolve() for path in args.register} if args.register else None, args.archived)
         for error in result["errors"]:
             print(f"ERROR {error}")
         if not args.quiet:
@@ -1605,7 +2099,12 @@ def main() -> int:
         for action in result:  # type: ignore[union-attr]
             extra = " ".join(part for part in (f"[group: {action['group']}]" if action["group"] else "", action["priority"],
                                                f"📅 {action['due']}" if action["due"] else "") if part)
-            print(f"[{action['state']}] {action['id']} — {action['owner']} — {action['title']} {extra}".rstrip() + f"  ({action['project']})")
+            progress = f" {action['subtasks']['done']}/{action['subtasks']['total']}" if "subtasks" in action else ""
+            print(f"[{action['state']}] {action['id']} — {action['owner']} — {action['title']}{progress} {extra}".rstrip()
+                  + f"  ({action['project']}{', archived' if action.get('project_archived') else ''})")
+        return 0
+    if args.command == "show" and args.text:
+        print(result)
         return 0
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

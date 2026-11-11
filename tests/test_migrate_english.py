@@ -228,7 +228,8 @@ class MigrateEnglishTest(unittest.TestCase):
                      "### Choisir l'outil (2026-10-01, status: proposed)", "- **Context:** besoin d'un outil.",
                      "- **Decision:** prendre l'outil A.", "- **Consequences:** migration.", "### Ancienne règle (2026-09-01, status: active)",
                      "### Règle datée (2026-09-02)", "- **Accepted:** Jane, 2026-09-02.", "### Vieille règle (2026-08-01, status: superseded)",
-                     "- **Superseded by:** « Ancienne règle » (2026-09-01).", "- **Source et validation :** Jane, 2026-09-01.", "- **Suite :** voir plus tard."):
+                     "- **Superseded by:** « Ancienne règle » (2026-09-01).", "- **Source and acceptance:** Jane, 2026-09-01.",
+                     "- **Follow-up:** voir plus tard.", "> Keep the source and the status of each decision."):
             self.assertIn(line + "\n", decisions)
         self.assertIn("Previous months: [2026-09](journal/2026-09.md)\n", self.read("projects/clients/acme/missions/mission/mission.md"))
         person = self.read("people/jane-doe.md")
@@ -260,9 +261,9 @@ class MigrateEnglishTest(unittest.TestCase):
                      "projects/clients/acme/missions/mission/notes/2026-10-01-idee.md", "people/john.md", "people/README.md", "AGENTS.md"):
             self.assertEqual((self.brain / name).read_bytes(), self.before[self.brain / name], name)
         for left in ("« fait le DD/MM » kept as written", "« limite: » kept as written", "history line with a qualifier",
-                     "status « active » kept", "field « Source et validation » kept", "field « Suite » kept",
-                     "decision written as a bullet", "people/john.md: left as is — no front matter"):
+                     "status « active » kept", "decision written as a bullet", "people/john.md: left as is — no front matter"):
             self.assertIn(left, out)
+        self.assertNotIn("field « Suite » kept", out)
 
     def test_second_run_finds_nothing_and_tools_read_the_result(self) -> None:
         self.run_tool(TOOL, "--write", "--allow-dirty")
@@ -300,6 +301,366 @@ class MigrateEnglishTest(unittest.TestCase):
         self.assertIn("templater/new-action.md", seed)
         (self.brain / "tasks.md").write_text(seed.replace("{{BRAIN}}", "brain"), encoding="utf-8")
         self.assertNotIn("tasks.md:", self.run_tool(TOOL))
+
+
+MISSION_PAGE = """# Mission: Portail
+
+> Index court de la mission ; les registres et sources font foi pour le détail.
+
+- **Client :** [Acme](../../acme.md)
+- **Statut :** actif
+- **Objectif :** livrer le portail.
+- **Boond :** `123-Acme`
+- **Tableau :** [tasks](../../../../../tasks.md)
+
+## En bref
+- Le statut est actif ; lire selon le besoin, puis En bref.
+
+## État actuel
+
+> État au 2026-10-02 (Model).
+
+- Avancement normal.
+
+## Architecture cible
+- **Statut :** en revue, ce libellé du corps reste tel quel.
+
+## Lire selon le besoin
+- [Actions](state/actions.md)
+
+## Timeline
+Mois précédents : [2026-09](journal/2026-09.md)
+- 2026-10-01 — État actuel : Mois précédents et Retour au projet restent en prose (Model)
+"""
+
+CLIENT_PAGE = """# Client: Acme
+
+> Index durable du client. L'état et les sources sont dans la mission.
+
+- **Interlocuteurs :** [Jane Doe](../../../people/jane-doe.md)
+
+## En bref
+- Client de test.
+
+## Conventions client
+- Écrire en français.
+"""
+
+MINUTES_A = """---
+date: 2026-10-01
+heure: "09:00"
+type: cr
+client: acme
+mission: portail
+titre: Kick-off
+participants: [Jane Doe]
+fiabilite: moyenne
+redige_par: "cr-reunion (Model)"
+---
+
+# 2026-10-01 — Kick-off
+
+> CR rédigé à partir du transcript. Fiche : [portail](../../portail.md).
+
+Fiche : [portail](../../portail.md).
+
+## En bref
+- Jane présente le plan ; le Résumé et les Sujets sont prêts.
+
+## Participants
+- Jane Doe — Acme
+
+## Sujets
+
+### Retenu
+- Le point « Points à vérifier » reste en prose.
+
+## Décisions proposées
+- **Proposée** — Choisir l'outil A — Jane.
+- **À confirmer** — Garder B — Jane.
+
+## Actions
+- **Nouvelle · ACM-001** — Jane — Préparer l'atelier — 20/10.
+- **Suivi · ACM-002 et ACM-003** — échéance décalée.
+- **Suivi :** ce sujet garde son libellé.
+
+## Points à vérifier
+- Le nom exact du client.
+
+## Ce qui a changé depuis le dernier point
+_Vient de la mémoire._
+- ACM-002 avance.
+
+## Changements depuis la restitution
+- Rien.
+
+## Addendum du 05/10
+- Précision.
+
+```markdown
+## Résumé
+```
+"""
+
+MINUTES_A_EXPECTED = """---
+date: 2026-10-01
+time: "09:00"
+type: cr
+client: acme
+mission: portail
+title: Kick-off
+participants: [Jane Doe]
+reliability: medium
+written_by: "cr-reunion (Model)"
+---
+
+# 2026-10-01 — Kick-off
+
+> CR rédigé à partir du transcript. Fiche : [portail](../../portail.md).
+
+Mission page: [portail](../../portail.md).
+
+## Summary
+- Jane présente le plan ; le Résumé et les Sujets sont prêts.
+
+## Participants
+- Jane Doe — Acme
+
+## Key points
+
+### Retenu
+- Le point « Points à vérifier » reste en prose.
+
+## Decisions
+- **To confirm** — Choisir l'outil A — Jane.
+- **To confirm** — Garder B — Jane.
+
+## Actions and follow-up
+- **New · ACM-001** — Jane — Préparer l'atelier — 20/10.
+- **Follow-up · ACM-002 and ACM-003** — échéance décalée.
+- **Suivi :** ce sujet garde son libellé.
+
+## To check
+- Le nom exact du client.
+
+## Changes since the last meeting
+_From memory._
+- ACM-002 avance.
+
+## Changements depuis la restitution
+- Rien.
+
+## Addendum — 05/10
+- Précision.
+
+```markdown
+## Résumé
+```
+"""
+
+MINUTES_B = """---
+date: 2026-10-03
+type: cr
+projet: interne
+titre: Point
+title: Point
+---
+
+# 2026-10-03 — Point
+
+Fiche : [interne](../../interne.md).
+
+## Summary
+Déjà en anglais.
+
+## Résumé
+Ancienne section gardée.
+
+## Retenu
+- **Budget :** validé.
+
+## Actions et suivi
+- **Nouvelle** — Jane — Envoyer le devis.
+
+## À vérifier
+- Le montant.
+
+## Détail
+Rien.
+"""
+
+PERSON_PAGE = """---
+name: Jane Doe
+organization: Acme
+missions: [portail]
+aliases: []
+role: Cheffe de projet
+email:
+updated: 2026-10-01
+---
+
+# Jane Doe
+
+- **Projets :** [portail](../projects/clients/acme/missions/portail/portail.md)
+
+## Rôle et périmètre
+- Cheffe de projet ; son rôle et périmètre restent en prose.
+
+## Ce qu'il/elle attend
+- Des points courts.
+
+## Historique des échanges
+- 2026-10-01 — kick-off.
+
+## Mentoring / progression
+- **Focus actuel :** cadrage.
+- **Forces :** synthèse.
+"""
+
+
+class StructureTest(unittest.TestCase):
+    """Headings, front matter, header labels, tags and boilerplate lines; content and topic headings untouched."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.work = Path(self._tmp.name)
+        (self.work / "kit/brain").mkdir(parents=True)
+        self.brain = self.work / "brain"
+        mission = "projects/clients/acme/missions/portail"
+        files = {
+            "projects/clients/acme/acme.md": CLIENT_PAGE,
+            f"{mission}/portail.md": MISSION_PAGE,
+            f"{mission}/state/actions.md": "# Actions — Portail\n\n> Ce registre fait foi pour ID, responsable, échéance et statut. "
+                                          "Le tableau [`tasks.md`](../../../../../tasks.md) l'affiche avec le plugin Tasks.\n\n## Open\n",
+            f"{mission}/state/decisions.md": "# Decisions — Portail\n\n> Garder la source et le statut de chaque décision.\n\n## Proposed\n",
+            f"{mission}/state/glossary.md": "# Glossaire — Portail\n\n> Termes, acronymes et erreurs de transcription fréquentes "
+                                           "(entre parenthèses) — sert à reconnaître la mission dans un CR ou un mail.\n\n- **SSO :** connexion unique.\n",
+            f"{mission}/sources/2026-10/2026-10-01-cr-kickoff.md": MINUTES_A,
+            f"{mission}/sources/2026-10/index.md": "# Sources — 2026-10 — portail\n\n[Retour à la mission](../../portail.md)\n\n"
+                                                   "- 2026-10-01 · cr · [Kick-off](2026-10-01-cr-kickoff.md) — Retour à la mission prévu.\n"
+                                                   "- 2026-10-02 · analyse locale · [Analyse](2026-10-02-analyse-depot.md) — dépôt lu.\n",
+            f"{mission}/journal/2026-09.md": "# Journal — Portail — 2026-09\n\n[Retour au projet](../portail.md)\n\n"
+                                            "> Archive du journal de la mission Portail pour septembre 2026 : entrées déplacées depuis la fiche "
+                                            "le 2026-10-12. Les mois en cours restent dans la fiche.\n\n- 2026-09-30 — Mois précédents : prose.\n",
+            f"{mission}/notes/2026-10-01-idee.md": "# Idée\n\n> Note du 01/10/2026 · projet : [portail](../portail.md)\n\n## Liens\n- Texte.\n",
+            f"{mission}/workstreams/architecture.md": "# Architecture\n\n## En bref\n- Un workstream garde ses titres.\n",
+            "projects/internal/interne/interne.md": "# Project: Interne\n\n- **Status:** active\n",
+            "projects/internal/interne/state/actions.md": "# Actions — Interne\n\n> Ce registre fait foi pour ID, responsable, échéance et statut ; "
+                                                          "conserver le préfixe d'ID du client, y compris entre missions (préfixe GLX, validé par Jane le "
+                                                          "2026-10-01).\n\n## Open\n",
+            "projects/internal/interne/sources/2026-10/2026-10-03-cr-point.md": MINUTES_B,
+            "projects/internal/setup/setup.md": "# Setup du système\n\n> Projet interne dédié à l'installation, aux conventions, aux automatisations "
+                                                "et à la maintenance de l'espace de travail.\n\n## État\n\n- **Statut :** actif\n"
+                                                "- **Objectif :** garder le brain cohérent.\n\n## Liens\n\n- [Actions](state/actions.md)\n\n## Timeline\n",
+            "projects/internal/setup/state/actions.md": "# Actions — Setup du système\n\n> Registre faisant foi pour les actions de maintenance "
+                                                        "du brain. Préfixe réservé : `SET`.\n\n## Open\n",
+            "people/jane-doe.md": PERSON_PAGE,
+            "inbox/inbox.md": "# 📥 Inbox — Scratchpad\n\n> - tasks.md = le tableau qui les affiche (plugin Tasks)\n\n- une capture : le tableau qui les affiche\n",
+        }
+        for name, text in files.items():
+            path = self.brain / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        self.mission = mission
+        self.before = self.snapshot()
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def snapshot(self) -> dict[Path, bytes]:
+        return {path: path.read_bytes() for path in self.brain.rglob("*") if path.is_file()}
+
+    def run_tool(self, *args: str, code: int = 0) -> str:
+        env = {**os.environ, "WORK_DIR": str(self.work), "BRAIN_DIR": str(self.brain)}
+        result = subprocess.run([sys.executable, str(TOOL), *args], env=env, capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+        return result.stdout
+
+    def read(self, name: str) -> str:
+        return (self.brain / name).read_text(encoding="utf-8")
+
+    def test_dry_run_summarizes_per_file_and_writes_nothing(self) -> None:
+        out = self.run_tool()
+        self.assertIn(f"{self.mission}/sources/2026-10/2026-10-01-cr-kickoff.md: ", out)
+        self.assertIn("to convert — ", out)
+        for rule in ("heading", "front matter", "tag", "header label", "boilerplate", "back link", "person label"):
+            self.assertIn(f"{rule} ", out.split("By rule: ")[1])
+        self.assertEqual(self.snapshot(), self.before)
+        self.run_tool("--check", code=1)
+        self.assertEqual(self.snapshot(), self.before)
+
+    def test_write_renames_structure_and_keeps_content(self) -> None:
+        out = self.run_tool("--write", "--allow-dirty")
+        self.assertEqual(self.read(f"{self.mission}/sources/2026-10/2026-10-01-cr-kickoff.md"), MINUTES_A_EXPECTED)
+        page = self.read(f"{self.mission}/portail.md")
+        self.assertEqual(page, MISSION_PAGE
+                         .replace("> Index court de la mission ; les registres et sources font foi pour le détail.",
+                                  "> Short index of the mission; the registers and sources are authoritative for the detail.")
+                         .replace("- **Client :**", "- **Client:**").replace("- **Statut :** actif", "- **Status:** active")
+                         .replace("- **Objectif :**", "- **Goal:**").replace("- **Boond :**", "- **Boond:**")
+                         .replace("- **Tableau :**", "- **Board:**").replace("## En bref", "## Summary")
+                         .replace("## État actuel", "## Current state").replace("> État au 2026-10-02 (Model).", "> As of 2026-10-02 (Model).")
+                         .replace("## Lire selon le besoin", "## Read as needed").replace("Mois précédents : [", "Previous months: ["))
+        self.assertIn("## Architecture cible\n- **Statut :** en revue, ce libellé du corps reste tel quel.\n", page)  # topic heading, body label
+        self.assertIn("- Le statut est actif ; lire selon le besoin, puis En bref.\n", page)  # prose with structural words
+        self.assertEqual(self.read("projects/clients/acme/acme.md"), CLIENT_PAGE
+                         .replace("> Index durable du client. L'état et les sources sont dans la mission.",
+                                  "> Durable index of the client. The state and the sources are in the mission.")
+                         .replace("**Interlocuteurs :**", "**Contacts:**").replace("## En bref", "## Summary")
+                         .replace("## Conventions client", "## Client conventions"))
+        minutes = self.read("projects/internal/interne/sources/2026-10/2026-10-03-cr-point.md")
+        for line in ("project: interne", "titre: Point", "title: Point", "Project page: [interne](../../interne.md).", "## Summary",
+                     "## Résumé", "## Key points", "- **Budget :** validé.", "## Actions and follow-up", "- **New** — Jane — Envoyer le devis.",
+                     "## To check", "## Details"):
+            self.assertIn(line + "\n", minutes)
+        person = self.read("people/jane-doe.md")
+        self.assertEqual(person, PERSON_PAGE.replace("**Projets :**", "**Projects:**").replace("## Rôle et périmètre", "## Role and scope")
+                         .replace("## Ce qu'il/elle attend", "## Expectations").replace("## Historique des échanges", "## Interaction log")
+                         .replace("**Focus actuel :**", "**Current focus:**").replace("**Forces :**", "**Strengths:**"))
+        self.assertEqual(self.read(f"{self.mission}/sources/2026-10/index.md"),
+                         "# Sources — 2026-10 — portail\n\n[Back to the mission](../../portail.md)\n\n"
+                         "- 2026-10-01 · cr · [Kick-off](2026-10-01-cr-kickoff.md) — Retour à la mission prévu.\n"
+                         "- 2026-10-02 · local analysis · [Analyse](2026-10-02-analyse-depot.md) — dépôt lu.\n")
+        self.assertEqual(self.read(f"{self.mission}/journal/2026-09.md"),
+                         "# Journal — Portail — 2026-09\n\n[Back to project](../portail.md)\n\n> Journal archive of mission Portail for September "
+                         "2026: entries moved from the project page on 2026-10-12. The current month stays on the page.\n\n"
+                         "- 2026-09-30 — Mois précédents : prose.\n")
+        self.assertEqual(self.read(f"{self.mission}/notes/2026-10-01-idee.md"),
+                         "# Idée\n\n> Note from 01/10/2026 · project: [portail](../portail.md)\n\n## Liens\n- Texte.\n")
+        self.assertIn("> This register is authoritative for ID, owner, due date and status. The board [`tasks.md`](../../../../../tasks.md) "
+                      "displays it with the Tasks plugin.\n", self.read(f"{self.mission}/state/actions.md"))
+        self.assertIn("> Keep the source and the status of each decision.\n", self.read(f"{self.mission}/state/decisions.md"))
+        glossary = self.read(f"{self.mission}/state/glossary.md")
+        self.assertTrue(glossary.startswith("# Glossary — Portail\n\n> Terms, acronyms and frequent transcription errors (in parentheses)"))
+        self.assertIn("- **SSO :** connexion unique.\n", glossary)
+        self.assertEqual(self.read("projects/internal/setup/setup.md"),
+                         "# System setup\n\n> Internal project dedicated to the installation, conventions, automations and maintenance of the "
+                         "workspace.\n\n## Status\n\n- **Status:** active\n- **Goal:** garder le brain cohérent.\n\n## Read as needed\n\n"
+                         "- [Actions](state/actions.md)\n\n## Timeline\n")
+        self.assertEqual(self.read("projects/internal/setup/state/actions.md"),
+                         "# Actions — System setup\n\n> Authoritative register for the brain's maintenance actions. Reserved prefix: `SET`.\n\n## Open\n")
+        self.assertEqual(self.read("inbox/inbox.md"), "# 📥 Inbox — Scratchpad\n\n> - tasks.md = the board that displays them (Tasks plugin)\n\n"
+                                                      "- une capture : le tableau qui les affiche\n")
+        for name in (f"{self.mission}/workstreams/architecture.md", "projects/internal/interne/state/actions.md", "projects/internal/interne/interne.md"):
+            self.assertEqual((self.brain / name).read_bytes(), self.before[self.brain / name], name)
+        for left in ("heading « Résumé » kept, « Summary » is already in the file", "« titre » kept, « title » already present",
+                     "heading « Changements depuis la restitution » kept", "projects/internal/interne/state/actions.md: left as is — line 3: guidance quote"):
+            self.assertIn(left, out)
+
+    def test_second_run_finds_nothing(self) -> None:
+        self.run_tool("--write", "--allow-dirty")
+        after = self.snapshot()
+        out = self.run_tool("--write", "--allow-dirty")
+        self.assertIn("Total: 0 change(s) written in 0 file(s)", out)
+        self.assertEqual(self.snapshot(), after)
+        self.run_tool("--check")
+
+    def test_mapping_marks_each_row(self) -> None:
+        rows = [line.split("\t") for line in self.run_tool("--mapping").splitlines()]
+        self.assertTrue(rows and all(row[0] in ("exact", "judged") and row[3] == "→" for row in rows))
+        self.assertIn(["judged", "minutes heading", "Sujets", "→", "Key points"], rows)
+        self.assertIn(["exact", "minutes heading", "Retenu", "→", "Key points"], rows)
+        self.assertIn(["exact", "page header label", "Tableau", "→", "Board"], rows)
 
 
 if __name__ == "__main__":

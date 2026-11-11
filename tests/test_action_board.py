@@ -93,6 +93,34 @@ class TasksBoardTest(unittest.TestCase):
         self.assertNotIn("TST-007", done)
         self.assertNotIn("✅", done)
 
+    def test_archived_projects_are_left_out_of_the_board_and_of_the_recent_closures(self) -> None:
+        for relative in ("projects/clients/acme/missions/archive/old", "projects/internal/archive/tool", "projects/clients/archive/acme/missions/old",
+                         "projects/clients/acme/archive/early", "projects/archive/old-tool"):  # the five archive places
+            folder = self.brain / relative / "state"
+            folder.mkdir(parents=True)
+            (folder / "actions.md").write_text(
+                "# Actions\n\n## Open\n- [ ] **ARC-001** — Jane — Reste à faire\n- [/] **ARC-002** — Jane — En cours\n- [w] **ARC-003** — John — En attente\n\n"
+                "## Done\n- [x] **ARC-004** — Jane — Close hier ✅ 2026-10-11\n", encoding="utf-8")
+        out = self.run_board()
+        self.assertNotIn("ARC-", out)
+        self.assertNotIn("acme / old", out)
+        self.assertNotIn("## tool", out)
+        self.assertNotIn("## old-tool", out)
+        self.assertIn("## acme / m", out)
+        self.assertIn("TST-010", self.section(out, "Recently done"))  # the live closures are still there
+        self.run_board("--write")
+        self.assertNotIn("ARC-", (self.work / "agents/tasks-board.md").read_text(encoding="utf-8"))
+
+    def test_subtask_progress_follows_the_title_before_its_metadata(self) -> None:
+        register = self.brain / "projects/clients/acme/missions/m/state/actions.md"
+        register.write_text(MISSION.replace("- [/] **TST-001** — Jane — Avancer le livrable\n",
+                                            "- [/] **TST-001** — Jane — Avancer le livrable #group/lot ⏫ 📅 2026-10-20\n"
+                                            "    - [x] Relire ✅ 2026-10-09\n    - [ ] Envoyer\n    - [x] Archiver\n"), encoding="utf-8")
+        out = self.run_board()
+        self.assertIn("**TST-001** — Jane — Avancer le livrable 2/3 #group/lot ⏫ 📅 2026-10-20 — [register]", out)
+        self.assertIn("**TST-002** — Jane / John — Préparer la suite — [register]", out)  # no subtasks: no progress
+        self.assertNotIn("Relire", out)  # a subtask is never a board item
+
     def test_links(self) -> None:
         self.assertIn("(brain/projects/clients/acme/missions/m/state/actions.md#L4)", self.run_board())
 

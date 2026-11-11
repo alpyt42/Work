@@ -18,16 +18,30 @@ line, then the entries). This tool does both moves so that agents never edit the
 Commands (from the Work root, `uv run tools/brain/timeline.py <command> --help` for details):
 
     add   --project P --model M [--date D] TEXT   write `- D — TEXT (M)` at its date; rolls past months first
+    state --project P --model M [--date D] TEXT…  replace the `## Current state` block (one bullet per TEXT)
     roll  [--project P] [--write]                 move the entries of past months into journal/YYYY-MM.md
 
 PROJECT is the register path, the project folder, `client/mission`, the name of an internal project or
 the board label (as in `action.py`), or `clients/<client>` for a client index page. `roll` without
 `--project` processes every project page of the brain (and the client index pages that have a timeline).
-`roll` is a dry run unless `--write` is given; `add` accepts `--dry-run`.
+`roll` is a dry run unless `--write` is given; `add` and `state` accept `--dry-run`. An archived project (moved
+into an `archive/` folder at its level, its whole client included, by `brain-state.py archive`) is left alone: `roll`
+skips it, and `add`, `state` and `roll --project` refuse it (exit code 2: unarchive it first).
 
-The previous-months line and the journal headers keep the wording they already have (English or
-French); a new one follows the wording of the project, else of the brain, else English. Only the
-`## Timeline` section of the page and the journal files are written, atomically; a file that changed
+Size caps, counted in words (a Markdown link counts as its label, its target is free) and refused with
+exit code 2: an `add` entry holds at most 40 words (say what changed and link the source once); a
+`state` block at most 6 bullets and 150 words in total. `state` writes the section `## Current state`
+as a `> As of DATE (MODEL).` line plus the bullets and REPLACES what the section held (the result's
+`previous` lists the former body); a page without the section gets it right after its summary section,
+else before `## Read as needed` / `## Timeline`, else at its end. The rest of the page is untouched.
+
+What the tool writes is always the English wording of the templates: `Previous months:`, the journal header
+(`[Back to project]`, `> Journal archive of …`) and `## Current state`. It still reads the earlier French
+wording of a page not yet migrated (`Mois précédents :`, `## État actuel`, `## En bref`, `## Lire selon le
+besoin`, the French journal headers) and rewrites in English only the line or heading it writes: the
+previous-months line, and the `## État actuel` heading of a block it replaces. Existing journal headers are
+left as they are. Only the `## Timeline` and current-state sections of the page and the journal files are
+written, atomically; a file that changed
 since it was read is refused. Output is JSON on stdout. Exit codes: 0 done, 2 invalid request, 3 not
 found, 4 conflict. `--brain PATH` or BRAIN_DIR selects another brain; ACTION_NOW (`YYYY-MM-DD HH:MM`)
 fixes the clock for tests.
@@ -40,7 +54,6 @@ import importlib.util
 import json
 import re
 import sys
-from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -71,21 +84,23 @@ JOURNAL_TITLE_RE = re.compile(r"^# Journal — (\d{4}-\d{2}) — ")
 LINK_RE = re.compile(r"(\]\()(<[^>\n]*>|[^)\s]+)")
 CODE_SPAN_RE = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
 SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
-ENTRY_LIMIT = 2000
+ENTRY_LIMIT = 2000  # characters: safety net behind the word caps
+ENTRY_WORDS = 40  # words of one timeline entry (a link counts as its label)
+STATE_WORDS = 150  # words of the whole current-state block
+STATE_BULLETS = 6
+# Read in both wordings (a page not yet migrated keeps the French headings); written in English only.
+STATE_RE = re.compile(r"^##\s+(Current state|État actuel|Etat actuel)\s*#*\s*$", re.IGNORECASE)
+SUMMARY_RE = re.compile(r"^##\s+(Summary|En bref|Résumé|Resume)\s*#*\s*$", re.IGNORECASE)
+READ_RE = re.compile(r"^##\s+(Read as needed|Lire selon le besoin)\s*#*\s*$", re.IGNORECASE)
+H2_RE = re.compile(r"^#{1,2}(?:\s|$)")
+STATE_QUOTE = "> As of {day} ({model})."
+STATE_TITLE = "## Current state"
 MODEL_LIMIT = 80
 
-MONTHS = {
-    "en": ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
-    "fr": ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"],
-}
-WORDING = {
-    "en": {"previous": "Previous months:", "back": "Back to project",
-           "quote": "Journal archive of {name} for {month} {year}: entries moved from the project page on {day}. The current month stays on the page.",
-           "markers": ("previous months", "back to project", "journal archive of")},
-    "fr": {"previous": "Mois précédents :", "back": "Retour au projet",
-           "quote": "Archive du journal de {name} pour {month} {year} : entrées déplacées depuis la fiche le {day}. Les mois en cours restent dans la fiche.",
-           "markers": ("mois précédents", "mois precedents", "retour au projet", "archive du journal")},
-}
+MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+PREVIOUS_LABEL = "Previous months:"
+BACK_LABEL = "Back to project"
+JOURNAL_QUOTE = "Journal archive of {name} for {month} {year}: entries moved from the project page on {day}. The current month stays on the page."
 
 
 # --- Reading -------------------------------------------------------------------------------------
@@ -146,7 +161,7 @@ class Plan:
     page: Path
     today: date
     docs: dict[Path, Doc] = field(default_factory=dict)
-    _style: tuple[str, bool] | None = None
+    _month_first: bool | None = None
 
     def doc(self, path: Path) -> Doc:
         if path not in self.docs:
@@ -159,11 +174,11 @@ class Plan:
             raise ActionError("bad_request", "journal is a symbolic link.")
         return self.doc(folder / f"{month}.md")
 
-    def style(self) -> tuple[str, bool]:
-        """(language, month-first journal title) for the files this plan creates."""
-        if self._style is None:
-            self._style = detect_style(self.brain, self.page)
-        return self._style
+    def month_first(self) -> bool:
+        """Title order of the journal files this plan creates: that of the project's newest journal."""
+        if self._month_first is None:
+            self._month_first = month_first_title(self.page)
+        return self._month_first
 
 
 def valid_day(value: str) -> bool:
@@ -234,14 +249,6 @@ def project_name(lines: list[str], page: Path) -> str:
     return page.parent.name
 
 
-def language_of(text: str) -> str | None:
-    lowered = text.casefold()
-    for code, wording in WORDING.items():
-        if any(marker in lowered for marker in wording["markers"]):
-            return code
-    return None
-
-
 def read_lines(path: Path, limit: int | None = None) -> list[str]:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -250,33 +257,14 @@ def read_lines(path: Path, limit: int | None = None) -> list[str]:
     return lines[:limit] if limit else lines
 
 
-def wording_of(page: Path) -> tuple[list[str], bool | None]:
-    """Languages found in the page's previous-months line and in its journals' headers, and the title order of the newest journal."""
-    votes: list[str] = []
-    lines = read_lines(page)
-    section = find_section(lines)
-    for index in section.previous if section else []:
-        if language := language_of(lines[index]):
-            votes.append(language)
-    month_first: bool | None = None
+def month_first_title(page: Path) -> bool:
+    """Whether the newest journal of the page puts the month before the name in its title (`# Journal — YYYY-MM — name`)."""
     journals = sorted((page.parent / "journal").glob("*.md"), reverse=True) if (page.parent / "journal").is_dir() else []
     for journal in journals:
-        head = read_lines(journal, 8)
-        if language := language_of("\n".join(head)):
-            votes.append(language)
-        if month_first is None and head and head[0].startswith("# Journal — "):
-            month_first = bool(JOURNAL_TITLE_RE.match(head[0]))
-    return votes, month_first
-
-
-def detect_style(brain: Path, page: Path) -> tuple[str, bool]:
-    votes, month_first = wording_of(page)
-    if not votes:
-        for other, _ in project_pages(brain):
-            votes += wording_of(other)[0]
-    counts = Counter(votes)
-    language = max(("en", "fr"), key=lambda code: (counts[code], code == "en"))
-    return language, bool(month_first)
+        head = read_lines(journal, 1)
+        if head and head[0].startswith("# Journal — "):
+            return bool(JOURNAL_TITLE_RE.match(head[0]))
+    return False
 
 
 # --- Projects ------------------------------------------------------------------------------------
@@ -308,7 +296,7 @@ def project_pages(brain: Path) -> list[tuple[Path, str]]:
     for register in action.registers(brain):
         folder = register.parent.parent
         page = folder / f"{folder.name}.md"
-        if "archive" not in register.relative_to(brain / "projects").parts and page.is_file() and not page.is_symlink():
+        if not action.in_archived_project(register, brain) and page.is_file() and not page.is_symlink():
             found.append((page, action.project_label(register, brain)))
     clients = brain / "projects/clients"
     for folder in sorted(clients.iterdir()) if clients.is_dir() else []:
@@ -419,14 +407,12 @@ def set_previous(plan: Plan, months: set[str]) -> None:
     folder = plan.page.parent / "journal"
     found = {m.group(1) for p in folder.glob("*.md") if (m := JOURNAL_FILE_RE.match(p.name))} if folder.is_dir() and not folder.is_symlink() else set()
     found |= {m.group(1) for path in plan.docs if path.parent == folder and (m := JOURNAL_FILE_RE.match(path.name))}
-    label, listed = "", set()
-    for index in section.previous:
+    listed: set[str] = set()
+    for index in section.previous:  # a French `Mois précédents :` line is read, then rewritten in English
         parsed = PREVIOUS_RE.match(doc.lines[index])
         assert parsed is not None
-        label = label or parsed.group("label")
         listed |= set(MONTH_LINK_RE.findall(parsed.group("rest")))
-    label = label or WORDING[plan.style()[0]]["previous"]
-    text = f"{label} " + " · ".join(f"[{m}](journal/{m}.md)" for m in sorted(listed | found | months, reverse=True))
+    text = f"{PREVIOUS_LABEL} " + " · ".join(f"[{m}](journal/{m}.md)" for m in sorted(listed | found | months, reverse=True))
     head_end = section.entries[0].start if section.entries else section.end
     if len(section.previous) == 1 and section.previous[0] < head_end:
         doc.lines[section.previous[0]] = text
@@ -445,13 +431,11 @@ def set_previous(plan: Plan, months: set[str]) -> None:
 
 def new_journal(plan: Plan, month: str) -> list[str]:
     """Title, back link and archive line of a journal file that does not exist yet."""
-    language, month_first = plan.style()
     name = project_name(plan.doc(plan.page).lines, plan.page)
-    wording = WORDING[language]
     year, number = month.split("-")
-    quote = wording["quote"].format(name=name, month=MONTHS[language][int(number) - 1], year=year, day=plan.today.isoformat())
-    title = f"# Journal — {month} — {name}" if month_first else f"# Journal — {name} — {month}"
-    return [title, "", f"[{wording['back']}](../{plan.page.name})", "", f"> {quote}"]
+    quote = JOURNAL_QUOTE.format(name=name, month=MONTHS[int(number) - 1], year=year, day=plan.today.isoformat())
+    title = f"# Journal — {month} — {name}" if plan.month_first() else f"# Journal — {name} — {month}"
+    return [title, "", f"[{BACK_LABEL}](../{plan.page.name})", "", f"> {quote}"]
 
 
 # --- Commands ------------------------------------------------------------------------------------
@@ -543,6 +527,9 @@ def add(brain: Path, project: str, model: str, text: str, day: str = "", dry_run
     page, label = locate(brain, project)
     model = clean_line(model, "Model", MODEL_LIMIT)
     text = clean_line(text, "Text", ENTRY_LIMIT)
+    words = action.word_count(text)
+    if words > ENTRY_WORDS:
+        raise ActionError("bad_request", f"Entry has {words} words; the cap is {ENTRY_WORDS}. Say what changed and link the source once; the detail stays in the source.")
     when = action.parse_date(day, "Date") if day else action.today()
     line = f"- {when} — {text} ({model})"
     plan = Plan(brain, page, today_date())
@@ -564,6 +551,63 @@ def add(brain: Path, project: str, model: str, text: str, day: str = "", dry_run
     commit(plan, dry_run)
     return {"project": label, "page": page.relative_to(brain).as_posix(), "file": target.relative_to(brain).as_posix(),
             "date": when, "entry": line, "journal": target != page, "created_file": created, "rolled": rolled, "dry_run": dry_run}
+
+
+def find_block(lines: list[str], pattern: re.Pattern[str]) -> tuple[int, int] | None:
+    """(heading, end) of the first `##` section matching `pattern`, outside code blocks; end is the next level 1-2 heading."""
+    flags = fenced(lines)
+    heading = next((i for i, line in enumerate(lines) if not flags[i] and pattern.match(line)), None)
+    if heading is None:
+        return None
+    end = next((i for i in range(heading + 1, len(lines)) if not flags[i] and H2_RE.match(lines[i])), len(lines))
+    return heading, end
+
+
+TIMELINE_ANY_RE = re.compile(r"^##\s+Timeline\s*#*\s*$", re.IGNORECASE)
+
+
+def state(brain: Path, project: str, model: str, texts: list[str], day: str = "", dry_run: bool = False) -> dict:
+    page, label = locate(brain, project)
+    model = clean_line(model, "Model", MODEL_LIMIT)
+    bullets = [re.sub(r"^[-*]\s+", "", clean_line(text, "Text", ENTRY_LIMIT)) for text in texts]
+    if not bullets:
+        raise ActionError("bad_request", "Text is required.")
+    if len(bullets) > STATE_BULLETS:
+        raise ActionError("bad_request", f"Current state has {len(bullets)} bullets; the cap is {STATE_BULLETS}. Keep what a reader needs now and link the rest.")
+    words = sum(action.word_count(bullet) for bullet in bullets)
+    if words > STATE_WORDS:
+        raise ActionError("bad_request", f"Current state has {words} words; the cap is {STATE_WORDS}. Keep what a reader needs now and link the rest.")
+    when = action.parse_date(day, "Date") if day else action.today()
+    plan = Plan(brain, page, today_date())
+    lines = plan.doc(page).lines
+    existing = find_block(lines, STATE_RE)
+    summary = find_block(lines, SUMMARY_RE)
+    read = find_block(lines, READ_RE) or find_block(lines, TIMELINE_ANY_RE)
+    heading = STATE_TITLE
+    body = ["", STATE_QUOTE.format(day=when, model=model), "", *[f"- {bullet}" for bullet in bullets]]
+    previous: list[str] = []
+    if existing:
+        lines[existing[0]] = heading  # the block is rewritten whole: a French `## État actuel` becomes `## Current state`
+        stop = existing[1]
+        while stop > existing[0] + 1 and not lines[stop - 1].strip():
+            stop -= 1
+        previous = [line for line in lines[existing[0] + 1:stop]]
+        while previous and not previous[0].strip():
+            previous.pop(0)
+        lines[existing[0] + 1:stop] = body
+    elif summary or not read:
+        slot = summary[1] if summary else len(lines)
+        while slot > 0 and not lines[slot - 1].strip():
+            slot -= 1
+        lines[slot:slot] = ([""] if lines else []) + [heading, *body]
+    else:
+        slot = read[0]
+        lines[slot:slot] = [heading, *body, ""]
+        if slot > 0 and lines[slot - 1].strip():
+            lines.insert(slot, "")
+    commit(plan, dry_run)
+    return {"project": label, "page": page.relative_to(brain).as_posix(), "heading": heading[3:].strip(), "date": when,
+            "words": words, "bullets": len(bullets), "created_section": existing is None, "previous": previous, "dry_run": dry_run}
 
 
 def roll(brain: Path, project: str | None, write: bool) -> dict:
@@ -603,6 +647,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="print the result without writing")
     p.add_argument("text", help="text of the entry")
 
+    p = sub.add_parser("state", help="replace the current-state block of the page (at most 6 bullets, 150 words)")
+    p.add_argument("--project", required=True, help=project_help)
+    p.add_argument("--model", required=True, help="model that writes the block, shown in its date line")
+    p.add_argument("--date", default="", help="date of the state YYYY-MM-DD (default: today, Europe/Paris)")
+    p.add_argument("--dry-run", action="store_true", help="print the result without writing")
+    p.add_argument("texts", nargs="+", metavar="TEXT", help="one bullet of the block")
+
     p = sub.add_parser("roll", help="move the timeline entries of past months into journal/YYYY-MM.md")
     p.add_argument("--project", help=project_help + " (default: every project page of the brain)")
     mode = p.add_mutually_exclusive_group()
@@ -617,6 +668,8 @@ def run(args: argparse.Namespace) -> object:
         raise ActionError("not_found", f"No projects under {brain / 'projects'}")
     if args.command == "add":
         return add(brain, args.project, args.model, args.text, args.date, args.dry_run)
+    if args.command == "state":
+        return state(brain, args.project, args.model, args.texts, args.date, args.dry_run)
     return roll(brain, args.project, args.write)
 
 

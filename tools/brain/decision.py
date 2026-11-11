@@ -22,18 +22,26 @@ once with `uv run tools/brain/migrate-english.py`.
 
 Commands (from the Work root, `uv run tools/brain/decision.py <command> --help` for details):
 
-    list       [--project P] [--status proposed|accepted|rejected|all] [--table]
-    show       REF --project P
+    list       [--project P] [--state proposed|accepted|rejected|all] [--table] [--archived]   (--status: same option)
+    show       REF --project P [--text]      --text: the decision once, as compact plain text
     propose    --project P --title T --decision D --source S [--context C] [--consequences C] [--date D]
+               (70 words at most for title, context, decision and consequences together, the source apart)
     accept     REF --project P [--on D] [--by NAME] [--note TEXT]
     reject     REF --project P [--on D] [--by NAME] [--reason TEXT]
     supersede  OLD --by NEW --project P [--on D]
 
+An archived project (moved into an `archive/` folder at its level, its whole client included, by
+`brain-state.py archive`) is left out of `list` unless `--archived` (its decisions then carry
+`"project_archived": true`); `propose`, `accept`, `reject` and `supersede` refuse it (exit code 2:
+unarchive it first); `show` still reads it, flagged `"project_archived": true`.
+
 REF is the number given by `list` for that project (rank in the register, 1..n) or a unique
 substring of the title (case-insensitive). Numbers change when a decision moves: list again.
-Every write accepts `--dry-run`. Output is JSON on stdout. Exit codes: 0 done, 2 invalid request,
-3 not found, 4 conflict or ambiguous reference. `--brain PATH` or BRAIN_DIR selects another brain;
-ACTION_NOW (`YYYY-MM-DD HH:MM`) fixes the clock for tests.
+Every write accepts `--dry-run`. Output is JSON on stdout, except the text of `list --table` and
+`show --text`: `show REF --project P --text` prints `no. N [state] date — title  (project)`, the
+fields of the decision as written, then its `file:line` from the Work root. Exit codes: 0 done,
+2 invalid request, 3 not found, 4 conflict or ambiguous reference. `--brain PATH` or BRAIN_DIR
+selects another brain; ACTION_NOW (`YYYY-MM-DD HH:MM`) fixes the clock for tests.
 """
 
 from __future__ import annotations
@@ -65,6 +73,7 @@ FIELDS = {"context": "Context", "decision": "Decision", "consequences": "Consequ
           "accepted": "Accepted", "rejected": "Rejected", "superseded": "Superseded by"}
 HEADER_RE = re.compile(r"^### (.+) \((\d{4}-\d{2}-\d{2})(?:, status\s*:\s*([^()]*))?\)\s*$")
 FIELD_RE = re.compile(r"^- \*\*([^*]+?)\s*:\*\*\s*(.*)$")
+DECISION_WORDS = 70  # title, context, decision and consequences together, the source apart (a link counts as its label)
 QUOTE = "> Keep the source and status of each decision; an accepted decision is never rewritten: a new one supersedes it."
 
 
@@ -123,8 +132,9 @@ def fields_of(lines: list[str]) -> dict[str, str]:
     return found
 
 
-def decisions_path(brain: Path, project: str) -> Path:
-    path = action.resolve_register(brain, project).parent / "decisions.md"
+def decisions_path(brain: Path, project: str, archived: bool = False) -> Path:
+    """The decision register of a project; an archived project only with ``archived`` (a read)."""
+    path = action.resolve_register(brain, project, archived).parent / "decisions.md"
     if path.is_symlink():
         raise ActionError("bad_request", "decisions.md is a symbolic link.")
     return path
@@ -140,17 +150,22 @@ def public(decision: Decision, project: str, register: str) -> dict:
             "state": decision.state, "title": decision.title, "date": decision.date, "status": decision.status}
 
 
-def listing(brain: Path, project: str | None, status: str) -> list[dict]:
-    actions = [action.resolve_register(brain, project)] if project else action.registers(brain)
+def listing(brain: Path, project: str | None, status: str, archived: bool = False) -> list[dict]:
+    """The decisions of one project or of all; the archived projects only with ``archived``, flagged `project_archived`."""
+    if project:
+        actions = [action.resolve_register(brain, project, archived, "--archived")]
+    else:
+        actions = action.registers(brain) if archived else action.live_registers(brain)
     found = []
     for register in actions:
         path = register.parent / "decisions.md"
         if not path.is_file() or path.is_symlink():
             continue
         label, relative = action.project_label(register, brain), path.relative_to(brain).as_posix()
+        flag = {"project_archived": True} if action.in_archived_project(register, brain) else {}
         for decision in parse(read(path)[1]):
             if status == "all" or decision.state == status:
-                found.append(public(decision, label, relative))
+                found.append({**public(decision, label, relative), **flag})
     return found
 
 
@@ -174,8 +189,8 @@ def pick(found: list[Decision], ref: str) -> Decision:
     return matches[0]
 
 
-def locate(brain: Path, project: str, ref: str) -> tuple[Path, str, list[str], list[Decision], Decision]:
-    path = decisions_path(brain, project)
+def locate(brain: Path, project: str, ref: str, archived: bool = False) -> tuple[Path, str, list[str], list[Decision], Decision]:
+    path = decisions_path(brain, project, archived)
     if not path.is_file():
         raise ActionError("not_found", "This project has no decision register.")
     text, lines = read(path)
@@ -184,10 +199,26 @@ def locate(brain: Path, project: str, ref: str) -> tuple[Path, str, list[str], l
 
 
 def show(brain: Path, project: str, ref: str) -> dict:
-    path, _, lines, found, decision = locate(brain, project, ref)
+    """One decision; a decision of an archived project too (a read), flagged `project_archived`."""
+    path, _, lines, found, decision = locate(brain, project, ref, archived=True)
     block = lines[decision.start:decision.end]
-    return {**public(decision, action.project_label(action.resolve_register(brain, project), brain), path.relative_to(brain).as_posix()),
-            "fields": fields_of(block), "block": block, "line": decision.start + 1}
+    register = action.resolve_register(brain, project, archived=True)
+    return {**public(decision, action.project_label(register, brain), path.relative_to(brain).as_posix()),
+            "fields": fields_of(block), "block": block, "line": decision.start + 1,
+            **({"project_archived": True} if action.in_archived_project(register, brain) else {})}
+
+
+def show_text(brain: Path, project: str, ref: str) -> str:
+    """A decision as compact text, once: its number, state, date and title, its fields as written, then its `file:line`.
+
+    The state is the section the decision sits in; the status written in its title is added when it says something else."""
+    found = show(brain, project, ref)
+    state = found["state"] or "?"
+    if found["status"] and found["status"] != state:
+        state += f", status: {found['status']}"
+    head = f"no. {found['number']} [{state}] {found['date'] or '----------'} — {found['title']}  ({found['project']})"
+    where = f"{action.display(brain / found['register'])}:{found['line']}" + (" (archived project)" if found.get("project_archived") else "")
+    return "\n".join([head, *found["block"][1:], where])
 
 
 # --- Writing -------------------------------------------------------------------------------------
@@ -290,6 +321,11 @@ def propose(brain: Path, project: str, title: str, decision: str, source: str, c
     source = action.clean_note(source)
     context = action.clean_text(context, "Context", 1500) if context else ""
     consequences = action.clean_text(consequences, "Consequences", 1500) if consequences else ""
+    words = sum(action.word_count(part) for part in (title, context, decision, consequences))
+    if words > DECISION_WORDS:
+        raise ActionError("bad_request", f"Decision has {words} words (title, context, decision and consequences together); the cap is "
+                                         f"{DECISION_WORDS}. Say what was decided and link the source once; write a context only when "
+                                         "the source does not give it.")
     day = action.parse_date(date, "Date") if date else action.today()
     if path.exists():
         existing, lines = read(path)
@@ -392,12 +428,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("list", help="list the decisions")
     p.add_argument("--project", help=project_help)
-    p.add_argument("--status", choices=(*STATES, "all"), default="all", metavar="{proposed,accepted,rejected,all}")
-    p.add_argument("--table", action="store_true", help="one line per decision instead of JSON")
+    p.add_argument("--state", "--status", dest="status", choices=(*STATES, "all"), default="all", metavar="{proposed,accepted,rejected,all}",
+                   help="only the decisions of that section (`state` in the output); --status is the earlier name")
+    p.add_argument("--table", action="store_true", help="one line per decision (number, state, date, title) instead of JSON")
+    p.add_argument("--archived", action="store_true",
+                   help="also list the archived projects (left out by default); --project may then name one")
 
     p = sub.add_parser("show", help="show a decision")
     p.add_argument("ref", help="number from list or unique substring of the title")
     p.add_argument("--project", required=True, help=project_help)
+    p.add_argument("--text", action="store_true",
+                   help="compact plain text instead of JSON: number, state, date and title, the fields as written, file:line")
 
     p = sub.add_parser("propose", help="add a decision at the end of “Proposed”")
     p.add_argument("--project", required=True, help=project_help)
@@ -439,9 +480,9 @@ def run(args: argparse.Namespace) -> object:
     if not (brain / "projects").is_dir():
         raise ActionError("not_found", f"No registers under {brain / 'projects'}")
     if args.command == "list":
-        return listing(brain, args.project, args.status)
+        return listing(brain, args.project, args.status, args.archived)
     if args.command == "show":
-        return show(brain, args.project, args.ref)
+        return show_text(brain, args.project, args.ref) if args.text else show(brain, args.project, args.ref)
     if args.command == "propose":
         return propose(brain, args.project, args.title, args.decision, args.source, args.context, args.consequences,
                        args.date, args.dry_run)
@@ -465,7 +506,11 @@ def main() -> int:
     if args.command == "list" and args.table:
         for item in result:  # type: ignore[union-attr]
             status = item["status"] or item["state"] or "?"
-            print(f"{item['number']:>3}. [{status}] {item['date'] or '----------'} — {item['title']}  ({item['project']})")
+            print(f"{item['number']:>3}. [{status}] {item['date'] or '----------'} — {item['title']}  ({item['project']}"
+                  + (", archived)" if item.get("project_archived") else ")"))
+        return 0
+    if args.command == "show" and args.text:
+        print(result)
         return 0
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

@@ -304,18 +304,22 @@ class TimelineTest(unittest.TestCase):
             "# Project: Setup\n\n## Timeline\nPrevious months: [2026-09](journal/2026-09.md) · [2026-08](journal/2026-08.md)\n\n"
             "- 2026-10-15 — A (m)\n- 2026-10-14 — B (m)\n- 2026-10-13 — C (m)\n"))
 
-    def test_roll_keeps_the_french_wording_and_creates_french_journals(self) -> None:
-        (self.mission / "journal/2026-09.md").write_text(
+    def test_roll_reads_the_french_wording_and_writes_english(self) -> None:
+        french_journal = (
             "# Journal — Rollout — 2026-09\n\n[Retour au projet](../rollout.md)\n\n"
             "> Archive du journal de Rollout pour septembre 2026 : entrées déplacées depuis la fiche le 2026-10-01. Les mois en cours restent dans la fiche.\n\n"
-            "- 2026-09-28 — Contrat signé (Opus 5.5)\n", encoding="utf-8")
+            "- 2026-09-28 — Contrat signé (Opus 5.5)\n")
+        (self.mission / "journal/2026-09.md").write_text(french_journal, encoding="utf-8")
         self.page.write_text(ROLLOUT.replace("Previous months:", "Mois précédents :"), encoding="utf-8")
         self.run_tool("roll", "--project", "globex/rollout", "--write", now="2026-11-02 09:00")
-        self.assertIn("\nMois précédents : [2026-10](journal/2026-10.md) · [2026-09](journal/2026-09.md)\n", self.read(self.page))
+        page = self.read(self.page)
+        self.assertIn("\nPrevious months: [2026-10](journal/2026-10.md) · [2026-09](journal/2026-09.md)\n", page)
+        self.assertNotIn("Mois précédents", page)
+        self.assertEqual(self.read(self.mission / "journal/2026-09.md"), french_journal)  # an existing header is left as it is
         journal = self.read(self.mission / "journal/2026-10.md")
         self.assertTrue(journal.startswith(
-            "# Journal — Rollout — 2026-10\n\n[Retour au projet](../rollout.md)\n\n"
-            "> Archive du journal de Rollout pour octobre 2026 : entrées déplacées depuis la fiche le 2026-11-02. Les mois en cours restent dans la fiche.\n\n- 2026-10-14"))
+            "# Journal — Rollout — 2026-10\n\n[Back to project](../rollout.md)\n\n"
+            "> Journal archive of Rollout for October 2026: entries moved from the project page on 2026-11-02. The current month stays on the page.\n\n- 2026-10-14"))
 
     def test_a_new_journal_follows_the_title_order_of_the_existing_ones(self) -> None:
         (self.mission / "journal/2026-09.md").write_text(
@@ -323,13 +327,13 @@ class TimelineTest(unittest.TestCase):
         self.run_tool("roll", "--project", "globex/rollout", "--write", now="2026-11-02 09:00")
         self.assertTrue(self.read(self.mission / "journal/2026-10.md").startswith("# Journal — 2026-10 — Rollout\n\n[Back to project](../rollout.md)\n"))
 
-    def test_a_new_wording_follows_the_brain_when_the_project_has_none(self) -> None:
+    def test_a_new_wording_is_english_even_in_a_french_brain(self) -> None:
         (self.mission / "journal/2026-09.md").unlink()
         self.page.write_text(ROLLOUT.replace("Previous months: [2026-09](journal/2026-09.md)\n", ""), encoding="utf-8")
         (self.setup_dir / "setup.md").write_text(SETUP.replace("## Timeline\n", "## Timeline\nMois précédents : [2026-08](journal/2026-08.md)\n"), encoding="utf-8")
         self.run_tool("roll", "--project", "globex/rollout", "--write", now="2026-11-02 09:00")
-        self.assertIn("\nMois précédents : [2026-10](journal/2026-10.md)\n", self.read(self.page))
-        self.assertIn("[Retour au projet](../rollout.md)", self.read(self.mission / "journal/2026-10.md"))
+        self.assertIn("\nPrevious months: [2026-10](journal/2026-10.md)\n", self.read(self.page))
+        self.assertIn("[Back to project](../rollout.md)", self.read(self.mission / "journal/2026-10.md"))
 
     def test_only_the_timeline_section_and_the_journals_change(self) -> None:
         before = self.snapshot()
@@ -343,14 +347,50 @@ class TimelineTest(unittest.TestCase):
         for path in ("projects/clients/globex/missions/rollout/rollout.md", "projects/internal/setup/setup.md", "projects/clients/globex/globex.md"):
             self.assertEqual(self.outside_timeline(before[path]), self.outside_timeline(after[path]), path)
 
+    def archived_projects(self) -> list[Path]:
+        """One archived project in each of the five places, each with a page that has an entry of an old month: a mission in
+        `missions/archive/`, an internal project in `internal/archive/`, a whole client in `clients/archive/`, and the earlier
+        places `clients/<client>/archive/<mission>` and `archive/<project>`."""
+        found = []
+        places = ((self.client / "missions/archive/legacy", "legacy"), (self.brain / "projects/internal/archive/tool", "tool"),
+                  (self.brain / "projects/clients/archive/initech/missions/pilot", "pilot"), (self.client / "archive/early", "early"),
+                  (self.brain / "projects/archive/old-tool", "old-tool"))
+        for folder, name in places:
+            (folder / "state").mkdir(parents=True)
+            (folder / "state/actions.md").write_text(ACTIONS.format(name=name), encoding="utf-8")
+            (folder / f"{name}.md").write_text(f"# Project: {name}\n\n## Timeline\n- 2026-03-01 — Old (m)\n- 2026-10-02 — Recent (m)\n", encoding="utf-8")
+            found.append(folder)
+        return found
+
     def test_roll_leaves_archived_projects_alone(self) -> None:
-        old = self.client / "archive/legacy"
-        (old / "state").mkdir(parents=True)
-        (old / "state/actions.md").write_text(ACTIONS.format(name="legacy"), encoding="utf-8")
-        (old / "legacy.md").write_text("# Mission: Legacy\n\n## Timeline\n- 2026-03-01 — Old (m)\n", encoding="utf-8")
+        archived = self.archived_projects()
+        pages = {folder: self.read(folder / f"{folder.name}.md") for folder in archived}
         report = self.run_tool("roll", "--write", now="2026-11-02 09:00")
         self.assertNotIn("legacy", json.dumps(report))
-        self.assertFalse((old / "journal").exists())
+        self.assertNotIn("tool", [project["project"] for project in report["projects"]])
+        self.assertEqual((report["checked"], report["total"]), (3, 7))  # the live pages only, whichever archive place the others are in
+        for folder in archived:
+            self.assertFalse((folder / "journal").exists())
+            self.assertEqual(self.read(folder / f"{folder.name}.md"), pages[folder])  # the old-month entry stays on the page
+        self.assertEqual(self.run_tool("roll", now="2026-11-02 09:00")["total"], 0)
+
+    def test_add_state_and_roll_project_refuse_an_archived_project_and_change_nothing(self) -> None:
+        self.archived_projects()
+        before = self.snapshot()
+        refusals = [self.add("Late entry", project=name, code=2) for name in ("globex/legacy", "tool", "initech/pilot", "globex/early", "old-tool")]
+        refusals += [self.add("Late entry", "--dry-run", project="tool", code=2), self.state("Pilot live", project="initech/pilot", code=2),
+                    self.add("Late entry", "--date", "2026-03-05", project="globex/legacy", code=2),
+                    self.state("Pilot live", project="globex/legacy", code=2), self.state("Pilot live", project="tool", extra=("--dry-run",), code=2),
+                    self.run_tool("roll", "--project", "globex/legacy", code=2), self.run_tool("roll", "--project", "tool", "--write", code=2)]
+        for error in refusals:
+            self.assertEqual(error["kind"], "bad_request")
+            self.assertIn("is archived", error["error"])
+            self.assertIn("unarchive it first with `uv run tools/brain/brain-state.py unarchive brain-acme/projects/", error["error"])
+        self.assertIn("projects/clients/archive/initech --write", refusals[2]["error"])  # the outermost archived folder: the client
+        self.assertIn("projects/clients/globex/missions/archive/legacy --write", refusals[0]["error"])
+        self.assertIn("projects/internal/archive/tool --write", refusals[1]["error"])
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse(any(path.name == "journal" for path in self.brain.rglob("*") if "archive" in path.parts))
 
     def test_crlf_files_keep_their_line_endings(self) -> None:
         self.page.write_bytes(ROLLOUT.replace("\n", "\r\n").encode("utf-8"))
@@ -396,6 +436,101 @@ class TimelineTest(unittest.TestCase):
         self.assertEqual(result["page"], "projects/clients/globex/globex.md")
         self.assertIn("## Timeline\nPrevious months: [2026-09](journal/2026-09.md)\n\n- 2026-10-20 — Account call (Sonnet 5)\n- 2026-10-03 —", self.read(self.client / "globex.md"))
         self.assertTrue(self.read(self.client / "globex.md").startswith(GLOBEX.split("## Timeline")[0]))
+
+    # --- word caps and state ---
+
+    def test_entry_cap_accepts_40_words_and_refuses_41(self) -> None:
+        self.assertEqual(self.add(" ".join(["word"] * 40))["dry_run"], False)
+        before = self.snapshot()
+        message = self.add(" ".join(["word"] * 41), code=2)
+        self.assertEqual(self.snapshot(), before)
+        self.assertIn("41 words", message["error"])
+        self.assertIn("40", message["error"])
+        self.assertEqual(message["kind"], "bad_request")
+
+    def test_entry_cap_counts_links_by_label(self) -> None:
+        link = "[" + "minutes of the demo" + "](sources/2026-10/2026-10-14-cr-demo-with-a-very-long-slug.md)"
+        self.add(" ".join(["word"] * 36) + " " + link)  # 36 + 4 label words
+        self.add(" ".join(["word"] * 37) + " " + link, code=2)  # 41
+
+    def test_entry_cap_refuses_in_dry_run(self) -> None:
+        before = self.snapshot()
+        self.add(" ".join(["word"] * 41), "--dry-run", code=2)
+        self.assertEqual(self.add("Ten words are fine here", "--dry-run")["dry_run"], True)
+        self.assertEqual(self.snapshot(), before)
+
+    def state(self, *texts: str, project: str = "globex/rollout", code: int = 0, extra: tuple[str, ...] = ()) -> dict | str:
+        return self.run_tool("state", "--project", project, "--model", "Sonnet 5", *extra, *texts, code=code)
+
+    def test_state_creates_the_section_after_the_summary(self) -> None:
+        page = self.mission / "rollout.md"
+        page.write_text(ROLLOUT.replace("## Context\nBackground in [context](workstreams/context.md).\n", "## Summary\n- Scope and deadline.\n\n## Context\nBackground.\n"), encoding="utf-8")
+        before = self.read(page)
+        result = self.state("Pilot live", "Next step: [plan](notes/plan.md)")
+        self.assertEqual((result["created_section"], result["heading"], result["bullets"], result["words"]), (True, "Current state", 2, 5))
+        self.assertEqual(result["previous"], [])
+        after = self.read(page)
+        self.assertIn("- Scope and deadline.\n\n## Current state\n\n> As of 2026-10-20 (Sonnet 5).\n\n- Pilot live\n- Next step: [plan](notes/plan.md)\n\n## Context\n", after)
+        self.assertEqual(after.replace(after[after.index("## Current state"):after.index("## Context")], ""), before)
+
+    def test_state_creates_the_section_before_read_as_needed_or_timeline(self) -> None:
+        self.state("Alpha")
+        self.assertIn("\n- **Status:** active\n\n## Context", self.read(self.page))
+        self.assertIn("Background in [context](workstreams/context.md).\n\n## Current state\n\n> As of 2026-10-20 (Sonnet 5).\n\n- Alpha\n\n## Timeline\n", self.read(self.page))
+        page = self.mission / "rollout.md"
+        page.write_text(ROLLOUT.replace("## Timeline", "## Read as needed\n- [a](a.md)\n\n## Timeline"), encoding="utf-8")
+        self.state("Alpha")
+        self.assertIn("\n\n## Current state\n\n> As of 2026-10-20 (Sonnet 5).\n\n- Alpha\n\n## Read as needed\n", self.read(page))
+
+    def test_state_creates_the_section_at_the_end_of_a_bare_page(self) -> None:
+        page = self.setup_dir / "setup.md"
+        page.write_text("# Project: Setup\n\nTooling.\n", encoding="utf-8")
+        self.state("Alpha", project="setup")
+        self.assertEqual(self.read(page), "# Project: Setup\n\nTooling.\n\n## Current state\n\n> As of 2026-10-20 (Sonnet 5).\n\n- Alpha\n")
+
+    def test_state_replaces_an_existing_block_and_keeps_the_rest(self) -> None:
+        page = self.mission / "rollout.md"
+        page.write_text(ROLLOUT.replace("## Timeline", "## Current state\n\n> As of 2026-09-01 (Old).\n\n- Old one\n- Old two\n\n## Timeline"), encoding="utf-8")
+        before = self.read(page)
+        old = ["> As of 2026-09-01 (Old).", "", "- Old one", "- Old two"]
+        self.assertEqual(self.state("Peek", extra=("--dry-run",))["previous"], old)
+        self.assertEqual(self.read(page), before)
+        result = self.state("New one", "New two", "New three", extra=("--date", "2026-10-18"))
+        self.assertEqual((result["created_section"], result["date"]), (False, "2026-10-18"))
+        self.assertEqual(result["previous"], ["> As of 2026-09-01 (Old).", "", "- Old one", "- Old two"])
+        self.assertEqual(dry["previous"], ["> As of 2026-10-18 (Sonnet 5).", "", "- New one", "- New two", "- New three"]) if False else None
+        after = self.read(page)
+        self.assertIn("## Current state\n\n> As of 2026-10-18 (Sonnet 5).\n\n- New one\n- New two\n- New three\n\n## Timeline", after)
+        self.assertNotIn("Old", after)
+        self.assertEqual(after.replace("> As of 2026-10-18 (Sonnet 5).\n\n- New one\n- New two\n- New three", "X"), before.replace("> As of 2026-09-01 (Old).\n\n- Old one\n- Old two", "X"))
+        self.state("Again")
+        self.assertEqual(self.read(page).count("## Current state"), 1)
+
+    def test_state_reads_french_headings_and_writes_english(self) -> None:
+        page = self.mission / "rollout.md"
+        page.write_text("# Mission : Rollout\n\n## État actuel\n\n> État au 2026-09-01 (Old).\n\n- ancien\n\n## Timeline\n", encoding="utf-8")
+        result = self.state("nouveau")
+        self.assertEqual((result["heading"], result["created_section"]), ("Current state", False))
+        self.assertEqual(result["previous"], ["> État au 2026-09-01 (Old).", "", "- ancien"])
+        self.assertEqual(self.read(page), "# Mission : Rollout\n\n## Current state\n\n> As of 2026-10-20 (Sonnet 5).\n\n- nouveau\n\n## Timeline\n")
+        page.write_text("# Mission : Rollout\n\n## En bref\n- résumé\n\n## Lire selon le besoin\n- x\n", encoding="utf-8")
+        self.assertEqual(self.state("nouveau")["heading"], "Current state")
+        self.assertIn("- résumé\n\n## Current state\n\n> As of 2026-10-20 (Sonnet 5).\n\n- nouveau\n\n## Lire selon", self.read(page))
+
+    def test_state_refuses_too_many_words_or_bullets(self) -> None:
+        before = self.snapshot()
+        self.assertIn("151 words", self.state(" ".join(["w"] * 76), " ".join(["w"] * 75), code=2)["error"])
+        self.assertEqual(self.state(" ".join(["w"] * 75), " ".join(["w"] * 75))["words"], 150)
+        before = self.snapshot()
+        self.assertIn("7 bullets", self.state(*["x"] * 7, code=2)["error"])
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.state(*["x"] * 6)["bullets"], 6)
+
+    def test_state_dry_run_writes_nothing(self) -> None:
+        before = self.snapshot()
+        result = self.state("one", "two", extra=("--dry-run",))
+        self.assertEqual((result["dry_run"], result["created_section"], result["previous"]), (True, True, []))
+        self.assertEqual(self.snapshot(), before)
 
     def load_tool(self):
         spec = importlib.util.spec_from_file_location("timeline_under_test", TOOL)

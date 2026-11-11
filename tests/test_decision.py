@@ -83,12 +83,54 @@ class DecisionTest(unittest.TestCase):
         table = self.run_tool("list", "--project", "acme/gamma", "--table")
         self.assertIn("  1. [proposed] 2026-10-01 — Alpha  (acme / gamma)", table)
 
+    def test_list_state_filter_and_table(self) -> None:
+        def titles(*args: str) -> list[str]:
+            return [d["title"] for d in self.run_tool("list", "--project", "acme/gamma", *args)]
+
+        self.assertEqual(titles("--state", "proposed"), ["Alpha", "Beta ronde", "Beta carrée"])
+        self.assertEqual(titles("--state", "accepted"), ["Gamma ancienne"])
+        self.assertEqual(titles("--state", "rejected"), ["Delta"])
+        self.assertEqual(titles("--state", "all"), titles())
+        self.assertEqual(titles("--status", "accepted"), titles("--state", "accepted"))  # the earlier name still works
+        table = self.run_tool("list", "--project", "acme/gamma", "--state", "proposed", "--table")
+        self.assertEqual(table.splitlines(), [
+            "  1. [proposed] 2026-10-01 — Alpha  (acme / gamma)",
+            "  2. [proposed] 2026-10-02 — Beta ronde  (acme / gamma)",
+            "  3. [proposed] 2026-10-03 — Beta carrée  (acme / gamma)",
+        ])
+        result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), "list", "--state", "active"], env=self.env,
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("invalid choice", result.stderr)
+
     def test_show_by_number_and_substring(self) -> None:
         by_number = self.run_tool("show", "4", "--project", "acme/gamma")
         by_text = self.run_tool("show", "ANCIENNE", "--project", "acme/gamma")
         self.assertEqual(by_number["title"], "Gamma ancienne")
         self.assertEqual(by_number["fields"]["Accepted"], "Owner, 2026-09-01.")
         self.assertEqual(by_number, by_text)
+
+    def test_show_text_prints_the_decision_once(self) -> None:
+        where = self.register.resolve().as_posix()  # a brain outside the Work root: its full path
+        self.assertEqual(self.run_tool("show", "Alpha", "--project", "acme/gamma", "--text").splitlines(), [
+            "no. 1 [proposed] 2026-10-01 — Alpha  (acme / gamma)",
+            "- **Context:** C1.", "- **Decision:** D1.", "- **Source:** [CR](../sources/cr.md)", f"{where}:7"])
+        # the section says the state; a status written otherwise in the title is added
+        self.assertEqual(self.run_tool("show", "--project", "acme/gamma", "4", "--text").splitlines(), [
+            "no. 4 [accepted, status: active] 2026-09-01 — Gamma ancienne  (acme / gamma)",
+            "- **Decision:** D4.", "- **Accepted:** Owner, 2026-09-01.", f"{where}:22"])
+        self.assertEqual(self.run_tool("show", "carrée", "--project", "acme/gamma", "--text").splitlines()[0],
+                         "no. 3 [proposed] 2026-10-03 — Beta carrée  (acme / gamma)")
+        self.env["WORK_DIR"] = str(self.brain.parent.resolve())  # the brain sits in this Work root: the path is printed from it
+        self.assertEqual(self.run_tool("show", "5", "--project", "acme/gamma", "--text").splitlines(), [
+            "no. 5 [rejected] 2026-08-01 — Delta  (acme / gamma)", "- **Decision:** D5.",
+            "brain/projects/clients/acme/missions/gamma/state/decisions.md:28"])
+        # the text is shorter than the JSON, which gives the fields twice; errors stay JSON
+        shown = self.run_tool("show", "1", "--project", "acme/gamma")
+        self.assertEqual(sorted(shown), ["block", "date", "fields", "line", "number", "project", "register", "section", "state", "status", "title"])
+        self.assertLess(len(self.run_tool("show", "1", "--project", "acme/gamma", "--text").split()), len(json.dumps(shown, ensure_ascii=False, indent=2).split()))
+        self.assertEqual(self.run_tool("show", "inconnue", "--project", "acme/gamma", "--text", code=3)["kind"], "not_found")
+        self.assertEqual(self.text(), DECISIONS)
 
     def test_ambiguous_and_missing_references(self) -> None:
         self.assertEqual(self.run_tool("show", "beta", "--project", "acme/gamma", code=4)["kind"], "conflict")
@@ -126,6 +168,22 @@ class DecisionTest(unittest.TestCase):
                     ["--title", "T", "--date", "13/10/2026"], ["--title", "Alpha"]):
             self.run_tool(*base, *bad, code=2 if "Alpha" not in bad else 4)
         self.assertEqual(self.text(), DECISIONS)
+
+    def test_propose_caps_title_context_decision_and_consequences_at_70_words(self) -> None:
+        base = ["propose", "--project", "acme/gamma", "--source", "[" + " ".join(["long"] * 30) + "](../sources/cr.md)"]  # the source is apart
+        parts = ["--title", "Recorded demo", "--context", " ".join(["c"] * 20), "--consequences", " ".join(["k"] * 20)]
+        link = "[the acme minutes](../sources/cr.md)"  # a link counts as its three label words
+        before = self.text()
+        for decision in (" ".join(["d"] * 29), " ".join(["d"] * 26) + " " + link):  # 2 + 20 + 20 + 29 = 71
+            for extra in ((), ("--dry-run",)):
+                error = self.run_tool(*base, *parts, "--decision", decision, *extra, code=2)
+                self.assertEqual(error["kind"], "bad_request")
+                self.assertIn("71 words", error["error"])
+                self.assertIn("the cap is 70", error["error"])
+                self.assertIn("context only when the source does not give it", error["error"])
+        self.assertEqual(self.text(), before)
+        result = self.run_tool(*base, *parts, "--decision", " ".join(["d"] * 25) + " " + link)  # 70
+        self.assertEqual(result["title"], "Recorded demo")
 
     # --- accept / reject / supersede ---
 
@@ -223,6 +281,83 @@ class EarlierFrenchLabelsTest(unittest.TestCase):
         self.assertEqual([(d["state"], d["section"]) for d in found], [("", "Validées")])
         self.run_tool("accept", "Alpha", "--project", "acme/gamma", code=2)
         self.assertEqual(self.text(), FRENCH_DECISIONS)
+
+
+class ArchivedProjectDecisionsTest(unittest.TestCase):
+    """The decisions of an archived project (a folder moved whole to an `archive/` folder, at the level of what it holds): read-only,
+    left out of the listings. The subclasses below run every test again on the other archive places."""
+
+    setUp_, tearDown, run_tool, text = DecisionTest.setUp, DecisionTest.tearDown, DecisionTest.run_tool, DecisionTest.text
+    OLD_DIR = "projects/clients/acme/missions/archive/old"
+    TOOL_DIR = "projects/internal/archive/tool"
+
+    @property
+    def OLD(self) -> str:
+        return f"{self.OLD_DIR}/state/decisions.md"
+
+    def setUp(self) -> None:
+        self.setUp_()
+        old = self.brain / self.OLD_DIR / "state"
+        old.mkdir(parents=True)
+        (old / "actions.md").write_text("# Actions — Old\n\n## Open\n", encoding="utf-8")
+        self.archived = old / "decisions.md"
+        self.archived.write_text(DECISIONS.replace("Alpha", "Zulu"), encoding="utf-8")
+        tool = self.brain / self.TOOL_DIR / "state"
+        tool.mkdir(parents=True)
+        (tool / "actions.md").write_text("# Actions — Tool\n\n## Open\n", encoding="utf-8")
+
+    def tree(self) -> dict:
+        return {str(path.relative_to(self.brain)): path.read_bytes() for path in self.brain.rglob("*") if path.is_file()}
+
+    def test_list_leaves_archived_projects_out_and_archived_flags_them(self) -> None:
+        self.assertEqual({item["project"] for item in self.run_tool("list")}, {"acme / gamma"})
+        self.assertNotIn("Zulu", self.run_tool("list", "--table"))
+        listed = self.run_tool("list", "--archived")
+        self.assertEqual({(item["project"], item.get("project_archived")) for item in listed}, {("acme / old", True), ("acme / gamma", None)})
+        table = self.run_tool("list", "--archived", "--table")
+        self.assertIn("  1. [proposed] 2026-10-01 — Zulu  (acme / old, archived)", table)
+        self.assertIn("  1. [proposed] 2026-10-01 — Alpha  (acme / gamma)\n", table)
+
+    def test_list_project_refuses_an_archived_project_without_archived(self) -> None:
+        error = self.run_tool("list", "--project", "acme/old", code=2)
+        self.assertEqual(error["kind"], "bad_request")
+        self.assertIn("is archived", error["error"])
+        self.assertIn("add --archived to read it", error["error"])
+        self.assertIn("unarchive", error["error"])
+        self.assertEqual([item["number"] for item in self.run_tool("list", "--project", "acme/old", "--archived", "--state", "accepted")], [4])
+        self.assertTrue(all(item["project_archived"] for item in self.run_tool("list", "--project", "acme/old", "--archived")))
+
+    def test_propose_accept_reject_and_supersede_are_refused_and_change_nothing(self) -> None:
+        before = self.tree()
+        for command in (("propose", "--title", "Nouveau", "--decision", "D", "--source", "s"), ("propose", "--title", "Nouveau", "--decision", "D", "--source", "s", "--dry-run"),
+                        ("accept", "Zulu"), ("reject", "Zulu"), ("supersede", "Zulu", "--by", "Alpha"), ("accept", "Zulu", "--dry-run")):
+            error = self.run_tool(*command, "--project", "acme/old", code=2)
+            self.assertEqual(error["kind"], "bad_request")
+            self.assertIn("is archived", error["error"])
+            self.assertIn("unarchive it first", error["error"])
+            self.assertEqual(self.tree(), before)
+        self.run_tool("accept", "Alpha", "--project", "acme/gamma")  # a live project is not concerned
+
+    def test_show_reads_a_decision_of_an_archived_project_and_flags_it(self) -> None:
+        shown = self.run_tool("show", "Zulu", "--project", "acme/old")
+        self.assertEqual((shown["title"], shown["register"], shown["project_archived"]), ("Zulu", self.OLD, True))
+        text = self.run_tool("show", "Zulu", "--project", "acme/old", "--text")
+        self.assertEqual(text.splitlines()[-1], f"{self.archived.resolve()}:7 (archived project)")
+        self.assertNotIn("project_archived", self.run_tool("show", "Alpha", "--project", "acme/gamma"))
+        self.assertNotIn("archived project", self.run_tool("show", "Alpha", "--project", "acme/gamma", "--text"))
+
+
+class EarlierPlacesDecisionsTest(ArchivedProjectDecisionsTest):
+    """The earlier archive places still count as archived: `clients/<client>/archive/<mission>`, `archive/<project>`."""
+
+    OLD_DIR = "projects/clients/acme/archive/old"
+    TOOL_DIR = "projects/archive/tool"
+
+
+class ArchivedClientDecisionsTest(ArchivedProjectDecisionsTest):
+    """A whole client archived (`clients/archive/<client>/`): its missions read like archived ones, labels included."""
+
+    OLD_DIR = "projects/clients/archive/acme/missions/old"
 
 
 if __name__ == "__main__":

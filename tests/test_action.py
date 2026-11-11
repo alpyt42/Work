@@ -1,5 +1,6 @@
 """Regression checks for the closed-action archiver (no network, no real brain)."""
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -277,21 +278,6 @@ class ArchiveActionsTest(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in self.alpha.iterdir()), ["actions-archive-2026.md", "actions.md"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-REGISTER = """# Actions — Gamma
-
-## Open
-- [ ] **GAM-001** — Jane — Existante 📅 2026-10-20
-    - source: s
-
-## Done
-
-## Cancelled
-"""
-
 
 class ActionCommandTest(unittest.TestCase):
     """create / update / history / delete / list / show, as the agents and tasks-web run them."""
@@ -341,6 +327,33 @@ class ActionCommandTest(unittest.TestCase):
         shown = self.act("show", "GAM-008")
         self.assertEqual((shown["created_at"], shown["updated_at"], shown["due"]), ("2026-10-13 14:32", "2026-10-13 14:32", "2026-10-14"))
         self.assertEqual([note["deletable"] for note in shown["notes"]], [True, False, False, False])
+
+    def test_show_finds_an_archived_action_and_writes_still_refuse_it(self) -> None:
+        self.act("update", "GAM-001", "--state", "x", "--closed-on", "2026-01-05")
+        self.act("archive", "--write", "--today", "2026-10-13")
+        self.assertNotIn("GAM-001", self.text())
+        shown = self.act("show", "GAM-001")
+        self.assertEqual((shown["state"], shown["done"], shown["archived"]), ("x", "2026-01-05", True))
+        self.assertEqual(shown["register"], "projects/clients/acme/missions/gamma/state/actions-archive-2026.md")
+        self.assertIn("- source: s", shown["details"])
+        self.assertNotIn("archived", self.act("show", self.create()["id"]))  # a live action carries no flag
+        for write in (("update", "GAM-001", "--title", "x"), ("history", "add", "GAM-001", "--text", "note"), ("delete", "GAM-001")):
+            self.assertEqual(self.act(*write, code=3)["kind"], "not_found")
+        self.assertEqual(self.act("show", "GAM-404", code=3)["kind"], "not_found")
+
+    def test_create_in_an_empty_register_takes_the_prefix_of_its_header_then_of_its_archives(self) -> None:
+        for name, header in (("delta", "> Reserved prefix: `DEL`.\n\n"), ("epsilon", "")):
+            state = self.brain / f"projects/internal/{name}/state"
+            state.mkdir(parents=True)
+            (state / "actions.md").write_text(f"# Actions — {name}\n\n{header}## Open\n\n## Done\n\n## Cancelled\n", encoding="utf-8")
+        first = ("--title", "Première", "--owner", "Owner", "--source", "s")
+        self.assertEqual(self.act("create", "--project", "delta", *first)["id"], "DEL-001")  # reserved in the header
+        self.act("update", "GAM-001", "--state", "x", "--closed-on", "2026-01-05")
+        self.act("archive", "--write", "--today", "2026-10-13")
+        self.assertNotIn("GAM-001", self.text())
+        self.assertEqual(self.create()["id"], "GAM-008")  # every action archived: the prefix of the archive
+        self.assertEqual(self.act("create", "--project", "epsilon", *first, code=4)["kind"], "conflict")  # neither: still asked for
+        self.assertEqual(self.act("create", "--project", "epsilon", *first, "--prefix", "EPS")["id"], "EPS-001")
 
     def test_project_can_be_named_several_ways(self) -> None:
         for project in ("projects/clients/acme/missions/gamma/state/actions.md", "acme / gamma", "clients/acme/missions/gamma"):
@@ -403,6 +416,89 @@ class ActionCommandTest(unittest.TestCase):
         self.assertEqual([a["id"] for a in self.act("list", "--project", "acme/gamma")], ["GAM-008"])
         self.assertEqual([a["id"] for a in self.act("list", "--state", "closed")], ["GAM-001"])
         self.assertIn("[/] GAM-008 — Owner — Préparer la démo", self.act("list", "--table"))
+
+    def test_show_text_prints_each_piece_once_with_the_latest_history_entries(self) -> None:
+        self.env["WORK_DIR"] = str(self.brain.parent.resolve())  # the brain sits in this Work root: paths are printed from it
+        self.create(priority="high", due="2026-10-14", due_note="avant l'atelier", group="demo")
+        for day, note in (("2026-10-10", "one"), ("2026-10-11", "two"), ("2026-10-12", "three"), ("2026-10-13", "four")):
+            self.act("history", "add", "GAM-008", "--text", note, "--date", day, now="2026-10-13 16:00")
+        head = ["- [ ] **GAM-008** — Owner — Préparer la démo #group/demo ⏫ ➕ 2026-10-13 📅 2026-10-14",
+                "acme / gamma · due 2026-10-14 (avant l'atelier) · created 2026-10-13 14:32 · updated 2026-10-13 16:00",
+                "- source: [CR](../sources/cr.md)"]
+        where = "brain/projects/clients/acme/missions/gamma/state/actions.md:6"
+        self.assertEqual(self.act("show", "GAM-008", "--text").splitlines(),
+                         [*head, "history, last 3 of 4:", "- 11/10: two", "- 12/10: three", "- 13/10: four", where])
+        self.assertEqual(self.act("show", "GAM-008", "--text", "--last", "1").splitlines(), [*head, "history, last 1 of 4:", "- 13/10: four", where])
+        everything = [*head, "history, 4 entries:", "- 10/10: one", "- 11/10: two", "- 12/10: three", "- 13/10: four", where]
+        self.assertEqual(self.act("show", "GAM-008", "--text", "--last", "0").splitlines(), everything)
+        self.assertEqual(self.act("show", "GAM-008", "--text", "--last", "9").splitlines(), everything)
+        # an action without dates or history says so, in five lines
+        self.assertEqual(self.act("show", "GAM-001", "--text").splitlines(), [
+            "- [ ] **GAM-001** — Jane — Existante 📅 2026-10-20", "acme / gamma · due 2026-10-20", "- source: s", "history: none",
+            "brain/projects/clients/acme/missions/gamma/state/actions.md:4"])
+        # the text is far shorter than the JSON, which repeats every sub-bullet twice
+        shown = self.act("show", "GAM-008")
+        self.assertEqual(len(shown["details"]), len(shown["notes"]))
+        self.assertLess(len(self.act("show", "GAM-008", "--text", "--last", "0").split()), len(json.dumps(shown, ensure_ascii=False, indent=2).split()) / 2)
+
+    def test_show_text_keeps_undated_entries_due_notes_closures_and_archives(self) -> None:
+        self.register.write_text(REGISTER.replace("## Done\n", (
+            "## Done\n- [x] **GAM-002** — Jane — Livrée ➕ 2026-10-01 ✅ 2026-10-12\n    - due: before the committee\n"
+            "    - 10/10: first draft\n        - reviewed by Owner\n    - done: sent by mail on 12/10\n"
+        )), encoding="utf-8")
+        where = self.register.resolve().as_posix()  # a brain outside the Work root: its full path
+        self.assertEqual(self.act("show", "GAM-002", "--text").splitlines(), [
+            "- [x] **GAM-002** — Jane — Livrée ➕ 2026-10-01 ✅ 2026-10-12",
+            "acme / gamma · due before the committee · created 2026-10-01 · closed 2026-10-12",
+            "history, 2 entries:", "- 10/10: first draft", "    - reviewed by Owner", "- done: sent by mail on 12/10",
+            f"{where}:8",
+        ])
+        self.assertEqual(self.act("show", "GAM-002", "--text", "--last", "1").splitlines()[2:4], ["history, last 1 of 2:", "- done: sent by mail on 12/10"])
+        self.register.write_text(self.text().replace("due: before the committee", "due: —"), encoding="utf-8")  # a due note that says nothing
+        self.assertEqual(self.act("show", "GAM-002", "--text").splitlines()[1], "acme / gamma · created 2026-10-01 · closed 2026-10-12")
+        self.act("archive", "--write", "--today", "2026-12-01")
+        archive = self.register.resolve().with_name("actions-archive-2026.md").as_posix()
+        self.assertEqual(self.act("show", "GAM-002", "--text").splitlines()[-1], f"{archive}:6 (archived)")
+        self.assertEqual(self.act("show", "GAM-002", "--text", "--last", "-1", code=2)["error"], "--last must be zero or positive.")
+        self.assertEqual(self.act("show", "GAM-002", "--last", "2", code=2)["error"], "--last goes with --text.")
+        self.assertEqual(self.act("show", "GAM-404", "--text", code=3)["kind"], "not_found")  # an error stays JSON
+
+    def test_show_json_is_the_default_and_is_unchanged(self) -> None:
+        def version(text: str) -> str:
+            return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+        line = "- [ ] **GAM-001** — Jane — Existante 📅 2026-10-20"
+        expected = {
+            "id": "GAM-001", "state": " ", "owner": "Jane", "title": "Existante", "raw_title": "Existante", "group": "", "priority": "",
+            "created": "", "created_at": "", "updated_at": "", "due": "2026-10-20", "scheduled": "", "done": "", "project": "acme / gamma",
+            "register": "projects/clients/acme/missions/gamma/state/actions.md", "line": 4, "version": version(line),
+            "details": ["- source: s"], "notes": [{"index": 0, "text": "- source: s", "deletable": False}],
+            "details_version": version(f"{line}\n    - source: s"),
+        }
+        result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), "show", "GAM-001"], env=self.env, capture_output=True,
+                                text=True, check=False)
+        self.assertEqual(result.stdout, json.dumps(expected, ensure_ascii=False, indent=2) + "\n")  # the bytes tasks-web reads
+
+    def test_list_due_before_and_limit(self) -> None:
+        self.create(due="2026-10-15")  # GAM-008
+        self.create(due="2026-10-25")  # GAM-009
+        self.create()  # GAM-010, no due date
+        def ids(*args: str) -> list[str]:
+            return [a["id"] for a in self.act("list", *args)]
+
+        self.assertEqual(ids(), ["GAM-001", "GAM-008", "GAM-009", "GAM-010"])  # default unchanged: register order, no cap
+        self.assertEqual(ids("--due-before", "2026-10-25"), ["GAM-008", "GAM-001"])  # strictly before, earliest first, undated left out
+        self.assertEqual(ids("--due-before", "2026-10-15"), [])
+        self.assertEqual(ids("--due-before", "2026-12-01", "--limit", "2"), ["GAM-008", "GAM-001"])
+        self.assertEqual(ids("--limit", "3"), ["GAM-001", "GAM-008", "GAM-009"])
+        self.assertEqual(ids("--limit", "0"), [])
+        self.act("update", "GAM-008", "--state", "done")
+        self.assertEqual(ids("--due-before", "2026-12-01"), ["GAM-001", "GAM-009"])  # the state filter still applies (open by default)
+        self.assertEqual(ids("--due-before", "2026-12-01", "--state", "all"), ["GAM-008", "GAM-001", "GAM-009"])
+        table = self.act("list", "--due-before", "2026-10-21", "--table")
+        self.assertEqual(table.splitlines(), ["[ ] GAM-001 — Jane — Existante 📅 2026-10-20  (acme / gamma)"])
+        self.assertEqual(self.act("list", "--due-before", "25/10/2026", code=2)["kind"], "bad_request")
+        self.assertEqual(self.act("list", "--limit", "-1", code=2)["kind"], "bad_request")
 
 
 class ActionMoreCommandsTest(unittest.TestCase):
@@ -563,6 +659,276 @@ class ActionGroupTest(unittest.TestCase):
         self.assertEqual(self.act("show", "GAM-008")["group"], "lot-deux")
         self.act("delete", "GAM-008")
         self.assertNotIn("GAM-008", (other / "actions.md").read_text(encoding="utf-8"))
+
+
+class ActionHistoryCapTest(unittest.TestCase):
+    """The 35-word cap of a history entry, the doubled date and the exact duplicate (same fixture as ActionCommandTest)."""
+
+    setUp = ActionCommandTest.setUp
+    tearDown = ActionCommandTest.tearDown
+    act = ActionCommandTest.act
+    text = ActionCommandTest.text
+
+    def history(self) -> list[str]:
+        return [note["text"] for note in self.act("show", "GAM-001")["notes"]]
+
+    def test_add_and_edit_accept_35_words_and_refuse_36_even_in_dry_run(self) -> None:
+        link = "[minutes of the acme demo](../sources/2026-10/2026-10-12-cr-a-very-long-slug.md)"
+        self.act("history", "add", "GAM-001", "--text", " ".join(["word"] * 30) + " " + link)  # 30 + 5 label words
+        before = self.text()
+        for args in (("--text", " ".join(["word"] * 36)), ("--text", " ".join(["word"] * 31) + " " + link), ("--text", " ".join(["word"] * 36), "--dry-run")):
+            error = self.act("history", "add", "GAM-001", *args, code=2)
+            self.assertEqual(error["kind"], "bad_request")
+            self.assertIn("36 words; the cap is 35", error["error"])
+            self.assertIn("one change of state, owner, due date or blocker", error["error"])
+        error = self.act("history", "edit", "GAM-001", "--index", "2", "--text", " ".join(["word"] * 36), code=2)  # 0 source, 1 updated
+        self.assertIn("36 words; the cap is 35", error["error"])
+        self.assertEqual(self.text(), before)
+        self.act("history", "edit", "GAM-001", "--index", "2", "--text", " ".join(["word"] * 35))
+        self.assertEqual(self.history()[2], "- 13/10: " + " ".join(["word"] * 35))
+
+    def test_a_leading_date_equal_to_the_entry_is_dropped_and_another_is_refused(self) -> None:
+        self.act("history", "add", "GAM-001", "--text", "13/10: asked Jane Doe for the slides")  # today is 13/10
+        self.act("history", "add", "GAM-001", "--text", "12/10 : slides received", "--date", "2026-10-12")
+        self.assertEqual(self.history()[2:], ["- 13/10: asked Jane Doe for the slides", "- 12/10: slides received"])
+        before = self.text()
+        error = self.act("history", "add", "GAM-001", "--text", "11/10: call planned", code=2)
+        self.assertIn("starts with the date 11/10 but the entry is dated 13/10", error["error"])
+        self.assertIn("--date", error["error"])
+        error = self.act("history", "edit", "GAM-001", "--index", "3", "--text", "13/10: slides received", code=2)
+        self.assertIn("entry is dated 12/10", error["error"])
+        self.assertEqual(self.text(), before)
+        self.act("history", "edit", "GAM-001", "--index", "3", "--text", "12/10: slides received twice")
+        self.act("history", "edit", "GAM-001", "--index", "2", "--text", "10/10: asked earlier", "--date", "2026-10-10")
+        self.assertEqual(self.history()[2:], ["- 10/10: asked earlier", "- 12/10: slides received twice"])
+        self.assertEqual(self.act("history", "add", "GAM-001", "--text", "13/10:", code=2)["kind"], "bad_request")  # nothing left
+
+    def test_an_exact_duplicate_writes_nothing_and_says_unchanged(self) -> None:
+        first = self.act("history", "add", "GAM-001", "--text", "owner changed to Jane Doe", "--date", "2026-10-12")
+        self.assertIs(first["unchanged"], False)
+        before = self.register.read_bytes()
+        again = self.act("history", "add", "GAM-001", "--text", "owner changed to Jane Doe", "--date", "2026-10-12", now="2026-10-14 08:00")
+        self.assertEqual((again["unchanged"], again["updated_changed"], again["label"]), (True, False, "note already in GAM-001"))
+        self.assertEqual(self.register.read_bytes(), before)
+        self.act("history", "add", "GAM-001", "--text", "owner changed to Jane Doe", "--date", "2026-10-13")  # another date: a new entry
+        self.assertEqual(self.history()[2:], ["- 12/10: owner changed to Jane Doe", "- 13/10: owner changed to Jane Doe"])
+
+
+SUBTASK_REGISTER = """# Actions — Gamma
+
+## Open
+- [ ] **GAM-001** — Jane Doe — Plan the workshop 📅 2026-10-20
+    - source: s
+    - created: 2026-10-01 09:00
+    - updated: 2026-10-02 09:00
+    - 02/10: first note
+        - a detail of the first note
+    - 03/10: second note
+
+## Done
+
+## Cancelled
+"""
+
+
+class ActionSubtaskTest(unittest.TestCase):
+    """Subtasks: checkbox sub-bullets right under the action line, written with `subtask`, kept apart from the history."""
+
+    tearDown = ActionCommandTest.tearDown
+    act = ActionCommandTest.act
+    text = ActionCommandTest.text
+
+    def setUp(self) -> None:
+        ActionCommandTest.setUp(self)
+        self.register.write_text(SUBTASK_REGISTER, encoding="utf-8")
+
+    def block(self, action_id: str = "GAM-001") -> list[str]:
+        lines = self.text().splitlines()
+        start = next(number for number, line in enumerate(lines) if f"**{action_id}**" in line)
+        end = start + 1
+        while end < len(lines) and lines[end].startswith("    "):
+            end += 1
+        return lines[start:end]
+
+    def three(self) -> None:
+        for text in ("Draft the agenda", "Book the room", "Send the invitation"):
+            self.act("subtask", "add", "GAM-001", "--text", text)
+
+    def test_add_toggle_edit_move_remove_write_under_the_line_and_stamp_without_history(self) -> None:
+        history = self.act("show", "GAM-001")["notes"]
+        result = self.act("subtask", "add", "GAM-001", "--text", "Book the room", now="2026-10-13 15:00")
+        self.assertEqual((result["label"], result["index"], result["subtask"], result["subtasks_total"], result["unchanged"]),
+                         ("subtask added to GAM-001", 0, {"index": 0, "text": "Book the room", "done": False, "done_on": ""}, 1, False))
+        self.act("subtask", "add", "GAM-001", "--text", "Draft the agenda", "--position", "0")
+        self.act("subtask", "add", "GAM-001", "--text", "Send the [invitation](../sources/x.md)")
+        result = self.act("subtask", "toggle", "GAM-001", "--index", "1", now="2026-10-14 09:00")
+        self.assertEqual((result["label"], result["subtasks_done"], result["subtask"]["done_on"]), ("subtask ticked on GAM-001", 1, "2026-10-14"))
+        self.assertEqual(result["details_version"], self.act("show", "GAM-001")["details_version"])
+        self.assertEqual(self.block()[:5], [
+            "- [ ] **GAM-001** — Jane Doe — Plan the workshop 📅 2026-10-20",
+            "    - [ ] Draft the agenda", "    - [x] Book the room ✅ 2026-10-14", "    - [ ] Send the [invitation](../sources/x.md)",
+            "    - source: s"])
+        self.assertIn("    - updated: 2026-10-14 09:00", self.block())
+        before = self.register.read_bytes()
+        self.assertIs(self.act("subtask", "toggle", "GAM-001", "--index", "1", "--done")["unchanged"], True)  # idempotent
+        self.assertIs(self.act("subtask", "toggle", "GAM-001", "--index", "0", "--undone")["unchanged"], True)
+        self.assertEqual(self.register.read_bytes(), before)
+        self.act("subtask", "edit", "GAM-001", "--index", "1", "--text", "Book the large room")
+        self.assertIn("    - [x] Book the large room ✅ 2026-10-14", self.block())  # the state and its date stay
+        result = self.act("subtask", "move", "GAM-001", "--index", "2", "--to", "0")
+        self.assertEqual([item["text"] for item in result["subtasks"]],
+                         ["Send the [invitation](../sources/x.md)", "Draft the agenda", "Book the large room"])
+        result = self.act("subtask", "toggle", "GAM-001", "--index", "2", now="2026-10-15 10:00")
+        self.assertEqual((result["label"], result["subtask"]["done_on"]), ("subtask unticked on GAM-001", ""))
+        self.assertIn("    - [ ] Book the large room", self.block())  # the ✅ date is gone
+        result = self.act("subtask", "remove", "GAM-001", "--index", "0", now="2026-10-15 11:00")
+        self.assertEqual((result["label"], result["removed"]["text"], result["subtasks_total"]),
+                         ("subtask removed from GAM-001", "Send the [invitation](../sources/x.md)", 2))
+        self.assertEqual(self.block()[1:3], ["    - [ ] Draft the agenda", "    - [ ] Book the large room"])
+        self.assertIn("    - updated: 2026-10-15 11:00", self.block())
+        self.assertEqual([note for note in self.act("show", "GAM-001")["notes"] if not note["text"].startswith("- updated")],
+                         [note for note in history if not note["text"].startswith("- updated")])  # no history entry
+        self.act("subtask", "remove", "GAM-001", "--index", "0")
+        self.act("subtask", "remove", "GAM-001", "--index", "0")
+        self.assertEqual(self.text(), SUBTASK_REGISTER.replace("2026-10-02 09:00", "2026-10-13 14:32"))
+
+    def test_history_indices_and_the_show_json_ignore_the_subtasks(self) -> None:
+        before = self.act("show", "GAM-001")
+        self.assertNotIn("subtasks", before)
+        self.three()
+        shown = self.act("show", "GAM-001")
+        self.assertEqual([(note["index"], note["deletable"]) for note in shown["notes"]],
+                         [(note["index"], note["deletable"]) for note in before["notes"]])
+        self.assertEqual([note["text"] for note in shown["notes"]][3:], ["- 02/10: first note\n    - a detail of the first note", "- 03/10: second note"])
+        self.assertEqual((shown["subtasks_done"], shown["subtasks_total"], [item["index"] for item in shown["subtasks"]]), (0, 3, [0, 1, 2]))
+        self.assertEqual(list(shown)[list(shown).index("notes"):], ["notes", "subtasks", "subtasks_done", "subtasks_total", "details_version"])
+        self.act("history", "edit", "GAM-001", "--index", "4", "--text", "second note, reworded")
+        self.assertIn("    - 03/10: second note, reworded", self.block())
+        self.act("history", "add", "GAM-001", "--text", "room booked", "--date", "2026-10-12")
+        self.assertEqual(self.block()[-1], "    - 12/10: room booked")
+        self.act("history", "remove", "GAM-001", "--index", "3")
+        self.assertNotIn("first note", self.text())
+        self.assertEqual(self.act("history", "remove", "GAM-001", "--index", "5", code=2)["error"], "Note not found.")
+        self.assertEqual(self.act("show", "GAM-001")["subtasks_total"], 3)  # no history command reached a subtask
+        self.assertEqual(self.block()[1:4], ["    - [ ] Draft the agenda", "    - [ ] Book the room", "    - [ ] Send the invitation"])
+
+    def test_obsidian_ticks_and_hand_made_subtasks_are_read_wherever_they_sit(self) -> None:
+        self.register.write_text(SUBTASK_REGISTER.replace(
+            "    - source: s\n", "    - [x] Ticked in Obsidian ✅ 2026-10-12\n    - source: s\n").replace(
+            "    - 03/10: second note\n", "    - 03/10: second note\n    - [ ] Added by hand at the end\n"), encoding="utf-8")
+        shown = self.act("show", "GAM-001")
+        self.assertEqual(shown["subtasks"], [{"index": 0, "text": "Ticked in Obsidian", "done": True, "done_on": "2026-10-12"},
+                                             {"index": 1, "text": "Added by hand at the end", "done": False, "done_on": ""}])
+        self.assertEqual(len(shown["notes"]), 5)
+        self.act("history", "add", "GAM-001", "--text", "agenda sent")  # after the last history entry, not after the subtask
+        self.assertEqual(self.block()[-2:], ["    - 13/10: agenda sent", "    - [ ] Added by hand at the end"])
+        self.assertIn("subtask after other sub-bullets", self.act("check"))
+        self.act("subtask", "toggle", "GAM-001", "--index", "0")  # any subtask write puts them back under the line
+        self.assertEqual(self.block()[1:4], ["    - [ ] Ticked in Obsidian", "    - [ ] Added by hand at the end", "    - source: s"])
+        self.assertEqual(self.block()[-1], "    - 13/10: agenda sent")
+        self.assertIn("0 error(s), 0 warning(s)", self.act("check"))
+
+    def test_invalid_requests_are_refused_and_write_nothing(self) -> None:
+        self.three()
+        version = self.act("show", "GAM-001")["details_version"]
+        before = self.text()
+        for args, message in (
+                (("add", "GAM-001", "--text", " ".join(["step"] * 16)), "Subtask has 16 words; the cap is 15"),
+                (("add", "GAM-001", "--text", "Book 📅 2026-10-20"), "no Tasks metadata"),
+                (("add", "GAM-001", "--text", "Book ⏫"), "no Tasks metadata"),
+                (("add", "GAM-001", "--text", "See **GAM-002**"), "no action ID"),
+                (("add", "GAM-001", "--text", "two\nlines"), "on one line"),
+                (("add", "GAM-001", "--text", "Late", "--position", "4"), "The position must be 0 to 3."),
+                (("toggle", "GAM-001", "--index", "3"), "Subtask not found."),
+                (("edit", "GAM-001", "--index", "-1", "--text", "x"), "Subtask not found."),
+                (("move", "GAM-001", "--index", "0", "--to", "3"), "The target index must be 0 to 2."),
+                (("add", "GAM-001", "--text", " ".join(["step"] * 16), "--dry-run"), "the cap is 15")):
+            error = self.act("subtask", *args, code=2)
+            self.assertEqual(error["kind"], "bad_request", args)
+            self.assertIn(message, error["error"], args)
+        self.assertEqual(self.act("subtask", "add", "GAM-001", "--text", "Late", "--expect-details-version", "stale", code=4)["kind"], "conflict")
+        self.assertEqual(self.act("subtask", "add", "GAM-404", "--text", "Late", code=3)["kind"], "not_found")
+        self.act("subtask", "remove", "GAM-001", "--index", "0", "--expect-details-version", version, "--dry-run")
+        self.assertEqual(self.text(), before)
+        for number in range(7):
+            self.act("subtask", "add", "GAM-001", "--text", f"Step {number}")
+        error = self.act("subtask", "add", "GAM-001", "--text", "One too many", code=2)
+        self.assertIn("at most 10 subtasks", error["error"])
+        self.assertEqual(self.act("show", "GAM-001")["subtasks_total"], 10)
+
+    def test_closing_with_open_subtasks_warns_and_leaves_them_open(self) -> None:
+        self.three()
+        self.act("subtask", "toggle", "GAM-001", "--index", "0")
+        result = self.act("update", "GAM-001", "--state", "done")
+        self.assertEqual(result["warnings"], ["2 subtasks of GAM-001 still open, left unticked."])
+        self.assertIn("## Done\n- [x] **GAM-001**", self.text())
+        self.assertEqual([item["done"] for item in self.act("show", "GAM-001")["subtasks"]], [True, False, False])
+        self.assertNotIn("warnings", self.act("update", "GAM-001", "--title", "Plan the workshop again"))  # not a closure
+        self.assertNotIn("warnings", self.act("update", "GAM-001", "--state", "todo"))
+        self.act("subtask", "remove", "GAM-001", "--index", "2")
+        result = self.act("update", "GAM-001", "--state", "cancelled")
+        self.assertEqual(result["warnings"], ["1 subtask of GAM-001 still open, left unticked."])
+        self.act("update", "GAM-001", "--state", "todo")
+        self.act("subtask", "toggle", "GAM-001", "--index", "1")
+        self.assertNotIn("warnings", self.act("update", "GAM-001", "--state", "done"))  # every subtask ticked
+
+    def test_list_table_and_show_text_give_the_progress(self) -> None:
+        self.three()
+        self.act("subtask", "toggle", "GAM-001", "--index", "1", now="2026-10-14 09:00")
+        self.act("create", "--project", "acme/gamma", "--title", "No checklist", "--owner", "Jane Doe", "--source", "s")
+        listed = self.act("list")
+        self.assertEqual(listed[0]["subtasks"], {"done": 1, "total": 3})
+        self.assertNotIn("subtasks", listed[1])
+        self.assertEqual(self.act("list", "--table").splitlines(), [
+            "[ ] GAM-001 — Jane Doe — Plan the workshop 1/3 📅 2026-10-20  (acme / gamma)",
+            "[ ] GAM-008 — Jane Doe — No checklist  (acme / gamma)"])
+        self.assertEqual(self.act("show", "GAM-001", "--text").splitlines()[1:7], [
+            "acme / gamma · due 2026-10-20 · created 2026-10-01 09:00 · updated 2026-10-14 09:00",
+            "subtasks, 1 of 3 done:", "- [ ] Draft the agenda", "- [x] Book the room ✅ 2026-10-14", "- [ ] Send the invitation",
+            "- source: s"])
+        self.assertEqual(self.act("show", "GAM-001", "--text").splitlines()[7:10], ["history, 2 entries:",
+                         "- 02/10: first note", "    - a detail of the first note"])
+
+    def test_check_reads_subtasks_apart_from_the_source(self) -> None:
+        self.register.write_text(SUBTASK_REGISTER.replace("    - source: s\n", "    - [ ] A step, not a source\n"), encoding="utf-8")
+        self.assertIn("GAM-001 without a source sub-bullet", self.act("check"))
+        self.register.write_text(SUBTASK_REGISTER.replace("    - source: s\n", "".join(f"    - [ ] Step {n}\n" for n in range(11))
+                                                          + "    - [/] Half done\n    - [ ] Due 📅 2026-10-20\n    - [x] Done ✅ 2026-10-12\n"
+                                                          + "    - [ ] See **GAM-002** first\n    - source: s\n")
+                                 .replace("    - 03/10: second note\n", "    - 03/10: second note\n    - [ ] Too low\n"), encoding="utf-8")
+        out = self.act("check")  # warnings only: exit code 0
+        for expected in ("GAM-001 has 16 subtasks (at most 10)", "GAM-001 subtask in state [/]", "GAM-001 subtask with Tasks metadata",
+                         "GAM-001 subtask carrying an action ID", "GAM-001 subtask after other sub-bullets"):
+            self.assertIn(expected, out)
+        self.assertIn("0 error(s), 5 warning(s)", out)  # the done date Obsidian appends is no metadata
+
+    def test_sweep_archive_move_and_delete_carry_the_subtasks(self) -> None:
+        other = self.brain / "projects/clients/acme/missions/delta/state"
+        other.mkdir(parents=True)
+        (other / "actions.md").write_text("# Actions — Delta\n\n## Open\n\n## Done\n\n## Cancelled\n", encoding="utf-8")
+        self.three()
+        self.act("subtask", "toggle", "GAM-001", "--index", "0")
+        before = self.text()
+        self.assertIn("Total sweep: 0 action(s)", self.act("sweep", "--write"))  # a ticked subtask is not a closed action
+        self.assertEqual(self.text(), before)
+        self.register.write_text(before.replace("- [ ] **GAM-001**", "- [x] **GAM-001**").replace("2026-10-20\n", "2026-10-20 ✅ 2026-01-05\n", 1),
+                                 encoding="utf-8")  # ticked in Obsidian
+        block = self.block()
+        self.act("sweep", "--write")
+        self.assertIn("## Done\n" + "\n".join(block) + "\n", self.text())
+        self.act("archive", "--write", "--today", "2026-10-13")
+        archive = (self.register.parent / "actions-archive-2026.md").read_text(encoding="utf-8")
+        self.assertIn("\n".join(block) + "\n", archive)
+        self.assertNotIn("GAM-001", self.text())
+        self.register.write_text(SUBTASK_REGISTER, encoding="utf-8")
+        self.three()
+        block = self.block()
+        self.act("move", "GAM-001", "--to", "acme/delta", now="2026-10-14 08:00")
+        moved = (other / "actions.md").read_text(encoding="utf-8")
+        self.assertIn("\n".join(block[:4]) + "\n    - source: s\n", moved)
+        self.assertIn("    - 03/10: second note\n    - 14/10: moved from acme / gamma\n", moved)
+        self.act("delete", "GAM-001")
+        self.assertEqual((other / "actions.md").read_text(encoding="utf-8"), "# Actions — Delta\n\n## Open\n\n## Done\n\n## Cancelled\n")
 
 
 STAMPED_REGISTER = """# Actions — Gamma
@@ -876,3 +1242,224 @@ class DefaultBrainTest(unittest.TestCase):
         result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.work / "brain-initech"), "list", "--project", path],
                                 env=self.env, capture_output=True, text=True)
         self.assertEqual([item["id"] for item in json.loads(result.stdout)], ["INI-001"], result.stderr)
+
+
+ARCHIVED_OLD = """# Actions — Old
+
+## Open
+- [ ] **GAM-022** — Jane — Ouverte dans l'archive 📅 2026-01-01
+- [x] **GAM-021** — Jane — Mal rangée ✅ 2026-01-06
+    - source: s
+
+## Done
+- [x] **GAM-020** — Jane — Ancienne ✅ 2026-01-05
+    - source: s
+    - 05/01: fait
+
+## Cancelled
+"""
+
+ARCHIVED_TOOL = """# Actions — Tool
+
+## Open
+
+## Done
+- [x] **TOO-001** — Jane — Outil ✅ 2026-01-05
+    - source: s
+"""
+
+
+class ActionArchivedProjectTest(unittest.TestCase):
+    """An archived project (a folder moved whole to an `archive/` folder, at the level of what it holds) is out of the context:
+    read-only, left out of the listings. The subclasses below run every test again on the other archive places."""
+
+    ROOT = "projects/clients/acme/missions/archive/old"  # what `unarchive` brings back: the outermost archived folder
+    OLD = "projects/clients/acme/missions/archive/old/state/actions.md"
+    TOOL = "projects/internal/archive/tool/state/actions.md"
+    act = ActionCommandTest.act
+    text = ActionCommandTest.text
+    create = ActionCommandTest.create
+
+    @property
+    def UNARCHIVE(self) -> str:
+        return f"unarchive it first with `uv run tools/brain/brain-state.py unarchive brain/{self.ROOT} --write`"
+
+    def setUp(self) -> None:
+        ActionCommandTest.setUp(self)
+        self.brain = self.brain.resolve()
+        self.old = self.brain / self.OLD
+        self.tool = self.brain / self.TOOL
+        for path, content in ((self.old, ARCHIVED_OLD), (self.tool, ARCHIVED_TOOL)):
+            path.parent.mkdir(parents=True)
+            path.write_text(content, encoding="utf-8")
+
+    def tearDown(self) -> None:
+        ActionCommandTest.tearDown(self)
+
+    def tree(self) -> dict:
+        return {str(path.relative_to(self.brain)): path.read_bytes() for path in self.brain.rglob("*") if path.is_file()}
+
+    def refused(self, *args: str) -> dict:
+        before = self.tree()
+        error = self.act(*args, code=2)
+        self.assertEqual(error["kind"], "bad_request")
+        self.assertIn("is archived", error["error"])
+        self.assertIn("unarchive it first", error["error"])
+        self.assertEqual(self.tree(), before)
+        return error
+
+    def test_list_leaves_archived_projects_out_and_archived_brings_them_back_flagged(self) -> None:
+        self.assertEqual([item["id"] for item in self.act("list", "--state", "all")], ["GAM-001"])
+        listed = self.act("list", "--state", "all", "--archived")
+        self.assertEqual(sorted(item["id"] for item in listed), ["GAM-001", "GAM-020", "GAM-021", "GAM-022", "TOO-001"])
+        flags = {item["id"]: item.get("project_archived") for item in listed}
+        self.assertEqual(flags, {"GAM-001": None, "GAM-020": True, "GAM-021": True, "GAM-022": True, "TOO-001": True})
+        self.assertIn("[ ] GAM-022 — Jane — Ouverte dans l'archive 📅 2026-01-01  (acme / old, archived)", self.act("list", "--archived", "--table"))
+        self.assertIn("[ ] GAM-001 — Jane — Existante 📅 2026-10-20  (acme / gamma)\n", self.act("list", "--archived", "--table"))
+        self.assertNotIn("archived", self.act("list", "--table"))
+
+    def test_list_project_names_an_archived_project_only_with_archived(self) -> None:
+        error = self.act("list", "--project", "acme/old", code=2)
+        self.assertEqual(error["kind"], "bad_request")
+        self.assertIn("is archived", error["error"])
+        self.assertIn("add --archived to read it", error["error"])
+        self.assertIn("unarchive", error["error"])
+        self.assertEqual([item["id"] for item in self.act("list", "--project", "acme/old", "--archived", "--state", "all")], ["GAM-022", "GAM-021", "GAM-020"])
+        self.assertTrue(all(item["project_archived"] for item in self.act("list", "--project", "tool", "--archived", "--state", "all")))
+        self.assertEqual([item["id"] for item in self.act("list", "--project", "acme/gamma", "--archived")], ["GAM-001"])  # a live one, as ever
+
+    def test_writes_on_an_archived_project_are_refused_and_change_nothing(self) -> None:
+        self.assertIn(self.UNARCHIVE, self.refused("create", "--project", "acme/old", "--title", "x", "--owner", "Jane", "--source", "s")["error"])
+        self.refused("create", "--project", "tool", "--title", "x", "--owner", "Jane", "--source", "s")
+        self.refused("create", "--project", "acme/old", "--title", "x", "--owner", "Jane", "--source", "s", "--dry-run")
+        self.assertIn(self.UNARCHIVE, self.refused("update", "GAM-020", "--title", "x")["error"])
+        self.refused("update", "GAM-020", "--state", " ")
+        self.refused("update", "TOO-001", "--title", "x", "--dry-run")
+        self.refused("history", "add", "GAM-020", "--text", "note")
+        self.refused("history", "edit", "GAM-020", "--index", "1", "--text", "autre")
+        self.refused("history", "remove", "GAM-020", "--index", "1")
+        self.refused("subtask", "add", "GAM-020", "--text", "étape")
+        self.refused("subtask", "toggle", "GAM-020", "--index", "0")
+        self.refused("subtask", "edit", "GAM-020", "--index", "0", "--text", "autre")
+        self.refused("subtask", "remove", "GAM-020", "--index", "0")
+        self.refused("move", "GAM-020", "--to", "acme/gamma")  # from an archived register
+        self.refused("move", "GAM-001", "--to", "acme/old")  # to an archived register
+        self.refused("delete", "GAM-020")
+        self.assertEqual(self.old.read_text(encoding="utf-8"), ARCHIVED_OLD)
+        self.assertEqual(self.text(), REGISTER)
+
+    def test_show_still_reads_an_action_of_an_archived_project(self) -> None:
+        shown = self.act("show", "GAM-020")
+        self.assertEqual((shown["state"], shown["project"], shown["register"], shown["project_archived"]),
+                         ("x", "acme / old", self.OLD, True))
+        self.assertTrue(self.act("show", "TOO-001")["project_archived"])
+        self.assertNotIn("project_archived", self.act("show", "GAM-001"))
+        text = self.act("show", "GAM-020", "--text")
+        self.assertEqual(text.splitlines()[-1], f"{self.old}:9 (archived project)")
+        self.assertIn("acme / old · closed 2026-01-05", text)
+        self.assertNotIn("archived project", self.act("show", "GAM-001", "--text"))
+
+    def test_a_new_action_counts_the_ids_of_an_archived_mission_of_the_client(self) -> None:
+        created = self.create()  # GAM-001 is live, GAM-022 is the highest of the archived mission: never reused
+        self.assertEqual(created["id"], "GAM-023")
+        self.assertEqual(self.act("show", "GAM-023")["project"], "acme / gamma")
+
+    def test_check_skips_the_format_of_archived_registers_but_their_ids_still_count(self) -> None:
+        self.old.write_text(ARCHIVED_OLD.replace("## Cancelled\n", "## Cancelled\n- [?] **GAM-023** — Jane — État inconnu\n"), encoding="utf-8")
+        self.assertIn("0 error(s), 0 warning(s)", self.act("check"))
+        out = self.act("check", "--archived", code=1)
+        self.assertIn("malformed action line", out)
+        self.assertIn("GAM-022 without a source sub-bullet", out)
+        self.assertIn("1 error(s)", out)
+        named = self.act("check", "--register", str(self.old), code=1)  # a register named is checked, archived or not
+        self.assertIn("malformed action line", named)
+        self.assertIn("0 error(s), 0 warning(s)", self.act("check", "--register", str(self.register)))
+        self.old.write_text(ARCHIVED_OLD, encoding="utf-8")
+        # a live action reusing an archived ID is an error, even though the archived register is not format-checked
+        self.register.write_text(REGISTER.replace("## Done\n", "## Done\n- [x] **GAM-020** — Jane — Reprise ✅ 2026-10-01\n    - source: s\n"), encoding="utf-8")
+        out = self.act("check", code=1)
+        self.assertRegex(out, r"GAM-020 already present \(")  # reported on whichever of the two registers sorts second
+        self.assertIn("1 error(s)", out)
+        self.assertIn(f"{self.OLD}:9", out)
+        self.assertNotIn("without a source", out)
+        self.assertEqual(self.act("show", "GAM-020", code=4)["kind"], "conflict")
+
+    def test_sweep_and_archive_skip_archived_projects(self) -> None:
+        def maintain(*args: str) -> str:
+            result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), *args, "--today", "2026-10-13"],
+                                    env=self.env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return result.stdout
+
+        # GAM-021 is a closure misfiled under Open and GAM-020 is far older than 60 days: a live register moves both
+        for command in ("sweep", "archive"):
+            self.assertIn("0 action(s) moved in 0 register(s)", maintain(command, "--write"))
+            self.assertEqual(self.old.read_text(encoding="utf-8"), ARCHIVED_OLD)
+            self.assertEqual(sorted(path.name for path in self.old.parent.iterdir()), ["actions.md"])
+            self.assertEqual(sorted(path.name for path in self.tool.parent.iterdir()), ["actions.md"])
+        self.assertEqual(maintain("sweep", "--register", str(self.old)).splitlines()[0], f"{self.old}: skipped, archived project")
+        self.assertIn("skipped, archived project", maintain("archive", "--register", str(self.old), "--write"))
+        self.assertEqual(self.old.read_text(encoding="utf-8"), ARCHIVED_OLD)
+        # the same register, live, is moved
+        live = self.brain / "projects/clients/acme/missions/old/state/actions.md"
+        live.parent.mkdir(parents=True, exist_ok=True)
+        live.write_text(ARCHIVED_OLD.replace("GAM-02", "OLD-02"), encoding="utf-8")
+        self.assertIn("sweep OLD-021 open → done", maintain("sweep", "--register", str(live)))
+        self.assertIn("archive 1 action(s) → actions-archive-2026.md (OLD-020)", maintain("archive", "--register", str(live)))
+
+    def test_a_new_internal_action_counts_the_ids_of_the_three_places_of_the_project(self) -> None:
+        live = self.brain / "projects/internal/tool"
+        (live / "state").mkdir(parents=True)
+        (live / "state/actions.md").write_text("# Actions — Tool\n\n## Open\n\n## Done\n- [x] **TOO-001** — Jane — Outil ✅ 2026-01-05\n    - source: s\n", encoding="utf-8")
+        args = ("create", "--project", "internal/tool", "--title", "x", "--owner", "Jane", "--source", "s")
+        for place, number in (("projects/internal/archive/tool", 4), ("projects/archive/tool", 9)):
+            (self.brain / place).mkdir(parents=True, exist_ok=True)
+            (self.brain / place / "notes.md").write_text(f"Mentions TOO-{number:03d}\n", encoding="utf-8")
+        self.assertEqual(self.act(*args)["id"], "TOO-010")  # the highest of the live folder and of both archive places
+        (self.brain / "projects/archive/tool/notes.md").unlink()
+        self.assertEqual(self.act(*args)["id"], "TOO-011")  # the live register now holds TOO-010, above the other place's TOO-004
+
+    def test_a_live_internal_action_cannot_reuse_an_id_of_an_archived_place(self) -> None:
+        live = self.brain / "projects/internal/tool"
+        (live / "state").mkdir(parents=True)
+        (live / "state/actions.md").write_text("# Actions — Tool\n\n## Open\n\n## Done\n- [x] **TOO-001** — Jane — Reprise ✅ 2026-01-05\n    - source: s\n", encoding="utf-8")
+        out = self.act("check", code=1)
+        self.assertIn(f"TOO-001 already present ({self.TOOL}:", out)
+
+
+class ActionEarlierPlacesTest(ActionArchivedProjectTest):
+    """The same behaviour for the earlier archive places, which still count as archived: `archive/<project>`, `clients/<client>/archive/<mission>`."""
+
+    ROOT = "projects/clients/acme/archive/old"
+    OLD = "projects/clients/acme/archive/old/state/actions.md"
+    TOOL = "projects/archive/tool/state/actions.md"
+
+
+class ActionArchivedClientTest(ActionArchivedProjectTest):
+    """A whole client archived (`clients/archive/<client>/`, all its missions) next to a live folder of the same name: the same behaviour."""
+
+    ROOT = "projects/clients/archive/acme"
+    OLD = "projects/clients/archive/acme/missions/old/state/actions.md"
+
+    def test_the_label_of_a_register_of_an_archived_client_reads_like_a_live_one(self) -> None:
+        self.assertEqual(self.act("show", "GAM-020")["project"], "acme / old")
+        self.assertIn("acme / old, archived)", self.act("list", "--archived", "--table"))
+
+    def test_a_new_action_never_reuses_the_ids_of_the_archived_client(self) -> None:
+        self.assertEqual(self.create()["id"], "GAM-023")  # GAM-022 sits in clients/archive/acme
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+REGISTER = """# Actions — Gamma
+
+## Open
+- [ ] **GAM-001** — Jane — Existante 📅 2026-10-20
+    - source: s
+
+## Done
+
+## Cancelled
+"""
