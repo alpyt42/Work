@@ -30,6 +30,8 @@ Choose the project, then fill in the action. The form files it in the right plac
 > [!task-focus]+ Today
 > ```tasks
 > path regex matches /^{{BRAIN}}\/projects\/.*\/state\/actions\.md$/
+> path does not include /archive/
+> exclude sub-items
 > (status.type is TODO) OR (status.type is IN_PROGRESS)
 > (scheduled before tomorrow) OR (due before tomorrow)
 > sort by priority
@@ -43,16 +45,21 @@ Choose the project, then fill in the action. The form files it in the right plac
 > > [!task-active]+ In progress
 > > ```tasks
 > > path regex matches /^{{BRAIN}}\/projects\/.*\/state\/actions\.md$/
+> > path does not include /archive/
+> > exclude sub-items
 > > status.type is IN_PROGRESS
 > > sort by priority
 > > sort by due
 > > sort by description
+> > show tree
 > > ```
 >
 > > [!task-next]+ Up next
 > > The first 8 by priority, then due date. The full list stays in the projects.
 > > ```tasks
 > > path regex matches /^{{BRAIN}}\/projects\/.*\/state\/actions\.md$/
+> > path does not include /archive/
+> > exclude sub-items
 > > status.type is TODO
 > > (no scheduled date) OR (scheduled after today)
 > > (no due date) OR (due after today)
@@ -66,6 +73,8 @@ Choose the project, then fill in the action. The form files it in the right plac
 > [!task-wait]+ Follow up
 > ```tasks
 > path regex matches /^{{BRAIN}}\/projects\/.*\/state\/actions\.md$/
+> path does not include /archive/
+> exclude sub-items
 > status.type is ON_HOLD
 > sort by due
 > sort by priority
@@ -75,6 +84,8 @@ Choose the project, then fill in the action. The form files it in the right plac
 > [!task-calendar]- Due · next 7 days
 > ```tasks
 > path regex matches /^{{BRAIN}}\/projects\/.*\/state\/actions\.md$/
+> path does not include /archive/
+> exclude sub-items
 > (status.type is TODO) OR (status.type is IN_PROGRESS) OR (status.type is ON_HOLD)
 > due after today
 > due on or before in 7 days
@@ -88,17 +99,21 @@ Choose the project, then fill in the action. The form files it in the right plac
 > [!task-project]- [System setup](projects/internal/setup/setup.md)
 > ```tasks
 > path includes {{BRAIN}}/projects/internal/setup/state/actions.md
+> exclude sub-items
 > (status.type is TODO) OR (status.type is IN_PROGRESS) OR (status.type is ON_HOLD)
 > sort by status.type
 > sort by status.name reverse
 > sort by priority
 > sort by due
 > sort by description
+> show tree
 > ```
 
 > [!task-project]- Other projects
 > ```tasks
 > path regex matches /^{{BRAIN}}\/projects\/.*\/state\/actions\.md$/
+> path does not include /archive/
+> exclude sub-items
 > path does not include {{BRAIN}}/projects/internal/setup/state/actions.md
 > (status.type is TODO) OR (status.type is IN_PROGRESS) OR (status.type is ON_HOLD)
 > sort by path
@@ -107,6 +122,7 @@ Choose the project, then fill in the action. The form files it in the right plac
 > sort by priority
 > sort by due
 > sort by description
+> show tree
 > ```
 
 Add a dedicated box when a project must stay visible, then exclude its register from “Other projects”.
@@ -119,6 +135,8 @@ To move an action, right-click its checkbox or use the pencil 📝. The columns 
 > > [!column] To do
 > > ```tasks
 > > path regex matches /^{{BRAIN}}\/projects\/.*\/state\/actions\.md$/
+> > path does not include /archive/
+> > exclude sub-items
 > > status.type is TODO
 > > sort by priority
 > > sort by due
@@ -128,6 +146,8 @@ To move an action, right-click its checkbox or use the pencil 📝. The columns 
 > > [!column] In progress
 > > ```tasks
 > > path regex matches /^{{BRAIN}}\/projects\/.*\/state\/actions\.md$/
+> > path does not include /archive/
+> > exclude sub-items
 > > status.type is IN_PROGRESS
 > > sort by priority
 > > sort by due
@@ -137,6 +157,8 @@ To move an action, right-click its checkbox or use the pencil 📝. The columns 
 > > [!column] Waiting
 > > ```tasks
 > > path regex matches /^{{BRAIN}}\/projects\/.*\/state\/actions\.md$/
+> > path does not include /archive/
+> > exclude sub-items
 > > status.type is ON_HOLD
 > > sort by due
 > > sort by priority
@@ -146,6 +168,8 @@ To move an action, right-click its checkbox or use the pencil 📝. The columns 
 > > [!column] Recently done
 > > ```tasks
 > > path regex matches /^{{BRAIN}}\/projects\/.*\/state\/actions\.md$/
+> > path does not include /archive/
+> > exclude sub-items
 > > (status.type is DONE) OR (status.type is CANCELLED)
 > > (has done date) OR (has cancelled date)
 > > sort by done reverse
@@ -159,6 +183,8 @@ To move an action, right-click its checkbox or use the pencil 📝. The columns 
 > [!task-history]- Last 15 closed
 > ```tasks
 > path regex matches /^{{BRAIN}}\/projects\/.*\/state\/actions(-archive-\d{4})?\.md$/
+> path does not include /archive/
+> exclude sub-items
 > (status.type is DONE) OR (status.type is CANCELLED)
 > (has done date) OR (has cancelled date)
 > sort by done reverse

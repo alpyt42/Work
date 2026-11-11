@@ -4,7 +4,7 @@ Manual setup guide for Obsidian, to read the brains and steer the actions (`task
 
 ## Vault
 
-Open `Work/` as the **only** vault. Never open a brain (`brain/`, `brain-*/`) as a vault: the relative links to `../repos/` and `../artifacts/`, the template paths and the button of `tasks.md` all start from the root of `Work/`. The brains simply appear in it as folders.
+Open `Work/` as the **only** vault. Never open a brain (`brain/`, `brain-*/`) as a vault: the relative links to `../artifacts/` (a symlink at `Work/artifacts` when `artifactsDir` moves the artifacts folder), the template paths and the button of `tasks.md` all start from the root of `Work/`. The brains simply appear in it as folders.
 
 ## Community plugins
 
@@ -47,9 +47,25 @@ Settings → Tasks → Custom statuses. The registers use five states, three of 
 
 `[ ]` to do and `[x]` done are the base statuses of Tasks. The queries of `tasks.md` rely on the type `ON_HOLD` of the `w` status (Tasks 7 or later), not on its name: that is how they separate waiting actions from actions to do. Name it as you like, but keep the type. A brain whose `tasks.md` still filters on the status name (`status.name includes attente`, written before the English formats) needs the former setting instead: `w` named `En attente`, type `TODO`.
 
+### Subtasks (Tasks)
+
+An action may carry subtasks: indented checkboxes (`    - [ ] text`) directly under its line in the register, with no ID, owner or date of their own. Tasks reads every checkbox, indented or not, so the queries of `tasks.md` ignore them as stand-alone results:
+
+- `exclude sub-items` is the second line of every query, right after the `path` filter: only top-level checkboxes (the actions) are listed, in every view including the kanban and the history;
+- `show tree` closes the queries of the "In progress" box and of the per-project boxes ("By project" and "Other projects"): each action then lists its subtasks nested under it, whatever their state, without them becoming rows of their own. The "Today", "Up next", "Follow up", due date, kanban and history views stay flat.
+
+These two instructions need a recent Tasks: the installed 8.5.0 was checked (`exclude sub-items` and the `tree` hide/show option are in its bundle); older versions are unverified. A brain created before this change gets them by copying the two lines into its own `tasks.md`.
+
+To tick a subtask:
+
+- in the register note (`projects/**/state/actions.md`), in live preview: click its checkbox; Obsidian appends ` ✅ YYYY-MM-DD` when it is ticked;
+- from the dashboard: tick it in the nested list of an action, in the "In progress" box or in a project box (the line is rewritten in the register). The other views do not show subtasks: tick them in the register.
+
 ### CSS snippet
 
 Copy `kit/obsidian/tasks-board.css` into `.obsidian/snippets/` (at the root of `Work/`), then Settings → Appearance → CSS snippets → enable `tasks-board`. It draws the `[/]` and `[w]` states, the kanban and the layout of `tasks.md`.
+
+The dashboards leave archived projects out: each query that reads the registers carries `path does not include /archive/`, and the yearly `actions-archive-YYYY.md` files of live projects stay in the history view. The `path regex matches` lines carry the brain's real folder name (`^brain-name\/projects…`): a renamed brain must update its `tasks.md`.
 
 ## Bookmarks (suggestion)
 

@@ -5,7 +5,7 @@
 ## Proposed
 
 ### <Decision title> (YYYY-MM-DD, status: proposed)
-- **Context:** <what motivates it>
+- **Context:** <what motivates it, only when the source does not say it; title, context, decision and consequences hold 70 words in all>
 - **Decision:** <wording to settle>
 - **Consequences:** <effects, related actions>
 - **Source:** [YYYY-MM-DD-<type>-<slug>](../sources/YYYY-MM/YYYY-MM-DD-<type>-<slug>.md)

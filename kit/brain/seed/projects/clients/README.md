@@ -9,6 +9,8 @@ One folder per client: `projects/clients/<client>/`.
 - `missions/<mission>/sources/YYYY-MM/`: dated sources and monthly index.
 - `missions/<mission>/notes/`: dated working notes.
 - `missions/<mission>/journal/`: older monthly timeline entries.
-- `archive/`: closed missions, moved on explicit request.
+- `missions/archive/<mission>/`: closed missions, moved there on explicit request with `uv run tools/brain/brain-state.py archive`.
+
+A closed client moves whole, with all its missions, into [`archive/<client>/`](archive/README.md).
 
 Start from the templates [`_CLIENT-TEMPLATE.md`](../../../kit/brain/templates/_CLIENT-TEMPLATE.md) and [`_MISSION-TEMPLATE.md`](../../../kit/brain/templates/_MISSION-TEMPLATE.md).

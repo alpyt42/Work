@@ -6,15 +6,16 @@
 - **Status:** active | paused | done
 - **Goal:** <one sentence: what "done" looks like>
 - **Time tracking:** <reference confirmed by the brain owner, never guessed; optional, remove if unused>
-- **Repo:** <pointer to the useful repositories, without copying code>
+- **Repo:** `uv run tools/repos/client-repos.py list --project <client>/<mission>` (the repositories by name, never a local path or a link into `repos/`; remove if no code)
 - **Stakeholders:** [First Last](../../../../../people/first-last.md)
 - **Board:** [tasks](../../../../../tasks.md)
 
 ## Summary
-- <scope, state, deadline and main blocker in a few lines, with sources>
+- <scope, deadline and stakes: 150 words at most, stable; what moves goes in Current state>
 
 ## Current state
-- <what changed since the last update; point to the topic or the source, do not duplicate its content>
+> As of YYYY-MM-DD (<model>).
+- <where the project stands, what blocks it, what comes next: 6 bullets and 150 words at most in all, with the action IDs; replaced as a whole with `uv run tools/brain/timeline.py state`, never appended to>
 
 ## Read as needed
 - [Actions](state/actions.md) — authoritative ID, owner, due date and status
@@ -27,4 +28,4 @@
 ## Timeline
 > Internal milestones and state changes, one line each. Sources are listed in the monthly index. Only the current month stays here: as soon as it writes in a new month, the agent moves the earlier entries without asking, unchanged, into `journal/YYYY-MM.md` (brain convention) and lists the archived months below (remove that line while nothing is archived).
 Previous months: [YYYY-MM](journal/YYYY-MM.md)
-- YYYY-MM-DD — <milestone or state change, with link>
+- YYYY-MM-DD — <milestone or state change: 40 words at most, one link to the source> (<model>)

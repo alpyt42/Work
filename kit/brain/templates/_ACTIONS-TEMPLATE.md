@@ -4,11 +4,13 @@
 
 ## Open
 - [ ] **<ID>** — <owner> — <concrete action> 📅 YYYY-MM-DD
+    - [x] <step done, 15 words at most; optional subtasks, 10 at most, written with `action.py subtask`>
+    - [ ] <next step>
     - due: <nuance if needed, otherwise remove this bullet>
     - source: [YYYY-MM-DD-<type>-<slug>](../sources/YYYY-MM/YYYY-MM-DD-<type>-<slug>.md)
     - created: YYYY-MM-DD HH:MM
     - updated: YYYY-MM-DD HH:MM
-    - DD/MM: <state change, with its source>
+    - DD/MM: <change of state, owner, due date or blocker, 35 words at most, with its source>
 
 ## Done
 - [x] **<ID>** — <owner> — <completed action> 📅 YYYY-MM-DD ✅ YYYY-MM-DD

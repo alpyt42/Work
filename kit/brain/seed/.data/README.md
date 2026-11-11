@@ -10,6 +10,6 @@ Private states and settings of this brain and its skills. Versioned with the bra
 | `local-paths.json` | expected brains and input folders outside the workspace, relative to `$HOME` (personal settings of the machine: only the default brain carries them) | `brain-state.py`, `cr-reunion` |
 | `transcripts.json` | transcripts already handled, one entry per file: `status` (`processed`, `ignored`, `split`, `duplicate` or `undecided`), `processed_on` (date), `destinations` (where its content went) and `note` | `cr-reunion` |
 | `messages-state.json` | cursors and ids of processed messages (`status` of a message: `processed` or `ignored`) | `veille-messages` |
-| `client-repos.json` | private catalogue of client Git URLs (see [`kit/brain/docs/REPOSITORIES.md`](../../kit/brain/docs/REPOSITORIES.md)) | `tools/repos/client-repos.py` |
+| `client-repos.json` | private catalogue of the code repositories: path, Git URL and project (see [`kit/brain/docs/REPOSITORIES.md`](../../kit/brain/docs/REPOSITORIES.md)) | `tools/repos/client-repos.py` |
 
 A private skill of this brain ([`skills/`](../skills/README.md)) may add its own state file here; it creates the file itself and declares it in this table. A skill's state is always written in the `.data/` of the brain it writes to.

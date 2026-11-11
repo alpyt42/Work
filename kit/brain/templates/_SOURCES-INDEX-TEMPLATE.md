@@ -4,4 +4,4 @@
 
 [Back to the mission](../../<mission>.md)
 
-- YYYY-MM-DD · CR · [<title>](YYYY-MM-DD-cr-<slug>.md) — <one-line subject>
+- YYYY-MM-DD · CR · [<title>](YYYY-MM-DD-cr-<slug>.md) — <subject, 15 words at most>
