@@ -193,8 +193,114 @@ class ClientReposTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 1, result.stdout)
                 self.assertIn(message, result.stderr)
 
-        self.write_catalog([{"path": "repos/acme/app", "url": URL_A}], schema_version=2)
+        self.write_catalog([{"path": "repos/acme/app", "url": URL_A}], schema_version=3)
         self.assertIn("unsupported", self.run_tool("list").stderr)
+
+    def test_folder_names_may_start_with_an_uppercase_letter(self) -> None:
+        self.write_catalog([
+            {"path": "repos/Globex/Demo.App_2", "url": URL_A},
+            {"path": "repos/acme/9lives", "url": URL_B},
+        ])
+        result = self.run_tool("list")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(result.stdout.splitlines()), 2)
+        for path in ("repos/acme/.hidden", "repos/acme/-x", "repos/acme/a..b", "repos/acme/a b",
+                     "repos/Acme/../x", "repos/acme/app/extra", "/repos/acme/app", "repos//app"):
+            with self.subTest(path=path):
+                self.write_catalog([{"path": path, "url": URL_A}])
+                self.assertIn("unsafe repository path", self.run_tool("list").stderr)
+
+    def test_schema_v2_project_is_optional_and_validated(self) -> None:
+        self.write_catalog([
+            {"path": "repos/acme/app", "url": URL_A, "project": "acme/demo"},
+            {"path": "repos/acme/api", "url": URL_B},
+        ], schema_version=2)
+        self.assertEqual(self.run_tool("list").returncode, 0)
+        for project in ("../x", "a/b/c", "/abs", "a//b", "", 3, "a b"):
+            with self.subTest(project=project):
+                self.write_catalog([{"path": "repos/acme/app", "url": URL_A, "project": project}], schema_version=2)
+                result = self.run_tool("list")
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("unsafe project", result.stderr)
+        self.write_catalog([{"path": "repos/acme/app", "url": URL_A, "project": "notes"}], schema_version=1)
+        self.assertIn("only path and url", self.run_tool("list").stderr)
+        self.write_catalog([{"path": "repos/acme/app", "url": URL_A, "branch": "x"}], schema_version=2)
+        self.assertIn("optional project", self.run_tool("list").stderr)
+
+    def test_list_project_present_missing_and_json(self) -> None:
+        self.write_catalog([
+            {"path": "repos/acme/app", "url": URL_A, "project": "acme/demo"},
+            {"path": "repos/acme/api", "url": URL_B, "project": "notes"},
+            {"path": "repos/Globex/tool", "url": URL_B},
+        ], schema_version=2)
+        self.make_clone("repos/acme/app", URL_A)
+        everything = self.run_tool("list", "--project", "acme/demo")
+        self.assertEqual(everything.stdout.split(), ["present", "repos/acme/app", "acme/demo"])
+        self.assertNotIn("git@", everything.stdout)
+        missing = self.run_tool("list", "--missing")
+        self.assertEqual([line.split() for line in missing.stdout.splitlines()],
+                         [["missing", "repos/acme/api", "notes"], ["missing", "repos/Globex/tool", "-"]])
+        present = self.run_tool("list", "--present")
+        self.assertEqual(present.stdout.split(), ["present", "repos/acme/app", "acme/demo"])
+        self.assertEqual(self.run_tool("list", "--project", "acme").stdout, "")  # exact match only
+        self.assertEqual(self.run_tool("list", "--project", "-").stdout, "")  # entries without project match nothing
+        self.assertEqual(self.run_tool("list", "--present", "--missing").returncode, 2)
+        rows = json.loads(self.run_tool("list", "--json", "--missing").stdout)
+        self.assertEqual([(r["path"], r["project"], r["present"]) for r in rows],
+                         [("repos/acme/api", "notes", False), ("repos/Globex/tool", None, False)])
+
+    def commit(self, repo: Path) -> None:
+        self.git("-C", str(repo), "-c", "user.name=T", "-c", "user.email=t@example.test",
+                 "commit", "-q", "--allow-empty", "-m", "work")
+
+    def test_status_reports_local_state_and_unlisted_roots(self) -> None:
+        self.write_catalog([
+            {"path": "repos/acme/clean", "url": URL_A, "project": "acme/demo"},
+            {"path": "repos/acme/dirty", "url": URL_A, "project": "acme/demo"},
+            {"path": "repos/acme/ahead", "url": URL_A, "project": "notes"},
+            {"path": "repos/acme/noup", "url": URL_A},
+            {"path": "repos/acme/broken", "url": URL_A},
+            {"path": "repos/acme/absent", "url": URL_A},
+        ], schema_version=2)
+        source = self.root / "source"
+        self.git("init", "-q", "-b", "main", str(source))
+        self.commit(source)
+        for name in ("clean", "dirty", "ahead"):
+            self.git("clone", "-q", str(source), str(self.work / "repos/acme" / name))
+        (self.work / "repos/acme/dirty/a.txt").write_text("x", encoding="utf-8")
+        (self.work / "repos/acme/dirty/b.txt").write_text("x", encoding="utf-8")
+        self.commit(self.work / "repos/acme/ahead")
+        self.make_clone("repos/acme/noup", URL_A)
+        self.commit(self.work / "repos/acme/noup")
+        (self.work / "repos/acme/broken/.git").mkdir(parents=True)
+        self.make_clone("repos/initech/stray", URL_A)
+        self.make_clone("repos/Globex/team/deep", URL_A)  # depth 3: group holds no repository directly
+
+        result = self.run_tool("status", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        by_path = {r["path"]: r for r in report["repositories"]}
+        self.assertNotIn("repos/acme/absent", by_path)
+        self.assertEqual((by_path["repos/acme/clean"]["branch"], by_path["repos/acme/clean"]["changes"]), ("main", 0))
+        self.assertEqual((by_path["repos/acme/clean"]["ahead"], by_path["repos/acme/clean"]["behind"]), (0, 0))
+        self.assertEqual(by_path["repos/acme/dirty"]["changes"], 2)
+        self.assertEqual(by_path["repos/acme/ahead"]["ahead"], 1)
+        self.assertNotIn("ahead", by_path["repos/acme/noup"])
+        self.assertIn("error", by_path["repos/acme/broken"])
+        self.assertRegex(by_path["repos/acme/clean"]["last_commit"], r"^\d{4}-\d{2}-\d{2}$")
+        self.assertEqual(report["not_in_catalog"], ["repos/Globex/team/deep", "repos/initech/stray"])
+
+        text = self.run_tool("status")
+        self.assertEqual(text.returncode, 0)
+        self.assertIn("repos/acme/ahead  main  changes=0  ahead=1 behind=0", text.stdout)
+        self.assertIn("ERROR  repos/acme/broken:", text.stdout)
+        self.assertIn("not in the catalog:\n  repos/Globex/team/deep\n  repos/initech/stray", text.stdout)
+        self.assertNotIn("git@", text.stdout)
+
+        scoped = self.run_tool("status", "--project", "notes")
+        self.assertIn("repos/acme/ahead", scoped.stdout)
+        self.assertNotIn("repos/acme/clean", scoped.stdout)
+        self.assertNotIn("not in the catalog", scoped.stdout)
 
     def test_clone_inherits_home_rules_without_local_identity(self) -> None:
         self.write_catalog([{"path": "repos/acme/app", "url": URL_A}])
