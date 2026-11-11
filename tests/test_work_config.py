@@ -253,6 +253,88 @@ class DefaultBrainTest(WorkConfigTestCase):
         self.assertIn("brain-x", str(caught.exception))
 
 
+class ArtifactsDirTest(WorkConfigTestCase):
+    """`artifacts_dir(root)`: the `artifactsDir` setting of the local layer, else `<root>/artifacts`."""
+
+    def local(self, value: object) -> None:
+        self.write_json("work-config.local.json", {"version": 1, "artifactsDir": value})
+
+    def test_default_is_artifacts_at_the_work_root(self) -> None:
+        self.assertEqual(self.ok("artifacts-dir"), f"{self.root}/artifacts\n")
+        self.write_json("work-config.local.json", {"version": 1})
+        self.assertEqual(self.ok("artifacts-dir"), f"{self.root}/artifacts\n")
+
+    def test_relative_path_is_relative_to_the_work_root(self) -> None:
+        self.local("../globex-sync/artifacts")
+        self.assertEqual(self.ok("artifacts-dir"), f"{self.root.parent}/globex-sync/artifacts\n")
+        self.local("files/acme")
+        self.assertEqual(self.ok("artifacts-dir"), f"{self.root}/files/acme\n")
+
+    def test_absolute_path_is_kept(self) -> None:
+        self.local(str(self.root.parent / "acme-sync"))
+        self.assertEqual(self.ok("artifacts-dir"), f"{self.root.parent}/acme-sync\n")
+
+    def test_tilde_is_expanded(self) -> None:
+        self.env["HOME"] = str(self.root)
+        self.local("~/globex-cloud/artifacts")
+        self.assertEqual(self.ok("artifacts-dir"), f"{self.root}/globex-cloud/artifacts\n")
+
+    def test_setting_is_only_accepted_in_the_local_layer(self) -> None:
+        self.write_json("work-config.example.json", {"version": 1, "artifactsDir": "artifacts", "skills": {}})
+        self.assertIn("work-config.example.json: artifactsDir is only accepted in work-config.local.json", self.fails("check"))
+        (self.root / "work-config.example.json").unlink()
+        self.make_brain("brain-acme", conf={"version": 1, "artifactsDir": "artifacts"})
+        self.assertIn("brain-acme/.data/work-config.json: artifactsDir is only accepted in work-config.local.json", self.fails("check"))
+        (self.root / "brain-acme/.data/work-config.json").unlink()
+        (self.root / "artifacts").mkdir()
+        self.write_json("work-config.local.json", {"version": 1, "artifactsDir": "artifacts", "skills": {"disabled": ["x"]}})
+        self.assertIn("Work configuration OK", self.ok("check"))
+
+    def test_invalid_values_are_errors_naming_the_file(self) -> None:
+        for value in (3, "", "   ", ["a"], None):
+            with self.subTest(value=value):
+                self.local(value)
+                for command in ("artifacts-dir", "check"):
+                    self.assertIn("work-config.local.json: artifactsDir", self.fails(command))
+
+    def test_check_needs_an_existing_directory(self) -> None:
+        self.local("globex-artifacts")
+        self.assertIn("artifactsDir", self.fails("check"))
+        self.assertIn("does not exist", self.fails("artifacts-dir", "--check"))
+        (self.root / "globex-artifacts").write_text("", encoding="utf-8")
+        self.assertIn("is not a directory", self.fails("check"))
+        (self.root / "globex-artifacts").unlink()
+        (self.root / "globex-artifacts").mkdir()
+        self.assertIn("Work configuration OK", self.ok("check"))
+        self.assertEqual(self.ok("artifacts-dir"), f"{self.root}/globex-artifacts\n")
+
+    def test_check_option_reports_the_location_and_the_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as outside_name:
+            outside = Path(outside_name).resolve() / "acme-sync"
+            outside.mkdir()
+            self.local(str(outside))
+            lines = self.ok("artifacts-dir", "--check").splitlines()
+            self.assertEqual(lines[0], str(outside))
+            self.assertIn("inside the Work root: no", lines)
+            self.assertIn("artifacts/ is not a symlink to this folder", lines)
+            (self.root / "artifacts").symlink_to(outside)
+            self.assertIn("artifacts/ is a symlink to this folder", self.ok("artifacts-dir", "--check").splitlines())
+        (self.root / "files").mkdir()
+        self.local("files")
+        self.assertIn("inside the Work root: yes", self.ok("artifacts-dir", "--check").splitlines())
+
+    def test_function_takes_the_root_explicitly(self) -> None:
+        spec = importlib.util.spec_from_file_location("work_config_artifacts_under_test", TOOL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.artifacts_dir(self.root), self.root / "artifacts")
+        self.local("globex-store")
+        self.assertEqual(module.artifacts_dir(self.root), self.root / "globex-store")
+        other = self.root / "other"
+        other.mkdir()
+        self.assertEqual(module.artifacts_dir(other), other / "artifacts")
+
+
 class ValidationTest(WorkConfigTestCase):
     def assert_rejected(self, value: object, message: str) -> None:
         self.write_json("work-config.local.json", value)

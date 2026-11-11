@@ -7,14 +7,15 @@
 
 Checks the required commands, the default brain (work_config.py) and the brains expected by its
 .data/local-paths.json (present, Git repository, upstream, unpushed commits), the local input folders
-named there, the JSON state files of every brain, and the local artifacts folder.
+named there, the JSON state files of every brain, and the artifacts folder (location from `work_config.artifacts_dir`: path, inside the Work root or not,
+symlink status, files no repository backs up).
 It also checks the skill configuration (valid layers, changed since the last
 update.sh, skills of skills-lock.json no layer knows, enabled third-party skills not
 installed, broken or orphan links in .agents/skills and .claude/skills, real folders of
 .agents/skills that are neither an enabled third-party skill nor a generated copy) and, for each
 brain, its boundary declaration .data/brain.json (fields filled in; Git remote and
 effective user.email matching the declared patterns).
-It never fetches, pulls, writes, or prints the configured paths; the skill links
+It never fetches, pulls or writes, and prints no configured path but the artifacts folder; the skill links
 themselves are checked by tools/machine/check-links.sh.
 
 Run from the Work root with `uv run tools/machine/doctor.py`. Set WORK_DIR to check
@@ -222,12 +223,29 @@ def leftover_checks(third_party: dict, unadopted: list[str]) -> None:
 
 
 def artifacts_checks() -> None:
-    artifacts = WORK / "artifacts"
-    if not artifacts.is_dir():
-        report("WARN", "artifacts/ missing")
+    """Where the artifacts folder is (the `artifactsDir` setting, else artifacts/) and what it holds."""
+    try:
+        artifacts = work_config.artifacts_dir(WORK)
+    except work_config.ConfigError as error:
+        report("ERROR", str(error))
         return
+    configured = artifacts != WORK / work_config.ARTIFACTS
+    inside = artifacts.resolve().is_relative_to(WORK)
+    where = "inside the Work root" if inside else "outside the Work root"
+    source = "artifactsDir of work-config.local.json" if configured else "default location"
+    if not artifacts.is_dir():
+        report("WARN" if not artifacts.exists() else "ERROR", f"artifacts folder {'missing' if not artifacts.exists() else 'is not a directory'}: {artifacts} ({source}, {where}) — tools/machine/bootstrap.sh creates it")
+        return
+    link = WORK / work_config.ARTIFACTS
+    if artifacts.is_symlink():
+        symlink = f"symlink to {artifacts.resolve()}"
+    elif not inside and link.is_symlink():
+        symlink = f"artifacts/ is a symlink to {'it' if link.resolve() == artifacts.resolve() else 'another folder'}"
+    else:
+        symlink = "not a symlink"
+    report("INFO", f"artifacts folder: {artifacts} ({source}, {where}, {symlink})")
     files = sum(1 for p in artifacts.rglob("*") if p.is_file() and p.name not in {".DS_Store", "README.md"})
-    report("INFO", f"artifacts/: {files} local file(s), backed up by no repository — plan a backup")
+    report("INFO", f"artifacts folder: {files} local file(s), backed up by no repository — plan a backup")
 
 
 def main() -> None:

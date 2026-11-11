@@ -438,6 +438,55 @@ class ArtifactsProtectionTest(GuardTestCase):
         self.assert_allowed("rm -rf repos/x", cwd=work)
 
 
+class RelocatedArtifactsTest(GuardTestCase):
+    """`artifactsDir` in work-config.local.json moves the protected folder; artifacts/ stays protected."""
+
+    def work_root(self, name: str, setting: object = None, raw: str | None = None) -> Path:
+        work = self.home / name
+        (work / "tools/machine").mkdir(parents=True)
+        (work / "tools/machine/work_config.py").write_text("# fictitious\n", encoding="utf-8")
+        (work / "artifacts").mkdir()
+        if raw is not None:
+            (work / "work-config.local.json").write_text(raw, encoding="utf-8")
+        elif setting is not None:
+            (work / "work-config.local.json").write_text(json.dumps({"version": 1, "artifactsDir": setting}), encoding="utf-8")
+        return work
+
+    def test_absolute_setting_is_protected_and_the_default_still_is(self) -> None:
+        moved = self.home / "synced-globex"
+        (moved / "acme-report").mkdir(parents=True)
+        work = self.work_root("moved-work", str(moved))
+        self.assert_blocked(f"rm -rf {moved}/acme-report", ARTIFACTS_MESSAGE, cwd=work)
+        self.assert_blocked(f"mv {moved}/acme-report /tmp/y", ARTIFACTS_MESSAGE, cwd=work)
+        self.assert_blocked("cd %s && rm -rf *" % moved, ARTIFACTS_MESSAGE, cwd=work)
+        self.assert_blocked(f"rm -rf {moved}", ARTIFACTS_MESSAGE, cwd=work)
+        self.assert_allowed(f"mv {moved}/acme-report {moved}/archive/", cwd=work)
+        self.assert_blocked("rm -rf artifacts/x", ARTIFACTS_MESSAGE, cwd=work)
+        self.assert_allowed("rm -rf repos/x", cwd=work)
+
+    def test_relative_and_tilde_settings(self) -> None:
+        work = self.work_root("relative-work", "../globex-store")
+        self.assert_blocked(f"rm -rf {self.home}/globex-store/x", ARTIFACTS_MESSAGE, cwd=work)
+        tilde = self.work_root("tilde-work", "~/acme-sync")
+        self.assert_blocked(f"rm -rf {self.home}/acme-sync/x", ARTIFACTS_MESSAGE, cwd=tilde)
+        self.assert_blocked("rm -rf ~/acme-sync", ARTIFACTS_MESSAGE, cwd=tilde)
+        self.assert_allowed(f"rm -rf {self.home}/acme-other/x", cwd=tilde)
+
+    def test_the_setting_is_read_at_each_run(self) -> None:
+        work = self.work_root("rereading-work")
+        self.assert_allowed(f"rm -rf {self.home}/initech-store/x", cwd=work)
+        (work / "work-config.local.json").write_text(json.dumps({"version": 1, "artifactsDir": str(self.home / "initech-store")}), encoding="utf-8")
+        self.assert_blocked(f"rm -rf {self.home}/initech-store/x", ARTIFACTS_MESSAGE, cwd=work)
+
+    def test_an_unreadable_setting_falls_back_to_the_default_folder(self) -> None:
+        cases = {"broken-json": "{not json", "wrong-type": json.dumps({"artifactsDir": 3}), "empty": json.dumps({"artifactsDir": ""}), "list": "[1]"}
+        for name, raw in cases.items():
+            with self.subTest(case=name):
+                work = self.work_root(f"fallback-{name}", raw=raw)
+                self.assert_blocked("rm -rf artifacts/x", ARTIFACTS_MESSAGE, cwd=work)
+                self.assert_allowed("rm -rf repos/x", cwd=work)
+
+
 class NoHookBypassTest(GuardTestCase):
     def test_bypassing_the_git_hooks_is_blocked(self) -> None:
         for command in HOOKS_BLOCKED:

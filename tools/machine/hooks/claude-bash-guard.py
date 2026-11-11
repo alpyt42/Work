@@ -12,7 +12,9 @@ also exits 0 (with a short note on stderr): the guard never breaks the session.
 1. No direct Python: `python`, `python3`, `python3.N` in command position, also behind wrappers (`env`,
    `sudo`, `xargs`...), env assignments, shell keywords, substitutions and `bash -c` strings. `uv run ...`
    is allowed, and so is any mention that is not a command (arguments, quoted text, heredoc bodies).
-2. Nothing deleted or moved out of `artifacts/` (`rm`, `rmdir`, `unlink`, `trash`, `shred`, `git rm`,
+2. Nothing deleted or moved out of `artifacts/` or of the folder that `"artifactsDir"` names in
+   `<Work root>/work-config.local.json` (read at each run; `<Work root>/artifacts` stays protected
+   whatever the setting says, and when the setting cannot be read) (`rm`, `rmdir`, `unlink`, `trash`, `shred`, `git rm`,
    `git clean`, `find -delete`, `rsync --delete`, `mv`): a target inside `artifacts/`, or a folder that
    contains it, is refused. `mv` into `artifacts/archive/` is allowed. The Work root is
    `$CLAUDE_PROJECT_DIR`, else the nearest parent of `cwd` holding `tools/machine/work_config.py`.
@@ -452,12 +454,31 @@ class Context:
             self._work = found
         return self._work or None
 
+    @staticmethod
+    def configured_artifacts(work: str) -> str | None:
+        """The `artifactsDir` setting as an absolute path; None when absent or unreadable (never raises)."""
+        try:
+            with open(work + "/work-config.local.json", encoding="utf-8") as handle:
+                value = json.load(handle).get("artifactsDir")
+            if not isinstance(value, str) or not value.strip() or "\0" in value:
+                return None
+            value = os.path.expanduser(value)
+            return os.path.normpath(value if os.path.isabs(value) else work + "/" + value)
+        except Exception:
+            return None
+
     def artifacts(self) -> tuple[list[list[str]], list[list[str]]]:
-        """Component lists of artifacts/ and of artifacts/archive/ (lexical and real path)."""
+        """Component lists of the protected folders and of their archive/ (lexical and real path).
+
+        Protected: `<Work root>/artifacts` always, plus the `artifactsDir` of work-config.local.json.
+        """
         if self._artifacts is None:
             work = self.work()
-            lexical = os.path.normpath(work + "/artifacts") if work else None
-            paths = list(dict.fromkeys((lexical, os.path.realpath(lexical)))) if lexical else []
+            lexicals = [os.path.normpath(work + "/artifacts")] if work else []
+            configured = self.configured_artifacts(work) if work else None
+            if configured:
+                lexicals.append(configured)
+            paths = list(dict.fromkeys(p for lexical in lexicals for p in (lexical, os.path.realpath(lexical))))
             self._artifacts = ([parts(p) for p in paths], [parts(p) + ["archive"] for p in paths])
         return self._artifacts
 

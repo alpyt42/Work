@@ -87,6 +87,14 @@ class ClientNameScanTest(WorkFolder):
         self.assertIn("in notes/a.md: globex", result.stderr)
         self.assertNotIn("asso", result.stderr)
 
+    def test_an_archived_client_stays_protected_and_the_archive_folder_is_no_client(self) -> None:
+        write(self.default / "projects/clients/archive/initech/initech.md", "# initech\n")
+        write(self.perso / "notes/a.md", "Initech closed; see the archive of old projects.\n")
+        result = self.scan("--worktree")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("in notes/a.md: initech", result.stderr)
+        self.assertNotIn(": archive", result.stderr)
+
     def test_dashed_spelling_and_file_names_are_scanned(self) -> None:
         write(self.perso / "notes/acme-corp.md", "nothing\n")
         write(self.perso / "notes/b.md", "see (acme-corp).\n")

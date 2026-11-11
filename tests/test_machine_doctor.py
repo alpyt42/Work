@@ -66,6 +66,40 @@ class MachineDoctorTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("expected brain missing: brain-perso/", result.stdout)
 
+    def test_artifacts_folder_is_reported_at_its_default_location(self) -> None:
+        (self.work / "artifacts/acme-report").mkdir()
+        (self.work / "artifacts/acme-report/deck.pptx").write_text("x", encoding="utf-8")
+        (self.work / "artifacts/acme-report/README.md").write_text("x", encoding="utf-8")
+        result = self.run_doctor()
+        self.assertIn(f"INFO: artifacts folder: {self.work}/artifacts (default location, inside the Work root, not a symlink)", result.stdout)
+        self.assertIn("INFO: artifacts folder: 1 local file(s), backed up by no repository", result.stdout)
+
+    def test_relocated_artifacts_folder_is_reported_and_checked(self) -> None:
+        synced = self.home / "globex-sync/artifacts"
+        synced.mkdir(parents=True)
+        (synced / "deck.pptx").write_text("x", encoding="utf-8")
+        (synced / "other.pptx").write_text("x", encoding="utf-8")
+        self.write_local({"version": 1, "artifactsDir": str(synced)})
+        result = self.run_doctor()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f"artifacts folder: {synced} (artifactsDir of work-config.local.json, outside the Work root, not a symlink)", result.stdout)
+        self.assertIn("artifacts folder: 2 local file(s), backed up by no repository", result.stdout)
+        (self.work / "artifacts").rmdir()
+        (self.work / "artifacts").symlink_to(synced)
+        self.assertIn("artifacts/ is a symlink to it", self.run_doctor().stdout)
+
+    def test_missing_relocated_artifacts_folder_is_reported(self) -> None:
+        self.write_local({"version": 1, "artifactsDir": "~/acme-missing"})
+        result = self.run_doctor()
+        self.assertIn("artifacts folder missing:", result.stdout)
+        self.assertIn("artifactsDir of work-config.local.json", result.stdout)
+
+    def test_invalid_artifacts_setting_is_an_error(self) -> None:
+        self.write_local({"version": 1, "artifactsDir": 3})
+        result = self.run_doctor()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ERROR: work-config.local.json: artifactsDir", result.stdout)
+
     def make_brain(self, name: str) -> Path:
         brain = self.work / name
         (brain / ".data").mkdir(parents=True)

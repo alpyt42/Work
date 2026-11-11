@@ -11,6 +11,17 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --quiet --no-project \"$CLAUDE_PROJECT_DIR/tools/machine/hooks/claude-session-start.py\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

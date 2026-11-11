@@ -6,7 +6,8 @@ names of EVERY brain at the Work root (folders named `brain` or `brain-<name>`, 
 default brain included), because the public repository must never carry a name from a
 private brain. A brain contributes:
 
-- its client folders (`projects/clients/<name>/`, except `_*`) and its people pages
+- its client folders (`projects/clients/<name>/` and the archived `projects/clients/archive/<name>/`, except `_*`)
+  and its people pages
   (`people/<name>.md`, except `_*` and README), with dashes also read as spaces;
 - the suffix of its folder (`acme` for `brain-acme`, with the same dash/space forms),
   unless its `.data/brain.json` declares `"scope": "personal"`. A missing, empty or
@@ -19,7 +20,7 @@ fresh starter clone can still commit.
 
 Brain mode (`--brain DIR`): scan the Git repository of one brain against the
 client names of the OTHER brains of the same Work root. A brain is a trust
-boundary: the client folders of another brain (`<other>/projects/clients/<name>/`)
+boundary: the client folders of another brain (`<other>/projects/clients/<name>/`, archived ones included)
 must not appear in its paths or content, except the names listed in the `allow`
 field of its own `.data/brain.json`.
 
@@ -101,6 +102,15 @@ def folder_suffix(brain: Path) -> str:
     return brain.name.removeprefix("brain-") if BRAIN_NAME.fullmatch(brain.name) and brain.name != "brain" else ""
 
 
+def client_folders(brain: Path) -> list[Path]:
+    """The client folders of one brain: `projects/clients/<name>/` and the archived `projects/clients/archive/<name>/`
+    (the `archive/` folder itself is not a client), `_*` folders excepted."""
+    clients = brain / "projects/clients"
+    shelves = [clients, clients / "archive"]
+    return [path for shelf in shelves if shelf.is_dir() for path in sorted(shelf.iterdir())
+            if path.is_dir() and not path.name.startswith("_") and not (shelf == clients and path.name == "archive")]
+
+
 def brain_names(brain: Path) -> set[str]:
     """The names one brain keeps out of the public repository, casefolded, of 4 characters or more.
 
@@ -108,11 +118,9 @@ def brain_names(brain: Path) -> set[str]:
     (the employer or client the brain is named after).
     """
     found: set[str] = set()
-    clients, people = brain / "projects/clients", brain / "people"
-    if clients.is_dir():
-        for path in clients.iterdir():
-            if path.is_dir() and not path.name.startswith("_"):
-                found |= forms(path.name)
+    people = brain / "people"
+    for path in client_folders(brain):
+        found |= forms(path.name)
     if people.is_dir():
         for path in people.glob("*.md"):
             if not path.name.startswith("_") and path.name.casefold() != "readme.md":
@@ -140,15 +148,11 @@ def other_brains(brain: Path) -> list[Path]:
 
 def client_names(brain: Path) -> dict[str, str]:
     """Client folder names of one brain, same normalisation as `names()`, mapped to the brain's name."""
-    clients = brain / "projects/clients"
     found: dict[str, str] = {}
-    if not clients.is_dir():
-        return found
-    for path in clients.iterdir():
-        if path.is_dir() and not path.name.startswith("_"):
-            for form in forms(path.name):
-                if len(form) >= 4:
-                    found[form] = brain.name
+    for path in client_folders(brain):
+        for form in forms(path.name):
+            if len(form) >= 4:
+                found[form] = brain.name
     return found
 
 

@@ -23,7 +23,15 @@ The default brain, the one the tools act on when none is named, is chosen by
 absent from the root, is an error), else (2) `brain/` when it is a brain, else (3) the
 only brain at the root, else none. The other tools reuse this function.
 
-Commands: check, list-brains, default-brain, list-own, list-third-party, list-catalog,
+The artifacts folder is located by `artifacts_dir(root)`: (1) `"artifactsDir": "<path>"` in
+`work-config.local.json` (the only layer that accepts it, like `defaultBrain`: where the folder
+lives is a choice of one machine; an absolute path, or relative to the Work root, `~` expanded),
+else (2) `<root>/artifacts`. The other tools reuse this function. `check` also verifies that a
+configured folder exists and is a directory. `artifacts-dir` prints the resolved absolute path
+(`--check` adds the checks and, for a folder outside the Work root, whether `<root>/artifacts` is
+a symlink to it).
+
+Commands: check, list-brains, default-brain, artifacts-dir, list-own, list-third-party, list-catalog,
 lock, adopt, stamp, status. `default-brain` prints the folder name of the default brain
 (nothing and exit 1 when there is none). `lock` writes the ignored skills-lock.json and refuses to overwrite
 entries that no layer knows (installed with `npx skills add`): `adopt` records them
@@ -50,6 +58,7 @@ LOCAL = ROOT / "work-config.local.json"
 LOCK = ROOT / "skills-lock.json"
 STATE = ROOT / ".work-state.json"
 DEFAULT_BRAIN = "brain"
+ARTIFACTS = "artifacts"
 BRAIN_NAME = re.compile(r"^brain(-[a-z0-9][a-z0-9-]*)?$")
 SKILL_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 ENTRY_KEYS = ("source", "sourceType", "skillPath", "computedHash")
@@ -136,6 +145,56 @@ def default_brain(root: Path) -> Path | None:
     return found[0] if len(found) == 1 else None
 
 
+def check_artifacts_value(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value.strip() or "\0" in value:
+        raise ConfigError(f"{label}: artifactsDir must be a non-empty path (absolute or relative to the Work root)")
+    return value
+
+
+def artifacts_dir(root: Path) -> Path:
+    """The absolute artifacts folder of a Work root (not resolved through symlinks, not checked to exist).
+
+    `"artifactsDir"` in `<root>/work-config.local.json` (absolute, or relative to `root`, `~` expanded;
+    ConfigError if invalid), else `<root>/artifacts`.
+    """
+    local = root / LOCAL.name
+    data = read_json(local) if local.is_file() else None
+    if isinstance(data, dict) and "artifactsDir" in data:
+        text = check_artifacts_value(data["artifactsDir"], f"{LOCAL.name}: artifactsDir")
+        path = Path(text).expanduser()
+        return Path(os.path.normpath(path if path.is_absolute() else root / path))
+    return root / ARTIFACTS
+
+
+def artifacts_problems(root: Path) -> list[str]:
+    """Problems with a configured artifacts folder (empty when it is the default, or fine)."""
+    local = root / LOCAL.name
+    data = read_json(local) if local.is_file() else None
+    if not (isinstance(data, dict) and "artifactsDir" in data):
+        return []
+    path = artifacts_dir(root)
+    if not path.exists():
+        return [f"{LOCAL.name}: artifactsDir {path} does not exist"]
+    if not path.is_dir():
+        return [f"{LOCAL.name}: artifactsDir {path} is not a directory"]
+    return []
+
+
+def artifacts_notes(root: Path) -> list[str]:
+    """Where the folder is, and for a folder outside the Work root whether `<root>/artifacts` points to it."""
+    path = artifacts_dir(root)
+    inside = path.resolve().is_relative_to(root.resolve())
+    notes = [f"artifacts folder: {path}", f"inside the Work root: {'yes' if inside else 'no'}"]
+    if not inside:
+        link = root / ARTIFACTS
+        if link.is_symlink():
+            same = link.resolve() == path.resolve()
+            notes.append(f"{ARTIFACTS}/ is a symlink to {'this folder' if same else 'another folder'}")
+        else:
+            notes.append(f"{ARTIFACTS}/ is not a symlink to this folder")
+    return notes
+
+
 def discover_brains(root: Path = ROOT) -> list[Path]:
     """Brains at the Work root: the default brain first, then the others by name."""
     default = default_brain(root)
@@ -160,7 +219,7 @@ def check_entry(entry: Any, label: str) -> dict[str, Any]:
 def parse_layer(data: Any, label: str, local: bool = False) -> tuple[dict[str, dict[str, Any]], list[str]]:
     """Validate one layer; return its third-party entries and disabled names.
 
-    `defaultBrain` is a choice of one machine: only the local layer accepts it.
+    `defaultBrain` and `artifactsDir` are choices of one machine: only the local layer accepts them.
     """
     if not isinstance(data, dict) or data.get("version") != 1:
         raise ConfigError(f"{label}: must be an object with version 1")
@@ -168,7 +227,11 @@ def parse_layer(data: Any, label: str, local: bool = False) -> tuple[dict[str, d
         if not local:
             raise ConfigError(f"{label}: defaultBrain is only accepted in {LOCAL.name}")
         check_brain_name(data["defaultBrain"], f"{label}: defaultBrain")
-    unknown = sorted(set(data) - {"version", "skills"} - ({"defaultBrain"} if local else set()))
+    if "artifactsDir" in data:
+        if not local:
+            raise ConfigError(f"{label}: artifactsDir is only accepted in {LOCAL.name}")
+        check_artifacts_value(data["artifactsDir"], f"{label}: artifactsDir")
+    unknown = sorted(set(data) - {"version", "skills"} - ({"defaultBrain", "artifactsDir"} if local else set()))
     if unknown:
         raise ConfigError(f"{label}: unknown key(s): {', '.join(unknown)}")
     skills = data.get("skills", {})
@@ -348,6 +411,8 @@ def main() -> int:
         ("status", "exit 1 when the configuration changed since the last stamp"),
     ):
         sub.add_parser(name, help=text)
+    artifacts_parser = sub.add_parser("artifacts-dir", help="absolute path of the artifacts folder (the artifactsDir setting, else <Work root>/artifacts)")
+    artifacts_parser.add_argument("--check", action="store_true", help="also verify it exists and say where it is (exit 1 on a problem)")
     adopt_parser = sub.add_parser("adopt", help="record the skills of skills-lock.json unknown to every layer")
     adopt_parser.add_argument("--brain", default=None, help="brain that receives them (default: the default brain)")
     args = parser.parse_args()
@@ -362,8 +427,23 @@ def main() -> int:
                 return 1
             print(brain.name)
             return 0
+        if args.command == "artifacts-dir":
+            if not args.check:
+                print(artifacts_dir(ROOT))
+                return 0
+            problems = artifacts_problems(ROOT)
+            if not problems and not artifacts_dir(ROOT).is_dir():
+                problems = [f"{artifacts_dir(ROOT)} does not exist"]
+            if problems:
+                raise ConfigError("; ".join(problems))
+            print(artifacts_dir(ROOT))
+            emit(artifacts_notes(ROOT))
+            return 0
         config = resolve()
         if args.command == "check":
+            problems = artifacts_problems(ROOT)
+            if problems:
+                raise ConfigError("; ".join(problems))
             print(
                 f"Work configuration OK: {len(config['own'])} own, {len(config['thirdParty'])} third-party, "
                 f"{len(config['disabled'])} disabled"

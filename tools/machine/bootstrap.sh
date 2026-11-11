@@ -30,7 +30,9 @@ while IFS= read -r brain; do
   fi
 done <<< "$brains"
 
-mkdir -p repos/personal repos/sandbox repos/workspaces agents artifacts
+mkdir -p repos/personal repos/sandbox repos/workspaces agents
+# The artifacts folder is where "artifactsDir" of work-config.local.json says (default: artifacts/).
+mkdir -p "$(uv run tools/machine/work_config.py artifacts-dir)"
 
 # Skills: validate the configuration, write the lock, install the third-party skills, expose everything.
 uv run tools/machine/work_config.py check
