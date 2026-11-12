@@ -1,0 +1,61 @@
+# Every push to main is tested, then released: the next SemVer tag comes from the Conventional Commits since the last
+# release (`!` or BREAKING CHANGE: major, feat: minor, anything else: patch), computed by tools/machine/work.py.
+# The machines update to a release only (`work.py update`, the Update button of the Actions app), never to main.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - name: Git identity of the test repositories
+        run: |
+          git config --global user.name "Work CI"
+          git config --global user.email "ci@example.invalid"
+          git config --global init.defaultBranch main
+      - name: Tests
+        run: uv run --with pytest --with markdown-it-py pytest tests/ -q
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - name: Next version
+        id: next
+        run: |
+          version=$(uv run tools/machine/work.py release --next --json | jq -r '.next // empty')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Next release: ${version:-none (no commit since the last release)}"
+      - name: Tag and publish
+        if: steps.next.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          uv run tools/machine/work.py release --notes > "$RUNNER_TEMP/notes.md"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$VERSION" -F "$RUNNER_TEMP/notes.md" "$GITHUB_SHA"
+          git push origin "refs/tags/$VERSION"
+          gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
