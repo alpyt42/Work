@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "defaultBrain": "brain-acme",
+  "artifactsDir": "artifacts",
+  "skills": {
+    "thirdParty": {},
+    "disabled": []
+  }
+}

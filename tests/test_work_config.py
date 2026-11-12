@@ -253,6 +253,28 @@ class DefaultBrainTest(WorkConfigTestCase):
         self.assertIn("brain-x", str(caught.exception))
 
 
+class ExampleFilesTest(WorkConfigTestCase):
+    """The two versioned examples at the root: the public defaults, and the template of the local file."""
+
+    REPO = Path(__file__).resolve().parents[1]
+
+    def test_the_local_template_is_a_valid_local_layer_with_every_machine_key(self) -> None:
+        template = json.loads((self.REPO / "work-config.local.example.json").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(template), ["artifactsDir", "defaultBrain", "skills", "version"])
+        self.make_brain("brain-acme")
+        (self.root / "artifacts").mkdir()
+        self.write_json("work-config.local.json", template)
+        self.ok("check")
+        self.assertEqual(self.ok("default-brain"), "brain-acme\n")
+        self.assertEqual(self.ok("artifacts-dir"), f"{self.root}/artifacts\n")
+
+    def test_the_public_defaults_carry_no_machine_key(self) -> None:
+        example = json.loads((self.REPO / "work-config.example.json").read_text(encoding="utf-8"))
+        self.assertFalse({"defaultBrain", "artifactsDir"} & set(example))
+        self.write_json("work-config.example.json", example)
+        self.ok("check")
+
+
 class ArtifactsDirTest(WorkConfigTestCase):
     """`artifacts_dir(root)`: the `artifactsDir` setting of the local layer, else `<root>/artifacts`."""
 

@@ -25,7 +25,7 @@ Portable agent instructions and tools for a `Work/` workspace. Reply in the user
 ## Skills and configuration
 
 - Own skills live in `<brain>/skills/<name>/` (a `.install-as-copy` marker installs a copy instead of a link). Third-party skills are listed in `<brain>/.data/work-config.json`; install one with `npx skills add <source>`, then record it with `uv run tools/machine/work_config.py adopt [--brain <name>]` (the default brain unless named).
-- Configuration layers, the last one winning: `work-config.example.json`, each brain's `.data/work-config.json`, then the ignored `work-config.local.json` for choices that concern one machine (for example disabling a skill, `"defaultBrain": "brain-<name>"` or `"artifactsDir": "<path>"`, which no other layer accepts). `uv run tools/machine/work_config.py check` validates them.
+- Configuration layers, the last one winning: `work-config.example.json`, each brain's `.data/work-config.json`, then the ignored `work-config.local.json` (template: `work-config.local.example.json`) for choices that concern one machine (for example disabling a skill, `"defaultBrain": "brain-<name>"` or `"artifactsDir": "<path>"`, which no other layer accepts). `uv run tools/machine/work_config.py check` validates them.
 - Codex discovers skills in `.agents/skills/`, Claude in `.claude/skills/`. Both are generated and ignored, like `skills-lock.json` and `.work-state.json`: never edit them, run `tools/machine/update.sh`. Do not create `.codex/skills/` or install skills globally.
 
 ## Keep repository boundaries
