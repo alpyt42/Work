@@ -44,6 +44,8 @@ TITLE = "Actions Brain"
 BUSY_ATTEMPTS = 25  # x DELAY: how long a busy port may take to become the actions server
 START_ATTEMPTS = 50  # x DELAY: how long a new server may take to answer
 DELAY = 0.2
+SHELL_PATH_TIMEOUT = 4.0  # seconds to read the login shell's PATH; a slow shell startup only costs that, once per start
+PATH_MARK = "__ACTIONS_PATH__="  # marks the PATH line among whatever the shell's startup files print
 # Windows process creation flags (subprocess has them only on Windows).
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 CREATE_NO_WINDOW = 0x08000000
@@ -139,6 +141,44 @@ def find_uv(environ: dict[str, str] | None = None, system: str | None = None, ho
     return None
 
 
+def login_shell_path(system: str | None = None, environ: dict[str, str] | None = None, timeout: float = SHELL_PATH_TIMEOUT) -> list[str]:
+    """The PATH of the user's interactive login shell (macOS, Linux); [] when it cannot be read.
+
+    An app started from the Dock or a desktop entry gets only the system folders (/usr/bin:/bin:…), so the tools that
+    Homebrew, nvm or the uv installer put elsewhere (uv, npx) would look missing to the server and the Settings view.
+    """
+    environ = os.environ if environ is None else environ
+    system = system or system_name()
+    if system == "windows":
+        return []
+    shell = environ.get("SHELL") or ("/bin/zsh" if system == "macos" else "/bin/sh")
+    try:
+        result = subprocess.run([shell, "-ilc", f'printf "\\n{PATH_MARK}%s\\n" "$PATH"'], stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True, timeout=timeout, env=dict(environ))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return []
+    for line in reversed(result.stdout.splitlines()):
+        if line.startswith(PATH_MARK):
+            return [part for part in line[len(PATH_MARK):].split(os.pathsep) if part]
+    return []
+
+
+def tool_path(environ: dict[str, str] | None = None, system: str | None = None, home: Path | None = None, uv: str | None = None,
+              shell_path=None) -> str:
+    """The PATH given to the server: the login shell's first, then the current one, the folder of uv and the usual
+    install places that exist (Homebrew, ~/.local/bin, ~/.cargo/bin, Volta), each folder once."""
+    environ = os.environ if environ is None else environ
+    system = system or system_name()
+    home = Path.home() if home is None else home
+    parts = [*(shell_path or login_shell_path)(system, environ), *environ.get("PATH", "").split(os.pathsep)]
+    if uv:
+        parts.append(str(Path(uv).parent))
+    if system != "windows":
+        usual = (home / ".local/bin", home / ".cargo/bin", home / ".volta/bin", Path("/opt/homebrew/bin"), Path("/usr/local/bin"))
+        parts += [str(folder) for folder in usual if folder.is_dir()]
+    return os.pathsep.join(dict.fromkeys(part for part in parts if part))
+
+
 def utf8_environment(base: dict[str, str] | None = None) -> dict[str, str]:
     """The environment with Python in UTF-8 mode, so the server's log and pipes are UTF-8 on every system."""
     environment = dict(os.environ if base is None else base)
@@ -146,9 +186,9 @@ def utf8_environment(base: dict[str, str] | None = None) -> dict[str, str]:
     return environment
 
 
-def start_detached(command: list[str], cwd: Path, log: Path) -> subprocess.Popen:
+def start_detached(command: list[str], cwd: Path, log: Path, environment: dict[str, str] | None = None) -> subprocess.Popen:
     """Start `command` so that it outlives this launcher and never holds its streams or its console."""
-    options: dict = {"cwd": cwd, "env": utf8_environment(), "stdin": subprocess.DEVNULL, "stderr": subprocess.STDOUT}
+    options: dict = {"cwd": cwd, "env": environment or utf8_environment(), "stdin": subprocess.DEVNULL, "stderr": subprocess.STDOUT}
     with open(log, "wb") as output:
         options["stdout"] = output
         if os.name != "nt":
@@ -183,6 +223,7 @@ def launch(port: int = PORT, work: Path = WORK, command: list[str] | None = None
                 return "opened"
             time.sleep(delay)
         raise LaunchError(f"Port {port} is already used by another application. Close it before starting Actions.")
+    uv = None
     if command is None:
         uv = find_uv()
         if uv is None:
@@ -190,8 +231,10 @@ def launch(port: int = PORT, work: Path = WORK, command: list[str] | None = None
         command = [uv, "run", str(work / SERVER_SCRIPT), "--port", str(port)]
     agents = work / "agents"
     agents.mkdir(parents=True, exist_ok=True)
+    environment = utf8_environment()
+    environment["PATH"] = tool_path(uv=uv)  # the tools of the user's terminal, even when the Dock started this launcher
     try:
-        process = start_detached(command, work, agents / "tasks-web.log")
+        process = start_detached(command, work, agents / "tasks-web.log", environment=environment)
     except OSError as error:
         raise LaunchError(f"Actions could not start: {error.strerror or error}.") from None
     (agents / "tasks-web.pid").write_text(f"{process.pid}\n", encoding="utf-8")

@@ -41,6 +41,7 @@ def load(name: str, path: Path):
 
 install = load("tasks_install_under_test", WEB / "install-app.py")
 launch = load("tasks_launch_under_test", WEB / "launch.py")
+REAL_LOGIN_SHELL_PATH = launch.login_shell_path  # LaunchTest patches it out; its own test calls the real one
 OSACOMPILE = Path("/usr/bin/osacompile")
 
 
@@ -397,9 +398,43 @@ class LaunchTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.work = Path(self.temp.name)
         self.opener = Mock(return_value=True)
+        shell = patch.object(launch, "login_shell_path", return_value=[])  # never the tester's own shell startup files
+        shell.start()
+        self.addCleanup(shell.stop)
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_the_server_gets_the_tools_of_the_login_shell_even_from_the_dock(self):
+        # A Dock or desktop launch has only the system folders: uv and npx, installed by Homebrew or nvm, would look missing.
+        home = self.work / "home"
+        (home / ".local/bin").mkdir(parents=True)
+        dock = {"PATH": "/usr/bin:/bin", "SHELL": "/bin/zsh"}
+        login = Mock(return_value=["/opt/acme/node/bin", "/usr/bin"])
+        path = launch.tool_path(dock, "macos", home, uv="/opt/fake/uv", shell_path=login)
+        parts = path.split(os.pathsep)
+        self.assertEqual(parts[:3], ["/opt/acme/node/bin", "/usr/bin", "/bin"])  # the shell's order first, each folder once
+        self.assertIn("/opt/fake", parts)
+        self.assertIn(str(home / ".local/bin"), parts)
+        self.assertNotIn(str(home / ".cargo/bin"), parts)  # only the usual places that exist
+        login.assert_called_once_with("macos", dock)
+        self.assertEqual(launch.tool_path({"PATH": "winbin"}, "windows", home, shell_path=login).split(os.pathsep)[-1], "winbin")  # no usual places added
+        # The launcher hands that PATH to the server it starts.
+        with patch.object(launch, "find_uv", return_value="/opt/fake/uv"), patch.object(launch, "tool_path", return_value="/x:/y") as tools, \
+                patch.object(launch, "start_detached", side_effect=OSError(2, "No such file or directory")) as start, \
+                self.assertRaises(launch.LaunchError):
+            launch.launch(free_port(), self.work, opener=self.opener)
+        tools.assert_called_once_with(uv="/opt/fake/uv")
+        self.assertEqual(start.call_args.kwargs["environment"]["PATH"], "/x:/y")
+        self.assertEqual(start.call_args.kwargs["environment"]["PYTHONUTF8"], "1")
+
+    def test_the_login_shell_path_is_read_between_marks_and_never_fails(self):
+        script = self.work / "fake-shell"
+        script.write_text('#!/bin/sh\necho "welcome banner"\nprintf "\\n__ACTIONS_PATH__=/opt/acme/bin:/usr/bin\\n"\n', encoding="utf-8")
+        script.chmod(0o755)
+        self.assertEqual(REAL_LOGIN_SHELL_PATH("linux", {"SHELL": str(script)}), ["/opt/acme/bin", "/usr/bin"])
+        self.assertEqual(REAL_LOGIN_SHELL_PATH("linux", {"SHELL": str(self.work / "missing-shell")}), [])
+        self.assertEqual(REAL_LOGIN_SHELL_PATH("windows", {}), [])
 
     def serve(self, handler) -> int:
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
