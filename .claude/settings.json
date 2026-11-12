@@ -10,6 +10,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --quiet --no-project \"$CLAUDE_PROJECT_DIR/tools/machine/hooks/claude-bash-guard.py\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "SessionStart": [

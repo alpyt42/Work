@@ -19,6 +19,11 @@ also exits 0 (with a short note on stderr): the guard never breaks the session.
    contains it, is refused. `mv` into `artifacts/archive/` is allowed. The Work root is
    `$CLAUDE_PROJECT_DIR`, else the nearest parent of `cwd` holding `tools/machine/work_config.py`.
 3. No Git hook bypass: `--no-verify`, `git commit -n`, `git -c core.hooksPath=...`.
+4. No write into `<Work root>/artifacts` while it is "unlinked": `artifactsDir` names another folder and
+   `artifacts/` is not a symlink (a real directory, or missing). Refused: the Write, Edit, MultiEdit and
+   NotebookEdit tools, and in Bash only write targets (destination of `cp`, `mv`, `rsync`, `ditto`,
+   `install`, `ln`; `>`, `>>`, `&>`, `>|`, `2>` redirections; `tee`, `mkdir` and `touch` arguments; the value
+   of `-o`, `--output`, `--out`, `--output-dir`, `--outdir`). Reads stay allowed. Otherwise the rule does nothing.
 
 The command is split by a small shell lexer (quotes, substitutions, heredocs, operators); nothing is
 executed or expanded, except `~`, `$HOME` and `$CLAUDE_PROJECT_DIR`. A target that cannot be resolved
@@ -36,6 +41,7 @@ from fnmatch import fnmatchcase
 MESSAGES = {
     "python": "Direct Python is not allowed in this workspace: run Python with `uv run <script>` (or `uv run python ...`, `uv run -m ...`), as AGENTS.md requires.",
     "artifacts": "artifacts/ is protected (AGENTS.md): an agent never deletes or moves anything out of artifacts/; moving into artifacts/archive/ is allowed; ask the owner for anything else.",
+    "unlinked": "",  # built by unlinked_message()
     "hooks": "The Git hooks are the workspace guardrails (AGENTS.md): do not bypass them with --no-verify, -n or core.hooksPath; fix what they report instead.",
 }
 
@@ -47,6 +53,8 @@ ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
 PYTHON = re.compile(r"python[0-9]*(\.[0-9]+)*")
 HOOKS_PATH = re.compile(r"(?i)core\.hookspath\b")
 REMOTE = re.compile(r"[^/]*:")
+FILE_TOOLS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
+OUTPUT_OPTS = {"-o", "--output", "--out", "--output-dir", "--outdir"}
 KNOWN_VARS = ("HOME", "CLAUDE_PROJECT_DIR")
 KEYWORDS = {"if", "then", "else", "elif", "while", "until", "do", "{", "}", "!", "coproc"}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
@@ -89,6 +97,15 @@ class Word:
 
     def __init__(self, text: str, glob: bool = False) -> None:
         self.text, self.glob = text, glob
+
+
+class Write:
+    """An output redirection target found by the lexer (`> file`)."""
+
+    __slots__ = ("word",)
+
+    def __init__(self, word: Word) -> None:
+        self.word = word
 
 
 class Buf:
@@ -159,7 +176,9 @@ class Lexer:
             if redirect is None:
                 words.append(word)
             else:
-                if redirect != "skip":
+                if redirect == "out":
+                    self.events.append(Write(word))
+                elif redirect != "skip":
                     heredocs.append((word.text, redirect == "strip"))
                 redirect = None
 
@@ -242,9 +261,10 @@ class Lexer:
                         j += 1
                     elif c == "<" and s[j : j + 1] == ">":
                         j += 1
+                    out = c != "<" and s[j : j + 1] != "&"  # `>&2` duplicates a descriptor
                     if s[j : j + 1] in ("&", "|"):
                         j += 1
-                    redirect = "skip"
+                    redirect = "out" if out else "skip"
                 self.i = j
             elif c == "~" and not buf.have and (i + 1 >= n or s[i + 1] in "/ \t\n;|&)"):
                 buf.lit(home())
@@ -431,6 +451,7 @@ class Context:
         self.depth = 0
         self._work: str | None = None
         self._artifacts: tuple[list[list[str]], list[list[str]]] | None = None
+        self._unlinked: tuple[str, str] | None | bool = False
 
     def hit(self, rule: str, detail: str) -> None:
         self.hits.setdefault(rule, " ".join(detail.split())[:80])
@@ -481,6 +502,49 @@ class Context:
             paths = list(dict.fromkeys(p for lexical in lexicals for p in (lexical, os.path.realpath(lexical))))
             self._artifacts = ([parts(p) for p in paths], [parts(p) + ["archive"] for p in paths])
         return self._artifacts
+
+    def unlinked(self) -> tuple[str, str] | None:
+        """(`<Work>/artifacts`, configured folder) while `artifactsDir` names another folder and `artifacts/` is not a symlink."""
+        if self._unlinked is False:
+            self._unlinked = None
+            try:
+                work = self.work()
+                configured = self.configured_artifacts(work) if work else None
+                art = os.path.normpath(work + "/artifacts") if work else ""
+                # A real directory or a missing one: a write would create or fill the wrong folder.
+                if configured and configured.lower() != art.lower() and not os.path.islink(art):
+                    self._unlinked = (art, configured)
+            except Exception:
+                self._unlinked = None
+        return self._unlinked or None
+
+    def written(self, path: str) -> None:
+        """Record a hit when the absolute path is `<Work>/artifacts` or below, in the unlinked state."""
+        state = self.unlinked()
+        if not state:
+            return
+        art, configured = state
+        path = os.path.normpath(path)
+        if path.lower() == art.lower() or path.lower().startswith(art.lower() + "/"):
+            rel = path[len(art) :].lstrip("/")
+            self.hits.setdefault("unlinked", configured + (("/" + rel) if rel else ""))
+
+    def write_target(self, word: Word | None, cwd: str | None) -> None:
+        """A path that the command writes to (never a read)."""
+        if word is None or not self.unlinked():
+            return
+        for text in expand_braces(word.text):
+            if "\0" in text.split("/", 1)[0]:
+                continue
+            text = text.replace("\0", "*")
+            if not text.startswith("/"):
+                if cwd is not None:
+                    text = cwd + "/" + text
+                elif text.split("/", 1)[0].lower() == "artifacts" and self.work():  # after an unknown `cd`
+                    text = self.work() + "/" + text
+                else:
+                    continue
+            self.written(text)
 
     def analyze(self, text: str, cwd: str | None) -> None:
         if self.depth >= 6:
@@ -656,6 +720,8 @@ def handle(words: list[Word], cwd: str | None, ctx: Context) -> str | None:
     if not words:
         return cwd
     name, args = basename(words[0].text), words[1:]
+    if ctx.unlinked():
+        writes(name, args, cwd, ctx)
     if PYTHON.fullmatch(name):
         ctx.hit("python", name)
     elif name in SHELLS:
@@ -684,6 +750,45 @@ def handle(words: list[Word], cwd: str | None, ctx: Context) -> str | None:
     elif name == "popd":
         return None
     return cwd
+
+
+def writes(name: str, args: list[Word], cwd: str | None, ctx: Context) -> None:
+    """The write targets of one command, for the unlinked-artifacts rule."""
+    targets: list[Word | None] = []
+    if name in ("cp", "mv", "install", "ln", "ditto"):
+        if name == "install":
+            args = [a for k, a in enumerate(args) if not (k and args[k - 1].text in ("-m", "-o", "-g", "--mode", "--owner", "--group"))]
+        targets = [mv_split(args)[1]] if name != "ditto" else list(positional(args)[1:][-1:])
+    elif name == "rsync":
+        pos = rsync_positional(args)
+        targets = list(pos[-1:]) if len(pos) >= 2 and not REMOTE.match(pos[-1].text) else []
+    elif name == "tee":
+        targets = list(positional(args))
+    elif name == "mkdir":
+        targets = list(positional(args, ("-m", "--mode")))
+    elif name == "touch":
+        targets = list(positional(args, ("-t", "-d", "-r", "--date", "--reference", "--time")))
+    for i, arg in enumerate(args):
+        text = arg.text
+        if text in OUTPUT_OPTS:
+            if i + 1 < len(args):
+                targets.append(args[i + 1])
+        elif text.startswith("--") and "=" in text and text.split("=", 1)[0] in OUTPUT_OPTS:
+            targets.append(Word(text.split("=", 1)[1], arg.glob))
+    for target in targets:
+        ctx.write_target(target, cwd)
+
+
+def rsync_positional(args: list[Word]) -> list[Word]:
+    pos, i = [], 0
+    while i < len(args):
+        text = args[i].text
+        if text in RSYNC_VALUE_OPTS:
+            i += 1
+        elif not (text.startswith("-") and len(text) > 1):
+            pos.append(args[i])
+        i += 1
+    return pos
 
 
 def mv_split(args: list[Word]) -> tuple[list[Word], Word | None]:
@@ -876,6 +981,8 @@ def run(events: list, cwd: str | None, ctx: Context) -> None:
                 stack.append(stack[-1])
             elif len(stack) > 1:
                 stack.pop()
+        elif isinstance(event, Write):
+            ctx.write_target(event.word, stack[-1])
         else:
             stack[-1] = handle(event, stack[-1], ctx)
 
@@ -889,9 +996,11 @@ def main() -> int:
     except ValueError:
         sys.stderr.write("claude-bash-guard: unreadable input, command not checked\n")
         return 0
-    if not isinstance(data, dict) or data.get("tool_name") not in (None, "Bash"):
+    if not isinstance(data, dict) or data.get("tool_name") not in (None, "Bash", *FILE_TOOLS):
         return 0
     tool_input = data.get("tool_input")
+    if data.get("tool_name") in FILE_TOOLS:
+        return check_file_tool(data, tool_input)
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
     if not isinstance(command, str) or not command.strip():
         return 0
@@ -904,8 +1013,43 @@ def main() -> int:
         sys.stderr.write(f"claude-bash-guard: error while checking ({type(exc).__name__}: {exc})\n")
     if not ctx.hits:
         return 0
-    reasons = " ".join(f"{MESSAGES[rule]} (matched: {ctx.hits[rule]})" for rule in MESSAGES if rule in ctx.hits)
+    reasons = " ".join(refusal(rule, ctx) for rule in MESSAGES if rule in ctx.hits)
     sys.stderr.write(f"claude-bash-guard blocked this command. {reasons}\n")
+    return 2
+
+
+def refusal(rule: str, ctx: Context) -> str:
+    if rule == "unlinked":
+        return unlinked_message(ctx)
+    return f"{MESSAGES[rule]} (matched: {ctx.hits[rule]})"
+
+
+def unlinked_message(ctx: Context) -> str:
+    state = ctx.unlinked()
+    configured = state[1] if state else "the configured folder"
+    return (
+        f"Work/artifacts/ is not linked yet to the artifacts folder of this Work ({configured}): "
+        f"write to {ctx.hits['unlinked']} instead (`uv run tools/machine/work_config.py artifacts-dir` prints the folder). "
+        "Linking artifacts/ is the owner's setup step artifacts-link (`uv run tools/machine/setup.py status`)."
+    )
+
+
+def check_file_tool(data: dict, tool_input: object) -> int:
+    """Write, Edit, MultiEdit, NotebookEdit: refuse a path in `<Work>/artifacts` while it is unlinked."""
+    path = tool_input.get(FILE_TOOLS[data["tool_name"]]) if isinstance(tool_input, dict) else None
+    if not isinstance(path, str) or not path.strip() or "\0" in path:
+        return 0
+    cwd = data.get("cwd")
+    cwd = os.path.normpath(cwd) if isinstance(cwd, str) and os.path.isabs(cwd) else os.getcwd()
+    ctx = Context(cwd)
+    try:
+        path = os.path.expanduser(path)
+        ctx.written(path if os.path.isabs(path) else cwd + "/" + path)
+    except Exception as exc:
+        sys.stderr.write(f"claude-bash-guard: error while checking ({type(exc).__name__}: {exc})\n")
+    if "unlinked" not in ctx.hits:
+        return 0
+    sys.stderr.write(f"claude-bash-guard blocked this tool call. {unlinked_message(ctx)}\n")
     return 2
 
 
