@@ -45,7 +45,8 @@ class SessionStartTest(unittest.TestCase):
         (self.brain / ".data").mkdir()
         (self.work / "tools/machine").mkdir(parents=True)
         (self.work / "tools/machine/work_config.py").write_text(WORK_CONFIG.read_text(encoding="utf-8"), encoding="utf-8")
-        (self.work / ".gitignore").write_text("brain-acme/\n", encoding="utf-8")
+        # Like the real Work: the hook imports work_config.py, which writes __pycache__/ unless PYTHONDONTWRITEBYTECODE is set (CI).
+        (self.work / ".gitignore").write_text("brain-acme/\n__pycache__/\n", encoding="utf-8")
         for repo in (self.work, self.brain):
             git(repo, "add", "-A")
             git(repo, "commit", "-q", "-m", "base")
