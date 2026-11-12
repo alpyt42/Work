@@ -54,9 +54,11 @@ prepare_brain() {
 
 # 1. Leave origin free for the user's own Work repository.
 origin="$(git remote get-url origin 2>/dev/null || true)"
-if [[ "$origin" == *Work-Starter* ]] && ! git remote get-url starter >/dev/null 2>&1; then
+# The public repository is alpyt42/Work on GitHub (formerly Work-Starter, whose URLs GitHub still redirects).
+public_repo='github\.com[:/]alpyt42/(Work|Work-Starter)(\.git)?/?$'
+if [[ "$origin" =~ $public_repo ]] && ! git remote get-url starter >/dev/null 2>&1; then
   git remote rename origin starter
-  echo "Remote 'origin' (Work-Starter) renamed 'starter'. Add your own with: git remote add origin <url>"
+  echo "Remote 'origin' (the public Work repository) renamed 'starter'. Add your own with: git remote add origin <url>"
 fi
 
 # 2. brain/ (unless another default brain is already here and no URL is given) and optional brain-perso/

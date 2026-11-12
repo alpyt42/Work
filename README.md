@@ -1,14 +1,14 @@
 <p align="center">
-  <img src="tools/tasks-web/static/icon.png" alt="Work-Starter app icon" width="96">
+  <img src="tools/tasks-web/static/icon.png" alt="Work app icon" width="96">
 </p>
 
-<h1 align="center">Work-Starter</h1>
+<h1 align="center">Work</h1>
 
 <p align="center">A workspace where your coding agent remembers each client's context and never mixes one with another.</p>
 
 <p align="center">
-  <a href="https://github.com/alpyt42/Work-Starter/releases"><img src="https://img.shields.io/github/v/release/alpyt42/Work-Starter" alt="Latest release"></a>
-  <a href="https://github.com/alpyt42/Work-Starter/actions/workflows/release.yml"><img src="https://github.com/alpyt42/Work-Starter/actions/workflows/release.yml/badge.svg" alt="Release workflow status"></a>
+  <a href="https://github.com/alpyt42/Work/releases"><img src="https://img.shields.io/github/v/release/alpyt42/Work" alt="Latest release"></a>
+  <a href="https://github.com/alpyt42/Work/actions/workflows/release.yml"><img src="https://github.com/alpyt42/Work/actions/workflows/release.yml/badge.svg" alt="Release workflow status"></a>
 </p>
 
 ## The problem
@@ -17,7 +17,7 @@
 - Loading whole project files fills the agent's context window.
 - With several clients on one machine, one client's data can end up in another's repository.
 
-Work-Starter is a portable `Work/` workspace that fixes this. Memory lives in private Markdown repositories called brains, one per trust boundary. Agents read them through small commands that return only the part a question needs. Git hooks keep the boundaries intact. A local app lets you read and edit the same files without an agent. The repository holds the tools, the shared conventions and the checks. It holds no client data.
+Work is a portable `Work/` workspace that fixes this. Memory lives in private Markdown repositories called brains, one per trust boundary. Agents read them through small commands that return only the part a question needs. Git hooks keep the boundaries intact. A local app lets you read and edit the same files without an agent. The repository holds the tools, the shared conventions and the checks. It holds no client data.
 
 ## Features
 
@@ -52,7 +52,7 @@ Work/
 Configure Git and SSH identities first (see [`tools/machine/GIT-IDENTITY.md`](tools/machine/GIT-IDENTITY.md)), then:
 
 ```bash
-git clone https://github.com/alpyt42/Work-Starter.git ~/Work
+git clone https://github.com/alpyt42/Work.git ~/Work
 ~/Work/tools/machine/install.sh --brain <private-brain-git-url> [--brain-perso <git-url|new>]
 ```
 
@@ -83,7 +83,7 @@ The rule README files in `repos/`, `artifacts/`, and `agents/` are tracked. Thei
 
 ### Set up a new machine
 
-`tools/machine/install.sh` (Quick start above) prepares the brains and runs `bootstrap.sh`. `--brain-perso <url|new>` adds the optional personal brain, `--no-bootstrap` stops before `bootstrap.sh`, and `--help` lists all options. The `origin` remote pointing to Work-Starter is renamed `starter`, so you can add your own. Work-Starter is public and read-only for everyone but its owner: clone, pull, or fork it, but changes are never pushed back. The brain conventions (`kit/brain/AGENTS.md`, `docs/`, `templates/`) live in this repository; a brain is a private repository that holds only your own data and points to them. Or do it by hand:
+`tools/machine/install.sh` (Quick start above) prepares the brains and runs `bootstrap.sh`. `--brain-perso <url|new>` adds the optional personal brain, `--no-bootstrap` stops before `bootstrap.sh`, and `--help` lists all options. The `origin` remote pointing to this public repository (`alpyt42/Work`, formerly Work-Starter) is renamed `starter`, so you can add your own. It is public and read-only for everyone but its owner: clone, pull, or fork it, but changes are never pushed back. The brain conventions (`kit/brain/AGENTS.md`, `docs/`, `templates/`) live in this repository; a brain is a private repository that holds only your own data and points to them. Or do it by hand:
 
 1. Configure Git and SSH identities yourself, outside this repository: one `~/.gitconfig-<boundary>` per trust boundary, included from `~/.gitconfig` by folder and by remote URL (template: `tools/machine/gitconfig.example`), and one `Host` block per single-account host in `~/.ssh/config`. Check a folder with `git -C <path> config --show-origin --get-regexp '^(user|core\.sshcommand)'`.
 2. Clone this repository as `Work/` (or copy it with a fresh history) using the Git identity meant for your personal tooling.
@@ -138,7 +138,7 @@ Client-specific configuration belongs in the `.data/` of the brain it concerns. 
 
 ### Update the starter
 
-Work updates by releases, not by pulling the tip of `main`. Every push to `main` of Work-Starter runs `.github/workflows/release.yml`: it tests on Linux, then publishes the next version, derived from the Conventional Commits since the last release (details in [`tools/machine/README.md`](tools/machine/README.md#publishing-a-release)). On your machine, in `Work/`:
+Work updates by releases, not by pulling the tip of `main`. Every push to `main` of the public repository runs `.github/workflows/release.yml`: it tests on Linux, then publishes the next version, derived from the Conventional Commits since the last release (details in [`tools/machine/README.md`](tools/machine/README.md#publishing-a-release)). On your machine, in `Work/`:
 
 ```bash
 uv run tools/machine/work.py update --check   # is a newer release available, and what would change

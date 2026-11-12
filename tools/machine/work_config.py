@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Resolve the Work skill configuration and keep the generated files in sync.
 
-Work-Starter ships no skill. Every brain (`brain/`, `brain-perso/`, `brain-<name>/`
+Work ships no skill. Every brain (`brain/`, `brain-perso/`, `brain-<name>/`
 holding an AGENTS.md and a .data/ folder) is a trust boundary that can hold:
 
 - its own skills, `<brain>/skills/<name>/SKILL.md`; a skill folder containing an
