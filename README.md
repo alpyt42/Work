@@ -1,10 +1,66 @@
-# Work
+<p align="center">
+  <img src="tools/tasks-web/static/icon.png" alt="Work-Starter app icon" width="96">
+</p>
 
-Portable configuration for a `Work/` workspace. This repository contains instructions, scripts, the conventions and templates shared by every brain, and setup checks. It contains no skill, client memory, deliverable, credential, or code clone, and no personal configuration.
+<h1 align="center">Work-Starter</h1>
 
-The industrialisation and release-update roadmap is tracked in [`MIGRATION-TODO.md`](MIGRATION-TODO.md).
+<p align="center">A workspace where your coding agent remembers each client's context and never mixes one with another.</p>
 
-## Layout
+<p align="center">
+  <a href="https://github.com/alpyt42/Work-Starter/releases"><img src="https://img.shields.io/github/v/release/alpyt42/Work-Starter" alt="Latest release"></a>
+  <a href="https://github.com/alpyt42/Work-Starter/actions/workflows/release.yml"><img src="https://github.com/alpyt42/Work-Starter/actions/workflows/release.yml/badge.svg" alt="Release workflow status"></a>
+</p>
+
+## The problem
+
+- Every new Claude Code or Codex session starts without the context of the last one.
+- Loading whole project files fills the agent's context window.
+- With several clients on one machine, one client's data can end up in another's repository.
+
+Work-Starter is a portable `Work/` workspace that fixes this. Memory lives in private Markdown repositories called brains, one per trust boundary. Agents read them through small commands that return only the part a question needs. Git hooks keep the boundaries intact. A local app lets you read and edit the same files without an agent. The repository holds the tools, the shared conventions and the checks. It holds no client data.
+
+## Features
+
+- **Private Markdown brains.** Each brain is its own Git repository and its own trust boundary, declared in `.data/brain.json` with the remote and e-mail it must use. Personal, employer and client data never share a repository. The repository ships no skill: skills live in the brains.
+- **Context on demand.** `brain-state.py` loads output, not files: `brief` for where a project stands, `find` for a term or an identifier, `section` for one heading of a page, `person` for someone and what they carry, `due` for late and upcoming actions, `changes` for what moved since a date. Agents never read a register or a project page whole.
+- **Action and decision registers.** `action.py` and `decision.py` write the registers, with length caps (35 words for a history entry, 40 for a timeline entry, 70 for a decision field). A commitment becomes an action only when four tests hold; otherwise it stays in the minutes or message where it was said.
+- **Project archiving.** `brain-state.py archive` moves a finished mission, project or client into an `archive/` folder, rewrites the links, and refuses while an action is still open. An archived project leaves every command and every view. `unarchive` is the exact inverse.
+- **A local Actions app.** `tasks-web.py` serves a browser interface on `127.0.0.1` with the views Today, Actions, Board, Timeline, Docs, Archives, Tools, Sync, Settings, and one search across actions and documents. A selector switches between brains. Sync saves and sends a brain's changed notes through its own Git hooks. It installs as an app on macOS, Windows and Linux (`install-app.py`).
+- **Guardrails.** Git hooks refuse staged secrets, the names of clients and people known to the other brains, malformed commit messages, dead or cross-brain links, and pushes with the wrong identity, a force push or a remote branch deletion. A Claude Code hook refuses direct `python`, deletions in the artifacts folder, hook bypasses and writes into an `artifacts/` folder not yet linked to the configured one. `preflight-push.py` runs before every push.
+- **Obsidian compatible.** Open `Work/` as the vault. Each brain's `tasks.md` shows the registers as Tasks queries and a kanban, with a form to add an action.
+- **Releases.** Every push to `main` is tested on Linux and released automatically from its Conventional Commits. Machines update to a release only, never to the tip of `main`, and an update never touches the brains.
+
+## How it works
+
+```
+Work/
+├── tools/          reusable scripts: brain/, machine/, repos/, tasks-web/
+├── kit/            conventions, guides, templates and seed shared by every brain
+├── brain/          private memory, its own Git repository
+├── brain-<name>/   one more brain per trust boundary, each its own repository
+├── repos/          code clones, each with its own repository
+├── artifacts/      human-readable outputs and large inputs, local only
+└── agents/         scratch space for agents
+```
+
+1. The agent gets a question about a client or a project.
+2. It runs a context command (`brain-state.py brief`, `find`, `section`, `person`).
+3. Only the part it needs enters the context window.
+
+## Quick start
+
+Configure Git and SSH identities first (see [`tools/machine/GIT-IDENTITY.md`](tools/machine/GIT-IDENTITY.md)), then:
+
+```bash
+git clone https://github.com/alpyt42/Work-Starter.git ~/Work
+~/Work/tools/machine/install.sh --brain <private-brain-git-url> [--brain-perso <git-url|new>]
+```
+
+Without `--brain`, a blank brain is created locally from `kit/brain/seed/`. The script never touches home configuration, never commits or pushes, and can be rerun safely. Details are under [Set up a new machine](#set-up-a-new-machine).
+
+## Reference
+
+### Layout
 
 | Path                                      | Role                                                                          | Git ownership                        |
 | ----------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------ |
@@ -25,16 +81,9 @@ Local to each machine and ignored: `.agents/` and `.claude/skills/` (skills expo
 
 The rule README files in `repos/`, `artifacts/`, and `agents/` are tracked. Their working contents are ignored. `artifacts/` is an ordinary local directory: there is no cloud link or automatic restore on a new machine.
 
-## Set up a new machine
+### Set up a new machine
 
-**Quick start.** Configure Git and SSH identities first (step 1 below, see [`tools/machine/GIT-IDENTITY.md`](tools/machine/GIT-IDENTITY.md)), clone this repository, then let `tools/machine/install.sh` prepare the brains and run `bootstrap.sh`:
-
-```bash
-git clone https://github.com/alpyt42/Work-Starter.git ~/Work
-~/Work/tools/machine/install.sh --brain <private-brain-git-url> [--brain-perso <git-url|new>]
-```
-
-Without `--brain`, a blank brain is created locally from `kit/brain/seed/` with `uv run tools/brain/new-brain.py` (fresh history, no remote). `--brain-perso <url|new>` adds the optional personal brain, `--no-bootstrap` stops before `bootstrap.sh`, and `--help` lists all options. The `origin` remote pointing to Work-Starter is renamed `starter`, so you can add your own; get later starter updates with `git pull starter main`. Work-Starter is public and read-only for everyone but its owner: clone, pull, or fork it, but changes are never pushed back. The brain conventions (`kit/brain/AGENTS.md`, `docs/`, `templates/`) live in this repository; a brain is a private repository that holds only your own data and points to them. The script never touches home configuration, never commits or pushes, and can be rerun safely. Or do it by hand:
+`tools/machine/install.sh` (Quick start above) prepares the brains and runs `bootstrap.sh`. `--brain-perso <url|new>` adds the optional personal brain, `--no-bootstrap` stops before `bootstrap.sh`, and `--help` lists all options. The `origin` remote pointing to Work-Starter is renamed `starter`, so you can add your own. Work-Starter is public and read-only for everyone but its owner: clone, pull, or fork it, but changes are never pushed back. The brain conventions (`kit/brain/AGENTS.md`, `docs/`, `templates/`) live in this repository; a brain is a private repository that holds only your own data and points to them. Or do it by hand:
 
 1. Configure Git and SSH identities yourself, outside this repository: one `~/.gitconfig-<boundary>` per trust boundary, included from `~/.gitconfig` by folder and by remote URL (template: `tools/machine/gitconfig.example`), and one `Host` block per single-account host in `~/.ssh/config`. Check a folder with `git -C <path> config --show-origin --get-regexp '^(user|core\.sshcommand)'`.
 2. Clone this repository as `Work/` (or copy it with a fresh history) using the Git identity meant for your personal tooling.
@@ -47,7 +96,7 @@ Without `--brain`, a blank brain is created locally from `kit/brain/seed/` with 
 
 `bootstrap.sh` needs Git and `uv`; `uv` runs the Python tools. Node.js (`npx`) is needed only when third-party skills are enabled. The brain remotes are intentionally not stored in this repository. Each brain's `.data/` is versioned with that brain. `artifacts/` starts empty on a new machine.
 
-## Brains and trust boundaries
+### Brains and trust boundaries
 
 A brain is a private Git repository at the Work root named `brain` or `brain-<name>` (for example `brain-perso`). The default brain, the one the tools act on when none is named, is the brain named by `"defaultBrain"` in the ignored `work-config.local.json`, else `brain/`, else the only brain at the root (`uv run tools/machine/work_config.py default-brain` prints it). Each one is a trust boundary: personal data goes in a brain pushed to a personal Git account, employer or client data in a brain pushed to the employer's Git. Create one from the seed and declare its boundary at once:
 
@@ -67,7 +116,7 @@ The new folder is a copy of `kit/brain/seed/` with a fresh Git repository on `ma
 
 Where data goes: each brain holds its own projects, people, actions, sources and skill states (`.data/`); the shared settings (expected `brains`, input folders) live in the default brain's `.data/local-paths.json`. Rules: no Markdown link from one brain to another and no client name of another brain in a brain's paths or content. `uv run tools/brain/check-links.py`, `check-no-client.py --brain` and the brain's pre-commit hook enforce both. Conventions: [`kit/brain/AGENTS.md`](kit/brain/AGENTS.md).
 
-## Skills
+### Skills
 
 This repository ships no skill. Each brain holds its own:
 
@@ -79,7 +128,7 @@ Configuration layers, the last one winning: `work-config.example.json` (public d
 
 Client-specific configuration belongs in the `.data/` of the brain it concerns. Credentials never go in a brain or in this repository: use the environment or an ignored `.env`.
 
-## Another computer
+### Another computer
 
 1. On the first machine, commit and push each brain yourself (a new skill, a changed `.data/work-config.json`).
 2. On the other machine, clone Work and every brain as in [Set up a new machine](#set-up-a-new-machine), or `git pull` in each existing one.
@@ -87,15 +136,22 @@ Client-specific configuration belongs in the `.data/` of the brain it concerns. 
 
 `uv run tools/machine/doctor.py` warns when the resolved configuration changed since the last `update.sh`, so a pulled brain that adds or removes a skill is never silent. `artifacts/` is not synchronised.
 
-## Update the starter
+### Update the starter
 
-In `Work/`, run `git pull starter main` (the `starter` remote is set by `install.sh`; otherwise `git remote add starter <url>`), then `tools/machine/update.sh`. The shared conventions, guides, templates, and tools follow; your brains, your configuration, and your local files are not touched.
+Work updates by releases, not by pulling the tip of `main`. Every push to `main` of Work-Starter runs `.github/workflows/release.yml`: it tests on Linux, then publishes the next version, derived from the Conventional Commits since the last release (details in [`tools/machine/README.md`](tools/machine/README.md#publishing-a-release)). On your machine, in `Work/`:
 
-## Repositories
+```bash
+uv run tools/machine/work.py update --check   # is a newer release available, and what would change
+uv run tools/machine/work.py update --apply --to vX.Y.Z   # fast-forward to that release, then run update.sh
+```
+
+The Update button of the Actions app does the same. The shared conventions, guides, templates, and tools follow; your brains, your configuration, and your local files are not touched. An update is blocked, with its reasons, by local commits, by modified files the release also changes, by a new major version, by a detached HEAD or by a missing upstream.
+
+### Repositories
 
 Client clone URLs are versioned in the private `.data/client-repos.json` of the default brain. Use `uv run tools/repos/client-repos.py list` to see them, `check` to compare existing `origin` URLs and show each clone's effective author and key, and `clone <client>` to recreate a client's clones. `clone` is a plain `git clone`: author and key come from the home rules of step 1, and the command refuses to clone when no rule gives an author for the destination. `--identity` and `--author-*` remain available for a one-off override written to the clone. This repository stores only the generic tool.
 
-## Obsidian
+### Obsidian
 
 Open `Work/` as the only Obsidian vault; the brains appear as folders inside it. The starter does not manage `.obsidian/`: it is ignored by Git and set by hand once per machine, following [`kit/obsidian/README.md`](kit/obsidian/README.md) (community plugins Tasks, Meta Bind, Templater and optionally Obsidian Git, the link and template settings, the task statuses, and the `tasks-board` CSS snippet in [`kit/obsidian/tasks-board.css`](kit/obsidian/tasks-board.css)).
 
@@ -105,9 +161,11 @@ Outside Obsidian, `uv run tools/brain/action.py board` prints a complete project
 
 Closed actions older than 30 days move to `state/actions-archive-YYYY.md` with `uv run tools/brain/action.py archive` (dry-run) then `--write`; agents run it without asking when the doctor flags them or at the start of a month. See [tools/brain/action.md](tools/brain/action.md).
 
-For a local browser interface, run `uv run tools/tasks-web/tasks-web.py` and open `http://127.0.0.1:8765/`: a sidebar with the views Today, Actions, Board, Timeline, Docs, Tools and Sync, a search field in the header that searches the actions and the documents, the **New action** and **New note** buttons, and a selector at the top left that switches between the brains of the Work without a restart. The Sync view shows one card per brain and, after a confirmation, saves its changed notes and sends them to the brain's own online copy, through the brain's Git hooks. On macOS, `./tools/tasks-web/build-dock-app.sh` creates an app that starts the server and opens the browser from the Dock. Both routes read and edit the same Markdown files; details are in [the local task manager guide](tools/tasks-web/README.md). The server binds only to `127.0.0.1` and publishes nothing by itself: a brain leaves this computer only when you click **Save and send** or **Send** in the Sync view.
+### The Actions app
 
-## Checks
+Run `uv run tools/tasks-web/tasks-web.py` and open `http://127.0.0.1:8765/`: a sidebar with the views Today, Actions, Board, Timeline, Docs, Archives, Tools, Sync and Settings, a search field in the header that searches the actions and the documents, the **New action** and **New note** buttons, and a selector at the top left that switches between the brains of the Work without a restart. The Sync view shows one card per brain and, after a confirmation, saves its changed notes and sends them to the brain's own online copy, through the brain's Git hooks. An **Update** button appears when a newer release exists. `uv run tools/tasks-web/install-app.py` installs an **Actions Brain** entry (macOS app, Windows Start Menu shortcut, Linux applications menu); on macOS, `./tools/tasks-web/build-dock-app.sh` runs the same installer. Both routes read and edit the same Markdown files; details are in [the local task manager guide](tools/tasks-web/README.md). The server binds only to `127.0.0.1` and publishes nothing by itself: a brain leaves this computer only when you click **Save and send** or **Send** in the Sync view.
+
+### Checks
 
 - `./tools/machine/check-links.sh` after moving files: skill configuration, links and copies, then the Markdown links of every brain (`uv run tools/brain/check-links.py` checks one brain; a link into another brain fails).
 - `uv run tools/machine/doctor.py` for the state of the machine (see step 8 above).
