@@ -144,6 +144,7 @@ const ICONS = {
   edit: '<path d="M3 13l.8-3.2L10.6 3a1.5 1.5 0 0 1 2.1 0l.3.3a1.5 1.5 0 0 1 0 2.1L6.2 12.2z"/><path d="M9.2 4.4l2.4 2.4"/>',
   up: '<path d="M8 12.5v-9M4.5 7 8 3.5 11.5 7"/>',
   archive: '<rect x="2.5" y="3" width="11" height="3" rx="1"/><path d="M3.5 6v6.5h9V6M6.5 8.75h3"/>',
+  more: '<circle cx="3.5" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.5" cy="8" r="1.1"/>',
   down: '<path d="M8 3.5v9M4.5 9 8 12.5 11.5 9"/>',
   // Markdown toolbar
   bold: '<path stroke-width="1.9" d="M4.75 3h3.5a2.25 2.25 0 0 1 0 4.5h-3.5zM4.75 7.5h4a2.5 2.5 0 0 1 0 5h-4z"/>',
@@ -483,6 +484,40 @@ function projectButton(scope, label, count, className = '') {
   button.addEventListener('click', () => setProjectScope(scope));
   return button;
 }
+// The "⋯" of a sidebar entry or of an archived one: a small menu in the popover of the status menu (arrows, Home, End, Esc back to
+// the button), also opened by a right click on the entry. `items()` gives [label, pick(button)] pairs; each pick runs the flow the rest
+// of the app has for it (`askArchive`: the dry run, then a confirmation).
+function entryMenu(entry, name, items) {
+  const button = iconButton('icon-button entry-more', `More actions for ${name}`, ICONS.more, 'More actions');
+  button.setAttribute('aria-haspopup', 'menu');
+  button.setAttribute('aria-expanded', 'false');
+  const open = () => openPopover(button, items().map(([label, pick]) => menuItem([element('span', 'menu-item-text', label)], () => pick(button))),
+    {label: `Actions for ${name}`});
+  button.addEventListener('click', event => {
+    event.stopPropagation();
+    if (popoverState?.anchor === button) closePopover(); else open();
+  });
+  for (const node of [entry, button]) node.addEventListener('contextmenu', event => { event.preventDefault(); event.stopPropagation(); open(); });
+  return button;
+}
+// A project or mission offers "New action…" (the + of its header in Actions) and "Archive…"; a client "Archive…" (the whole client).
+// "All projects" and the Internal folder have no menu: nothing to archive there.
+function projectMenuItems(scope) {
+  const target = scopeArchive(scope);
+  if (!target) return null;
+  return [
+    ...(target.kind === 'project' ? [['New action…', () => openEditor(null, {register: scope})]] : []),
+    ['Archive…', button => askArchive('archive', target.folder, target.label, button)]
+  ];
+}
+function projectEntry(scope, label, count, className = '') {
+  const button = projectButton(scope, label, count, className);
+  const items = projectMenuItems(scope);
+  if (!items) return button;
+  const row = element('div', 'project-row');
+  row.append(button, entryMenu(button, scopeLabel(scope) || label, () => items)); // a mission is named with its client
+  return row;
+}
 function renderProjectNav() {
   const counts = new Map();
   for (const action of snapshot.actions) if (!closed(action)) counts.set(action.register, (counts.get(action.register) || 0) + 1);
@@ -493,13 +528,13 @@ function renderProjectNav() {
   for (const parent of projectTree()) {
     const item = element('li');
     if (parent.children.length === 1 && parent.children[0].key === parent.key) {
-      item.append(projectButton(parent.key, parent.label, counts.get(parent.key) || 0));
+      item.append(projectEntry(parent.key, parent.label, counts.get(parent.key) || 0));
     } else {
-      item.append(projectButton(parent.key, parent.label, parent.children.reduce((sum, child) => sum + (counts.get(child.key) || 0), 0)));
+      item.append(projectEntry(parent.key, parent.label, parent.children.reduce((sum, child) => sum + (counts.get(child.key) || 0), 0)));
       const list = element('ul');
       for (const child of parent.children) {
         const entry = element('li');
-        entry.append(projectButton(child.key, child.label, counts.get(child.key) || 0, 'project-child'));
+        entry.append(projectEntry(child.key, child.label, counts.get(child.key) || 0, 'project-child'));
         list.append(entry);
       }
       item.append(list);
@@ -2858,7 +2893,8 @@ function archiveListItem(item) {
   meta.append(element('span', '', archiveCounts(item.counts)));
   button.append(element('span', 'doc-item-title', archiveName(item)), meta);
   button.addEventListener('click', () => openArchive(item.folder));
-  li.append(button);
+  li.className = 'archive-entry';
+  li.append(button, entryMenu(button, archiveName(item), () => [['Unarchive…', anchor => askArchive('unarchive', item.folder, archiveName(item), anchor)]]));
   return li;
 }
 function renderArchiveList() {

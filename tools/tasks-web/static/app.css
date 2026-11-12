@@ -196,6 +196,16 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
   border: 0; border-radius: var(--radius-control); background: transparent; color: var(--text); text-align: left; font-size: var(--fs-sm);
 }
 .project-item:hover { background: var(--bg-sunken); }
+/* The "⋯" of an entry (sidebar projects and clients, archived entries): on hover and keyboard focus, always on a touch screen. */
+.project-row { display: flex; align-items: center; gap: 2px; }
+.project-row .project-item { flex: 1 1 auto; min-width: 0; }
+.entry-more { flex: none; width: 24px; height: 24px; opacity: 0; }
+.entry-more circle { fill: currentColor; stroke: none; }
+.project-row:hover .entry-more, .project-row:focus-within .entry-more, .archive-entry:hover .entry-more, .archive-entry:focus-within .entry-more,
+.entry-more[aria-expanded="true"] { opacity: 1; }
+.archive-entry { position: relative; }
+.archive-entry .archive-item { padding-right: 40px; }
+.archive-entry .entry-more { position: absolute; top: 8px; right: 10px; }
 .project-item .nav-label { color: inherit; }
 .project-child { padding-left: 22px; color: var(--text-muted); }
 .project-child[aria-current="true"] { color: var(--accent-strong); }
@@ -284,6 +294,7 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .chip-clear:hover { background: var(--line); color: var(--text); }
 .chip-clear svg { width: 14px; height: 14px; }
 .filter-row .tl-switch { margin-left: 2px; margin-right: 4px; } /* the Board's "Everyone" switch, next to its Owner chip */
+.filter-row .link-button { flex: none; white-space: nowrap; } /* "Archive this client…" stays on one line in the scrolling row of a phone */
 
 /* ---------- Status, priority, due ---------- */
 .status-icon { width: 16px; height: 16px; display: block; }
@@ -842,7 +853,7 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 }
 .archive-doc-link:hover { background: var(--bg-hover); }
 .archive-doc-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.archive-dialog-list .archive-blocking { padding: 2px 0; text-align: left; white-space: normal; }
+.archive-dialog-list .archive-blocking { display: block; padding: 2px 0; text-align: left; white-space: normal; }
 .fold-archive svg { width: 15px; height: 15px; }
 .doc-pane-head { flex: none; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; padding: 16px 32px 12px; border-bottom: 1px solid var(--line-soft); }
 .doc-back { flex-basis: 100%; align-self: flex-start; padding-left: 0; }
@@ -1196,7 +1207,7 @@ mark { background: var(--mark-bg); color: var(--mark-text); border-radius: 2px; 
   .props { grid-template-columns: 104px minmax(0, 1fr); }
 }
 @media (hover: none) {
-  .row-actions, .card-actions, .note-delete, .fold-add, .subtask-actions { opacity: 1; }
+  .row-actions, .card-actions, .note-delete, .fold-add, .subtask-actions, .entry-more { opacity: 1; }
   .due-button.is-empty svg { opacity: 1; }
 }
 /* ---------- Touch ---------- */
@@ -1237,6 +1248,8 @@ mark { background: var(--mark-bg); color: var(--mark-text); border-radius: 2px; 
   .fold-toggle, .board-group-head .fold-toggle { min-height: 36px; }
   .note-delete { width: 36px; height: 36px; margin: -4px -6px -4px 0; }
   .archive-action-line, .archive-doc-link { min-height: 40px; }
+  .entry-more { width: 36px; height: 36px; }
+  .archive-entry .entry-more { top: 4px; right: 6px; }
   .subtask-item { flex-wrap: wrap; column-gap: 4px; min-height: 40px; }
   .subtask-tick { width: 36px; height: 36px; margin-left: -8px; }
   .subtask-text { flex: 1 1 200px; } /* past that, the buttons go to a line of their own under the text */

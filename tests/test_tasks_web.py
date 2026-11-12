@@ -4968,6 +4968,32 @@ class ActionViewsPageTest(unittest.TestCase):
         self.assertIn("error.message", self.function("showNoteError"))
         self.assertIn("This note is already in the history: nothing was added.", self.function("submitNote"))
 
+    def test_sidebar_entries_and_archived_ones_have_a_more_menu_that_archives_or_unarchives(self):
+        menu = self.function("entryMenu")
+        for fragment in ("`More actions for ${name}`", "button.setAttribute('aria-haspopup', 'menu');", "button.setAttribute('aria-expanded', 'false');",
+                         "openPopover(button,", "node.addEventListener('contextmenu'", "if (popoverState?.anchor === button) closePopover(); else open();"):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, menu)
+        # A project or a client of the sidebar: "Archive…" through the flow of the rest of the app (dry run, confirmation, Undo);
+        # a project also "New action…", as the + of its header in Actions. "All projects" has no menu.
+        items = self.function("projectMenuItems")
+        self.assertIn("['Archive…', button => askArchive('archive', target.folder, target.label, button)]", items)
+        self.assertIn("target.kind === 'project' ? [['New action…', () => openEditor(null, {register: scope})]] : []", items)
+        self.assertIn("const target = scopeArchive(scope);\n  if (!target) return null;", items)
+        nav = self.function("renderProjectNav")
+        self.assertIn("all.append(projectButton('', 'All projects', total, 'project-all'));", nav)
+        for fragment in ("projectEntry(parent.key, parent.label", "projectEntry(child.key, child.label"):
+            self.assertIn(fragment, nav)
+        self.assertIn("askArchive('unarchive', item.folder, archiveName(item), anchor)", self.function("archiveListItem"))
+        # Keyboard: Enter and Space are the button's; the popover of the status menu moves with the arrows and Esc goes back to the button.
+        self.assertIn("} else if (event.key === 'Escape') {\n    event.preventDefault();\n    event.stopPropagation();\n    closePopover();", self.script)
+        self.assertIn("if (refocus && anchor.isConnected) anchor.focus({preventScroll: true});", self.function("closePopover"))
+        # Shown on hover and on keyboard focus, always on a touch screen, 36 px there.
+        self.assertIn(".project-row:hover .entry-more, .project-row:focus-within .entry-more, .archive-entry:hover .entry-more, .archive-entry:focus-within .entry-more", self.styles)
+        self.assertRegex(self.styles, r"@media \(hover: none\) \{\n[^}]*\.entry-more \{ opacity: 1; \}")
+        touch = self.styles[self.styles.index("@media (pointer: coarse), (max-width: 700px) {"):]
+        self.assertIn(".entry-more { width: 36px; height: 36px; }", touch[:touch.index("\n}\n")])
+
     def test_touch_targets_are_36_px_without_changing_the_desktop(self):
         start = self.styles.index("@media (pointer: coarse), (max-width: 700px) {")
         touch = self.styles[start:self.styles.index("\n}\n", start)]
