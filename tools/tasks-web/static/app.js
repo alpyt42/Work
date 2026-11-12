@@ -3270,10 +3270,13 @@ async function loadTools() {
         const description = element('p', '', tool.description);
         description.title = `${tool.description}\n${tool.command}`;
         copy.append(name, description);
+        if (tool.unavailable) copy.append(element('p', 'error-note', tool.unavailable));
         const button = element('button', 'button button-small', 'Run');
         button.type = 'button';
         button.setAttribute('aria-label', `Run ${tool.label}`);
-        button.title = tool.command;
+        button.title = tool.unavailable || tool.command;
+        button.disabled = Boolean(tool.unavailable);
+        button.dataset.unavailable = tool.unavailable ? 'true' : '';
         button.addEventListener('click', () => runTool(tool, button));
         row.append(copy, button);
         section.append(row);
@@ -3319,7 +3322,7 @@ async function runTool(tool, button) {
     ids.toolResultStatus.className = 'tool-status-error';
     ids.toolResultOutput.textContent = error.message;
   } finally {
-    buttons.forEach(item => { item.disabled = false; });
+    buttons.forEach(item => { item.disabled = Boolean(item.dataset.unavailable); });
     button.textContent = 'Run';
   }
 }

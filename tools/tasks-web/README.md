@@ -10,9 +10,35 @@ The script declares its dependency (`markdown-it-py`, to render documents) in it
 
 Then open `http://127.0.0.1:8765/` in the browser. Stop the server with `Ctrl+C`. To choose another port: `uv run tools/tasks-web/tasks-web.py --port 8766`.
 
-On macOS, build the local app with `./tools/tasks-web/build-dock-app.sh`. The result is in `artifacts/internal/setup/tasks-dock-app/Actions Brain.app`; it can be added to the Dock. A click on the icon starts the server on port 8765 if it is stopped, waits for it to answer, then opens the page in the default browser. Later clicks reuse the server already running. **Quit Actions Brain…**, in the ⋯ menu at the bottom of the sidebar, asks for confirmation then stops the local server; depending on the browser, the tab closes or shows an end message. The log and the PID are in `agents/`. The app contains the path of Work at the time it was built: after moving Work to another machine, rebuild the app on that machine. The macOS `shortcuts` command cannot create a new shortcut from the command line; this AppleScript app directly provides the requested behavior in the Dock.
-
 Archived projects (moved whole into the `archive/` folder at their level: `projects/clients/<client>/missions/archive/<mission>/`, `projects/internal/archive/<project>/`, `projects/clients/archive/<client>/` for a whole client, and the earlier `projects/archive/` and `projects/clients/<client>/archive/`) are not shown anywhere in the app: no action, note, document or search result, and no target for a new action or note; only Sync still lists their Git changes.
+
+## Install the app
+
+`install-app.py` puts an **Actions Brain** entry on the computer, with the icon of `static/` (written by `make-icon.py`). A click runs `launch.py`: when the server answers on port 8765 it opens the page in the default browser; when another program holds port 8765 it refuses (never a second server); otherwise it starts `tasks-web.py --port 8765` in the background from the Work root (log and PID in `agents/`), waits up to 10 seconds, then opens the page. An error shows in a dialog, on stderr and in `agents/tasks-web.log`. **Quit Actions Brain…**, in the ⋯ menu at the bottom of the sidebar, asks for confirmation then stops the server; depending on the browser, the tab closes or shows an end message. The entry holds the absolute paths of uv and of Work at install time: after moving either, install again. `--dry-run` prints what would be done and changes nothing; `--uninstall` removes only what the installer wrote (each file carries its mark). Prerequisite everywhere: [uv](https://docs.astral.sh/uv/).
+
+### macOS
+
+```sh
+uv run tools/tasks-web/install-app.py
+```
+
+Builds `Actions Brain.app` (an AppleScript app, bundle id `local.work.tasks-brain`) in `internal/setup/tasks-dock-app/` of the artifacts folder (`uv run tools/machine/work_config.py artifacts-dir`), with its source `launch.applescript` and a `README.md`; drag it to the Dock. Nothing in the artifacts folder is overwritten or deleted: when the app is already there the installer refuses, and `--replace` first moves the old app, its source and its README into `archive/tasks-dock-app-<date>/` of the artifacts folder. `--uninstall` moves the app it made there too (delete it yourself, and take it out of the Dock). `./tools/tasks-web/build-dock-app.sh` runs the same installer, and `launcher.sh`, which the apps built before it call, now runs `launch.py`.
+
+### Windows
+
+```powershell
+uv run tools/tasks-web/install-app.py
+```
+
+Creates the shortcut `Actions Brain.lnk` in the Start Menu (`%APPDATA%\Microsoft\Windows\Start Menu\Programs`), and on the Desktop too with `--desktop`, through PowerShell. It runs `uvw.exe run --gui-script tools\tasks-web\launch.py` from the Work root: `uvw.exe`, installed next to `uv.exe` by recent uv versions, has no console window, and the server starts with a hidden console, so no window stays open. With an older uv the shortcut runs `uv.exe` in a minimized window (`uv self update`, then install again). Uninstall with `--uninstall`. Also needed: Git for Windows, for the Sync view; its Git Bash, on PATH, runs the `.sh` tools of the Tools view, which are shown as unavailable without it.
+
+### Linux
+
+```sh
+uv run tools/tasks-web/install-app.py
+```
+
+Writes `actions-brain.desktop` in `${XDG_DATA_HOME:-~/.local/share}/applications/` and its icon in `icons/hicolor/256x256/apps/` next to it, then runs `update-desktop-database` when it is installed: **Actions Brain** appears in the applications menu (Office). Uninstall with `--uninstall`. Error dialogs use `zenity`, `kdialog` or `notify-send`, the first one installed.
 
 ## Layout
 
@@ -178,7 +204,7 @@ API: `GET /api/actions` adds `clients` (folder name → display name, archived c
 
 ## Tools
 
-The **Tools** view lists, by collapsible group (Memory, Actions, Repositories), the existing commands (reads, previews and confirmed writes): checks of the brain and of links (**Check links**, **List brains**, **New transcripts**), and two read-only reports on the chosen brain: **Brain map** (`brain/brain-state.py map`, one line per project: page, register prefix, actions by state, overdue, proposed decisions, last timeline entry) and **Timeline months to move** (`brain/timeline.py roll`, a dry run: the timeline entries of past months that would move to `journal/`; its `--write` form is not offered), the repositories check (**Check repositories**), and the tools of the **Actions** group: **Text view of actions**, **Actions to sort (preview)** and **Sort actions by status** (`brain/action.py sweep`, with `--write` for the second; it files each action under the section that matches its status), **Actions to archive (preview)** (`brain/action.py`, changes nothing) and **Archive actions** (`brain/action.py --write`), which moves the actions closed for more than 30 days to `state/actions-archive-YYYY.md`. Each row gives the name, a one-line description (complete in the tooltip with the command) and **Run**. A tool that writes brain files carries the mark "writes to the brain", asks for a confirmation before running and refreshes the lists afterwards; its writes do not go through the interface's undo stack (recover them with Git). The output is displayed in a panel under the list, with the command that was run, without being saved by the interface. The allowed commands and their arguments are fixed on the server; no field makes it possible to run a free command. Cloning repositories stays in its dedicated workflow.
+The **Tools** view lists, by collapsible group (Memory, Actions, Repositories), the existing commands (reads, previews and confirmed writes): checks of the brain and of links (**Check links**, **List brains**, **New transcripts**), and two read-only reports on the chosen brain: **Brain map** (`brain/brain-state.py map`, one line per project: page, register prefix, actions by state, overdue, proposed decisions, last timeline entry) and **Timeline months to move** (`brain/timeline.py roll`, a dry run: the timeline entries of past months that would move to `journal/`; its `--write` form is not offered), the repositories check (**Check repositories**), and the tools of the **Actions** group: **Text view of actions**, **Actions to sort (preview)** and **Sort actions by status** (`brain/action.py sweep`, with `--write` for the second; it files each action under the section that matches its status), **Actions to archive (preview)** (`brain/action.py`, changes nothing) and **Archive actions** (`brain/action.py --write`), which moves the actions closed for more than 30 days to `state/actions-archive-YYYY.md`. Each row gives the name, a one-line description (complete in the tooltip with the command) and **Run**. A tool that writes brain files carries the mark "writes to the brain", asks for a confirmation before running and refreshes the lists afterwards; its writes do not go through the interface's undo stack (recover them with Git). The output is displayed in a panel under the list, with the command that was run, without being saved by the interface. The allowed commands and their arguments are fixed on the server; no field makes it possible to run a free command. Cloning repositories stays in its dedicated workflow. The Python tools run through uv in UTF-8 mode; a `.sh` tool runs directly on macOS and Linux and through `bash` on Windows (Git Bash on PATH), and without it its row says why and its **Run** button is disabled (`GET /api/tools` gives the reason as `unavailable`).
 
 If **New transcripts** shows "Access denied", its input folder configured in the brain is not readable by the process that launches Actions Brain. Check the macOS permissions and the availability of OneDrive, then run the command again; the tool does not present an incomplete list as if it were exhaustive.
 

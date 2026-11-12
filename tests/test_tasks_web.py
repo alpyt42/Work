@@ -5011,5 +5011,56 @@ class ActionViewsPageTest(unittest.TestCase):
         self.assertIn("--row-h: 40px;", desktop)
 
 
+class PortabilityTest(unittest.TestCase):
+    """What the server does differently on Windows, checked from here: the system is passed in, never faked globally."""
+
+    def test_a_shell_tool_needs_bash_on_windows_and_runs_directly_elsewhere(self):
+        with patch.object(tasks_web.shutil, "which", return_value=None):
+            self.assertEqual(tasks_web.tool_unavailable("machine/check-links.sh", windows=True), tasks_web.BASH_MISSING)
+            self.assertIsNone(tasks_web.tool_unavailable("brain/check-links.py", windows=True))
+        with patch.object(tasks_web.shutil, "which", return_value="C:/Program Files/Git/bin/bash.exe"):
+            self.assertIsNone(tasks_web.tool_unavailable("machine/check-links.sh", windows=True))
+        self.assertIsNone(tasks_web.tool_unavailable("machine/check-links.sh", windows=False))
+        with tempfile.TemporaryDirectory() as folder:
+            script = Path(folder) / "tools/machine/hello.sh"
+            script.parent.mkdir(parents=True)
+            script.write_text('#!/bin/sh\nprintf "héllo %s %s\\n" "$1" "$BRAIN_DIR"\n', encoding="utf-8")
+            script.chmod(0o755)
+            tools = {"hello": ("Memory", "Hello", "Says hello.", "machine/hello.sh", (tasks_web.BRAIN_ARG,))}
+            with patch.object(tasks_web, "TOOLS_ROOT", Path(folder)), patch.dict(tasks_web.TOOLS, tools, clear=True):
+                catalog = tasks_web.tool_catalog()
+                result = tasks_web.run_tool("hello", Path(folder) / "brain-acme")
+        self.assertEqual(catalog[0]["command"], "tools/machine/hello.sh <brain>")
+        self.assertIsNone(catalog[0]["unavailable"])
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["output"], f"héllo brain-acme {Path(folder) / 'brain-acme'}")
+
+    def test_python_tools_run_in_utf8_mode_and_are_read_as_utf8(self):
+        completed = tasks_web.subprocess.CompletedProcess([], 0, stdout="📅 ok\n", stderr="")
+        with patch.object(tasks_web.shutil, "which", return_value="/usr/bin/uv"), \
+                patch.object(tasks_web.subprocess, "run", return_value=completed) as runner:
+            self.assertEqual(tasks_web.run_tool("links", Path("/tmp/brain-acme"))["output"], "📅 ok")
+        self.assertEqual(runner.call_args.kwargs["encoding"], "utf-8")
+        self.assertEqual(runner.call_args.kwargs["env"]["PYTHONUTF8"], "1")
+        self.assertEqual(runner.call_args.kwargs["env"]["PYTHONIOENCODING"], "utf-8")
+
+    def test_git_is_found_in_the_folders_of_git_for_windows(self):
+        with tempfile.TemporaryDirectory() as folder:
+            git = Path(folder) / "Programs/Git/cmd/git.exe"
+            git.parent.mkdir(parents=True)
+            git.write_bytes(b"")
+            with patch.object(tasks_web.shutil, "which", return_value=None), \
+                    patch.dict(os.environ, {"ProgramFiles": str(Path(folder) / "Programs")}):
+                self.assertEqual(tasks_web.git_program(windows=True), str(git))
+                self.assertEqual(tasks_web.git_program(windows=False), "/usr/bin/git")
+            empty = str(Path(folder) / "empty")
+            with patch.object(tasks_web.shutil, "which", return_value=None), \
+                    patch.dict(os.environ, {"ProgramFiles": empty, "ProgramW6432": empty, "ProgramFiles(x86)": empty, "LOCALAPPDATA": empty}):
+                self.assertEqual(tasks_web.git_program(windows=True), "git.exe")
+
+    def test_the_port_is_never_shared_on_windows(self):
+        self.assertEqual(tasks_web.TaskServer.allow_reuse_address, os.name != "nt")
+
+
 if __name__ == "__main__":
     unittest.main()

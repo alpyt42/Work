@@ -3,6 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = [
 #   "markdown-it-py==3.0.0",
+#   "tzdata>=2024.1; sys_platform == 'win32'",  # zoneinfo has no time zone database of its own on Windows
 # ]
 # ///
 """Serve a private, local action manager (Today, list and board views, docs, search, tools, Sync) backed by brain action registers.
@@ -67,6 +68,11 @@ _config_spec = importlib.util.spec_from_file_location("work_config", TOOLS_ROOT 
 assert _config_spec and _config_spec.loader
 work_config = importlib.util.module_from_spec(_config_spec)
 _config_spec.loader.exec_module(work_config)
+# Where uv is on each system (the launcher's rule), for the Tools view.
+_launch_spec = importlib.util.spec_from_file_location("tasks_launch", Path(__file__).resolve().with_name("launch.py"))
+assert _launch_spec and _launch_spec.loader
+tasks_launch = importlib.util.module_from_spec(_launch_spec)
+_launch_spec.loader.exec_module(tasks_launch)
 # The push checks own the rule that hides the credentials of a remote URL: the Sync view shows URLs the same way.
 _push_spec = importlib.util.spec_from_file_location("preflight_push", TOOLS_ROOT / "tools/machine/preflight-push.py")
 assert _push_spec and _push_spec.loader
@@ -141,29 +147,54 @@ TOOL_CONFIRM = {
 }
 
 
+BASH_MISSING = ("This tool is a shell script: on Windows it needs Bash on the PATH (Git Bash, installed with Git for Windows), "
+                "and none was found.")
+
+
+def tool_unavailable(script: str, windows: bool | None = None) -> str | None:
+    """Why a tool cannot run on this computer, or None: a `.sh` tool needs Bash on Windows (macOS and Linux run it directly)."""
+    windows = os.name == "nt" if windows is None else windows
+    if script.endswith(".sh") and windows and not shutil.which("bash"):
+        return BASH_MISSING
+    return None
+
+
 def tool_catalog() -> list[dict]:
     return [
         {"id": tool_id, "group": group, "label": label, "description": description,
-         "command": "uv run tools/" + " ".join((script, *args)), "confirm": TOOL_CONFIRM.get(tool_id)}
+         "command": ("" if script.endswith(".sh") else "uv run ") + "tools/" + " ".join((script, *args)), "confirm": TOOL_CONFIRM.get(tool_id),
+         "unavailable": tool_unavailable(script)}
         for tool_id, (group, label, description, script, args) in TOOLS.items()
     ]
+
+
+def python_environment(base: dict[str, str] | None = None) -> dict[str, str]:
+    """The environment of a Python child: UTF-8 mode, so its pipes are UTF-8 on Windows too (the ANSI code page otherwise)."""
+    return tasks_launch.utf8_environment(base)
 
 
 def run_tool(tool_id: str, brain: Path) -> dict:
     if tool_id not in TOOLS:
         raise TaskError(HTTPStatus.NOT_FOUND, "Unknown tool.")
-    uv = shutil.which("uv") or next((str(path) for path in
-        (Path("/opt/homebrew/bin/uv"), Path("/usr/local/bin/uv"), Path.home() / ".local/bin/uv")
-        if path.is_file()), None)
-    if uv is None:
-        raise TaskError(HTTPStatus.SERVICE_UNAVAILABLE, "uv was not found on this machine.")
     script, args = TOOLS[tool_id][3:]
-    environment = os.environ.copy()
+    path = str(TOOLS_ROOT / "tools" / script)
+    tail = [brain.name if arg == BRAIN_ARG else arg for arg in args]
+    if script.endswith(".sh"):
+        reason = tool_unavailable(script)
+        if reason:
+            return {"id": tool_id, "ok": False, "output": reason, "truncated": False}
+        command = [shutil.which("bash") or "bash", path, *tail] if os.name == "nt" else [path, *tail]
+    else:
+        uv = shutil.which("uv") or tasks_launch.find_uv()
+        if uv is None:
+            raise TaskError(HTTPStatus.SERVICE_UNAVAILABLE, "uv was not found on this machine.")
+        command = [uv, "run", path, *tail]
+    environment = python_environment()
     environment["BRAIN_DIR"] = str(brain)
     try:
         result = subprocess.run(
-            [uv, "run", str(TOOLS_ROOT / "tools" / script), *(brain.name if arg == BRAIN_ARG else arg for arg in args)], cwd=WORK, env=environment,
-            capture_output=True, text=True, errors="replace", timeout=90, check=False,
+            command, cwd=WORK, env=environment,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90, check=False,
         )
     except subprocess.TimeoutExpired:
         return {"id": tool_id, "ok": False, "output": "The 90-second limit was exceeded. Run the command again if needed.", "truncated": False}
@@ -476,8 +507,36 @@ def git_environment() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if key not in GIT_STRIPPED_ENV}
 
 
-def git_program() -> str:
-    return shutil.which("git") or "/usr/bin/git"
+def git_program(windows: bool | None = None) -> str:
+    """Git on PATH, else its usual place: /usr/bin/git, or on Windows the folders of Git for Windows."""
+    found = shutil.which("git")
+    if found:
+        return found
+    if not (os.name == "nt" if windows is None else windows):
+        return "/usr/bin/git"
+    roots = [os.environ.get(name) for name in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)")]
+    roots.append(str(Path(os.environ["LOCALAPPDATA"]) / "Programs") if os.environ.get("LOCALAPPDATA") else None)
+    for root in filter(None, roots):
+        for relative in ("Git/cmd/git.exe", "Git/bin/git.exe"):
+            if (Path(root) / relative).is_file():
+                return str(Path(root) / relative)
+    return "git.exe"  # not found: the call fails with OSError, said as "Git was not found on this machine."
+
+
+def kill_tree(process: subprocess.Popen) -> None:
+    """Kill a command and every process it started: its process group on macOS and Linux, its tree on Windows."""
+    if os.name == "nt":
+        try:
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True, timeout=10, check=False,
+                           stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        process.kill()
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except OSError:
+        process.kill()
 
 
 def run_git(repo: Path, *args: str) -> bytes:
@@ -512,19 +571,18 @@ def run_git_write(repo: Path, args: list[str], timeout: int) -> tuple[int, str]:
     environment.update({"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never", "GIT_EDITOR": "true", "GIT_PAGER": "cat",
                         "LC_MESSAGES": "C", "LANGUAGE": "C"})
     try:
+        # Its own session (no controlling terminal) on macOS and Linux; on Windows its own process group, killed as a tree.
+        detach = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
         process = subprocess.Popen(
             [git_program(), "--no-pager", "-c", "core.quotepath=false", "-c", "color.ui=false", *args], cwd=repo,
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=environment, start_new_session=True,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=environment, **detach,
         )
     except OSError:
         return 127, ""
     try:
         output, _ = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except OSError:
-            process.kill()
+        kill_tree(process)
         try:
             output, _ = process.communicate(timeout=5)
         except subprocess.TimeoutExpired:
@@ -1595,8 +1653,8 @@ class Store:
         """Run tools/brain/action.py and record the register's bytes before and after for one undo step."""
         before = path.read_bytes()
         try:
-            result = subprocess.run([sys.executable, str(ACTION_SCRIPT), "--brain", str(self.brain), *argv],
-                                    capture_output=True, text=True, timeout=30, check=False)
+            result = subprocess.run([sys.executable, str(ACTION_SCRIPT), "--brain", str(self.brain), *argv], env=python_environment(),
+                                    capture_output=True, text=True, encoding="utf-8", timeout=30, check=False)
             payload = json.loads(result.stdout or "{}")
         except (OSError, subprocess.TimeoutExpired, ValueError):
             raise TaskError(HTTPStatus.INTERNAL_SERVER_ERROR, "Could not run the actions tool.") from None
@@ -2336,8 +2394,8 @@ class Store:
             raise TaskError(HTTPStatus.BAD_REQUEST, "Archiving needs a brain of a Work (a folder holding AGENTS.md and .data/).")
         argv = [sys.executable, str(BRAIN_STATE_SCRIPT), verb, str(folder), "--brain", self.brain.name, "--json", *(["--write"] if write else [])]
         try:
-            result = subprocess.run(argv, capture_output=True, text=True, timeout=180, check=False, stdin=subprocess.DEVNULL,
-                                    env={**os.environ, "WORK_DIR": str(self.brain.parent)})
+            result = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", timeout=180, check=False, stdin=subprocess.DEVNULL,
+                                    env={**python_environment(), "WORK_DIR": str(self.brain.parent)})
         except (OSError, subprocess.TimeoutExpired):
             raise TaskError(HTTPStatus.INTERNAL_SERVER_ERROR, "Could not run the archive tool.") from None
         try:
@@ -2793,6 +2851,9 @@ class TaskServer(ThreadingHTTPServer):
     `work` is the Work root whose brains are offered (default: WORK).
     """
 
+    # On Windows SO_REUSEADDR lets a second server take a port already in use: there the bind must fail instead.
+    allow_reuse_address = os.name != "nt"
+
     def __init__(self, address: tuple[str, int], store: Store, work: Path | None = None) -> None:
         super().__init__(address, Handler)
         self.work = (work if work is not None else WORK).resolve()
@@ -2882,4 +2943,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    for _stream in (sys.stdout, sys.stderr):  # UTF-8 even into a log file on Windows, where the default is the ANSI code page
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors=_stream.errors)
     main()

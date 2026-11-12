@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- actions-brain-icon: written by tools/tasks-web/make-icon.py -->
+  <rect x="15.36" y="15.36" width="225.28" height="225.28" rx="56.32" fill="#2F5D8A"/>
+  <polyline points="71.68,133.12 112.64,174.08 189.44,92.16" fill="none" stroke="#FFFFFF" stroke-width="25.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
