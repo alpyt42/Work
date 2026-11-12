@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -1384,6 +1385,19 @@ class DocsListTest(unittest.TestCase):
         # The listing and the search tell the same type for every listed document.
         listed = {doc["id"]: doc["type"] for doc in self.docs()}
         self.assertEqual({doc_id: kind for doc_id, kind in expected.items() if kind}, {doc_id: listed[doc_id] for doc_id, kind in expected.items() if kind})
+        # The Type filter of Docs works on the search too: only that type, counted before the best results are kept, and the count of
+        # each type stays whatever the filter, so the page can say what another type would find.
+        counts = {kind: sum(1 for value in expected.values() if value == kind) for kind in {"note", "source", "workstream", "journal", "page"}}
+        self.assertEqual(data["types"], counts)
+        for kind in counts:
+            status, filtered = self.request("GET", f"/api/search?q=quokka&type={kind}")
+            self.assertEqual(status, 200, kind)
+            self.assertEqual({result["id"] for result in filtered["results"]}, {doc_id for doc_id, value in expected.items() if value == kind}, kind)
+            self.assertEqual((filtered["total"], filtered["types"]), (counts[kind], counts), kind)
+        status, both = self.request("GET", "/api/search?q=quokka&type=source&project=" + quote(self.register))
+        self.assertEqual({result["id"] for result in both["results"]}, {doc_id for doc_id, value in expected.items() if value == "source" and doc_id.startswith(self.CLIENT)})
+        self.assertEqual(self.request("GET", "/api/search?q=quokka&type=register"), (400, {"error": "Invalid type parameter."}))
+        self.assertEqual(self.request("GET", "/api/search?q=quokka&type=note&type=page")[0], 400)
 
     def test_empty_brain_and_unknown_brain(self):
         empty = self.brain / "projects/internal/empty"
@@ -2741,7 +2755,7 @@ class GitViewPageTest(unittest.TestCase):
         # The visible name is Sync; the ids and routes keep `git`.
         self.assertIn('<span class="nav-label">Sync</span><span id="gitCount" class="nav-count"></span>', self.page)
         self.assertNotIn('<span class="nav-label">Git</span>', self.page)
-        self.assertIn("git: 'Sync'}", self.script)
+        self.assertIn("git: 'Sync', settings: 'Settings'}", self.script)
         self.assertIn("`Sync, ${plural(pending, 'brain')} to save or send` : 'Sync'", self.script)
         self.assertIn("showToast(`Sync: ${error.message}`)", self.script)
         self.assertNotIn("Git: ${", self.script)
@@ -4331,7 +4345,7 @@ class TimelineViewTest(unittest.TestCase):
 
     def test_timeline_is_a_sidebar_view_right_after_the_board(self):
         views = re.findall(r'<button id="(\w+)" class="nav-item[^"]*" type="button" data-view="(\w+)" title="([^"]*)"', self.page)
-        self.assertEqual([view for _id, view, _title in views], ["today", "list", "board", "timeline", "docs", "archives", "tools", "git"])  # Search is a field, not a view of the sidebar
+        self.assertEqual([view for _id, view, _title in views], ["today", "list", "board", "timeline", "docs", "archives", "tools", "git", "settings"])  # Search is a field, not a view of the sidebar
         titles = {view: title for _id, view, title in views}
         self.assertEqual([titles[view] for view in ("timeline", "docs")], ["Timeline (4)", "Docs (5)"])
         self.assertIn('<button id="timelineButton"', self.page)
@@ -4339,7 +4353,7 @@ class TimelineViewTest(unittest.TestCase):
         self.assertIn("<kbd>Alt</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>On the Timeline: move the deadline by a day", self.page)
 
     def test_keyboard_scheme_follows_the_sidebar_order(self):
-        self.assertIn("const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git'];", self.script)
+        self.assertIn("const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git', 'settings'];", self.script)
         self.assertIn("setView(['today', 'list', 'board', 'timeline', 'docs'][Number(digit) - 1]);", self.script)
         self.assertIn("/^[1-5]$/.test(key)", self.script)
         self.assertIn("/^Digit[1-5]$/.test(event.code)", self.script)
@@ -4355,7 +4369,7 @@ class TimelineViewTest(unittest.TestCase):
         self.assertNotIn("search: 'searchButton'", self.script)
         self.assertNotIn("view-searchless", self.script + self.styles)
         # `search` stays an internal view: never restored, never saved as the view to come back to.
-        self.assertIn("const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git'];", self.script)
+        self.assertIn("const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git', 'settings'];", self.script)
         self.assertIn("VIEWS.includes(savedUI.view) && savedUI.view !== 'search'", self.script)
         self.assertIn("view: view === 'search' ? searchReturn : view,", self.script)
         # A query shows the results page, an empty field or Esc goes back to the view it left; any other view ends the search.
@@ -4371,9 +4385,13 @@ class TimelineViewTest(unittest.TestCase):
         self.assertIn("/api/search?", self.script)
         self.assertNotIn("/api/docs/recent", self.script)
         self.assertNotIn("Recently modified", self.script)
-        # The chips of the Docs view do not apply to the results page; Location and the sidebar project do.
-        self.assertIn("ids.docTypeChip.hidden = !docsList;", self.script)
+        # The chips of the Docs view, Location and Type, apply to the results page too, like the sidebar project; a type leaves the
+        # actions out and runs the search again on the server, which keeps the best documents of that type.
+        self.assertIn("ids.docTypeChip.hidden = !docs;", self.script)
         self.assertIn("ids.docProjectChip.hidden = !docs;", self.script)
+        self.assertIn("if (ids.docType.value) params.type = ids.docType.value;", self.script)
+        self.assertIn("if (view === 'search') runDocSearch();", self.script)
+        self.assertIn("const actions = type ? [] :", results)
 
     def test_timeline_markup(self):
         view = self.page[self.page.index('<div id="timelineView"'):self.page.index('<div id="docsView"')]
@@ -5011,6 +5029,291 @@ class ActionViewsPageTest(unittest.TestCase):
         self.assertIn("--row-h: 40px;", desktop)
 
 
+class SettingsViewTest(unittest.TestCase):
+    """`GET` and `POST /api/settings`: the settings of a temporary fictitious Work, in plain words, editable, without secrets."""
+    SECRET_ENV = "ACME_TOKEN=sk-fictitious-secret-123"
+    SECRET_URL = "https://git.acme.example/private/acme-secret-repo.git"
+    TECHNICAL = ("uv run", "setup.py", "work.py", "update.sh", ".json")
+    SCRIPT = (Path(TOOL).parent / "static/app.js").read_text(encoding="utf-8")
+
+    def write_json(self, relative, value):
+        path = self.work / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value), encoding="utf-8")
+
+    def read_json(self, relative):
+        return json.loads((self.work / relative).read_text(encoding="utf-8"))
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)  # last: the server is stopped first
+        self.work = Path(self.temp.name).resolve() / "Work"
+        self.home = Path(self.temp.name).resolve() / "home"
+        self.work.mkdir()
+        self.home.mkdir()
+        patcher = patch.dict(os.environ, {"HOME": str(self.home), "USERPROFILE": str(self.home), "GIT_CONFIG_GLOBAL": str(self.home / ".gitconfig"),
+                                          "GIT_CONFIG_NOSYSTEM": "1"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for name in ("brain-acme", "brain-globex"):
+            (self.work / name / ".data").mkdir(parents=True)
+            (self.work / name / "AGENTS.md").write_text("# Brain\n", encoding="utf-8")
+            (self.work / name / "projects").mkdir()
+        self.write_json("brain-acme/.data/brain.json", {"scope": "employer", "description": "Acme missions.", "remote": "git@git.acme.example:acme/*",
+                                                        "email": "*@acme.example", "allow": ["Acme"], "version": 1})
+        self.write_json("brain-acme/.data/doctor.json", {"owner": "Jane Doe"})
+        self.write_json("brain-acme/.data/local-paths.json", {"brains": ["brain-acme", "brain-globex", "brain-initech"], "transcripts_dir": "Documents/Transcripts"})
+        self.write_json("brain-globex/.data/brain.json", {"scope": "client", "description": "", "remote": "", "email": "", "allow": [], "version": 1})
+        self.write_json("brain-acme/.data/work-config.json", {"version": 1, "skills": {"thirdParty": {
+            "acme-helper": {"source": "acme/skills", "sourceType": "github", "skillPath": "helper/SKILL.md", "computedHash": "abc"}}, "disabled": ["acme-off"]}})
+        self.write_json("work-config.local.json", {"version": 1, "defaultBrain": "brain-acme"})
+        skills = {"acme-report": "---\nname: acme-report\ndescription: Builds the weekly report for Acme. Use it on Mondays.\n---\nReads tools/.env for the report.\n",
+                  "acme-off": "# Off\n"}
+        for name, text in skills.items():
+            skill = self.work / "brain-acme/skills" / name
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(text, encoding="utf-8")
+        helper = self.work / ".claude/skills/acme-helper"
+        helper.mkdir(parents=True)
+        (helper / "SKILL.md").write_text("---\nname: acme-helper\ndescription: >\n  Helps with Acme planning\n  and reviews. Second sentence.\n---\n", encoding="utf-8")
+        (self.work / "tools").mkdir()
+        (self.work / "tools/.env").write_text(self.SECRET_ENV + "\n", encoding="utf-8")
+        self.write_json("brain-acme/.data/client-repos.json", {"acme-app": {"url": self.SECRET_URL}})
+        self.server = tasks_web.TaskServer(("127.0.0.1", 0), tasks_web.Store(self.work / "brain-acme"), work=self.work)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self.stop)
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+
+    def request(self, method, path, payload=None, token=True, origin=True):
+        return TasksWebTest.request(self, method, path, payload, token, origin)
+
+    def settings(self):
+        status, data = self.request("GET", "/api/settings")
+        self.assertEqual(status, 200, data)
+        return data
+
+    def save(self, key, value=None, default=False):
+        body = {"key": key, "default": True} if default else {"key": key, "value": value}
+        return self.request("POST", "/api/settings", body)
+
+    def saved(self, key, value=None, default=False):
+        status, data = self.save(key, value, default)
+        self.assertEqual(status, 200, data)
+        return data
+
+    def refused(self, key, value=None, default=False):
+        status, data = self.save(key, value, default)
+        self.assertEqual(status, 400, (key, value, data))
+        self.assertEqual(set(data), {"error"})
+        return data["error"]
+
+    def test_sections_and_values_of_the_workspace(self):
+        data = self.settings()
+        self.assertEqual(set(data), {"setup", "workspace", "brains", "skills"})
+        todo = {item["key"]: item for item in data["setup"]["todo"]}
+        # Missing editable settings, each as a plain question with its default; the technical ones are only counted.
+        self.assertEqual(set(todo), {"artifactsDir", "brain-globex.owner", "brain-globex.description"})
+        self.assertEqual((todo["artifactsDir"]["input"], todo["artifactsDir"]["value"], todo["artifactsDir"]["has_default"]), ("text", "artifacts", True))
+        self.assertEqual(todo["brain-globex.owner"]["label"], "Whose name should the actions of Globex carry?")
+        self.assertEqual(todo["brain-globex.description"]["input"], "textarea")
+        self.assertTrue(todo["brain-globex.description"]["has_default"])  # its kind gives the sentence
+        self.assertEqual((todo["brain-globex.owner"]["value"], todo["brain-globex.owner"]["has_default"]), ("Jane Doe", True))  # the owner of the other brain
+        self.assertTrue(data["setup"]["technical_missing"])  # the remote and e-mail patterns of Globex
+        self.assertFalse({"brain-globex.remote", "brain-globex.email"} & set(todo))
+        agent = {task["key"]: task["title"] for task in data["setup"]["agent"]}
+        self.assertEqual(agent["bootstrap"], "The workspace setup is incomplete on this computer.")
+        self.assertEqual(agent["obsidian"], "Your notes app (Obsidian) is not set up on this computer.")
+        self.assertNotIn("tools-env", agent)  # the file exists; the check only looks for it, never reads it
+
+        workspace = data["workspace"]
+        self.assertEqual(workspace["default_brain"]["value"], "brain-acme")
+        self.assertEqual(workspace["default_brain"]["label"], "Acme")
+        self.assertEqual([option["label"] for option in workspace["default_brain"]["options"]], ["Acme", "Globex"])
+        self.assertEqual(workspace["artifacts"], {"key": "artifactsDir", "value": "", "status": "Inside Work", "warnings": ["This folder is not on this computer."]})
+        self.assertEqual(workspace["transcripts"], {"key": "transcripts_dir", "value": "Documents/Transcripts", "note": "Relative to your home folder.",
+                                                    "warnings": ["This folder is not on this computer yet."]})
+        self.assertEqual(workspace["needed_brains"]["value"], ["brain-acme", "brain-globex", "brain-initech"])
+        self.assertEqual([(option["name"], option["present"]) for option in workspace["needed_brains"]["options"]],
+                         [("brain-acme", True), ("brain-globex", True), ("brain-initech", False)])
+        self.assertEqual(workspace["needed_brains"]["warnings"], ["Initech is not on this computer yet: ask your agent to fetch it."])
+
+        brains = data["brains"]["brains"]
+        self.assertEqual([brain["name"] for brain in brains], ["brain-acme", "brain-globex"])  # the default first
+        self.assertEqual({key: brains[0][key] for key in ("label", "default", "owner", "scope", "kind", "description")},
+                         {"label": "Acme", "default": True, "owner": "Jane Doe", "scope": "employer", "kind": "employer", "description": "Acme missions."})
+        self.assertEqual((brains[1]["owner"], brains[1]["kind"]), ("", "client"))
+        for brain in brains:
+            self.assertFalse({"remote", "email", "allow"} & set(brain))  # the technical patterns are not returned
+
+        skills = data["skills"]
+        self.assertEqual(skills["groups"], [
+            {"title": "From Acme", "skills": [{"name": "acme-report", "summary": "Builds the weekly report for Acme."}]},
+            {"title": "Installed from elsewhere", "skills": [{"name": "acme-helper", "summary": "Helps with Acme planning and reviews."}]}])
+        self.assertEqual(skills["turned_off"], ["acme-off"])
+        self.assertTrue(skills["needs_refresh"])
+
+    def test_the_skills_are_up_to_date_once_the_configuration_is_unchanged(self):
+        config = tasks_web.settings_config_module(self.work)
+        self.write_json(".work-state.json", {"configHash": config.config_hash(config.resolve())})
+        self.assertFalse(self.settings()["skills"]["needs_refresh"])
+        self.write_json("work-config.local.json", {"version": 1, "defaultBrain": "brain-acme", "skills": {"disabled": ["acme-report"]}})
+        self.assertTrue(self.settings()["skills"]["needs_refresh"])
+
+    def test_each_editable_setting_saves_and_the_snapshot_shows_it(self):
+        data = self.saved("defaultBrain", "brain-globex")
+        self.assertEqual(data["workspace"]["default_brain"]["value"], "brain-globex")
+        self.assertIn("applies the next time the app starts", data["message"])
+        self.assertEqual(self.read_json("work-config.local.json")["defaultBrain"], "brain-globex")
+
+        data = self.saved("artifactsDir", "deliverables")
+        self.assertEqual((data["workspace"]["artifacts"]["value"], data["workspace"]["artifacts"]["status"]), ("deliverables", "Inside Work"))
+        self.assertEqual(data["workspace"]["artifacts"]["warnings"], [])
+        self.assertIn("The folder was created.", data["message"])
+        synced = self.home / "synced"
+        synced.mkdir()
+        data = self.saved("artifactsDir", str(synced))
+        self.assertEqual(data["workspace"]["artifacts"]["status"], "Synced folder")
+        self.assertEqual(data["workspace"]["artifacts"]["warnings"], ["The folder is not connected to the workspace yet: ask your agent to take care of it."])
+        self.assertIn("Your agent still has to connect this folder", data["message"])
+
+        # The input folders now live in the new default brain.
+        self.write_json("brain-globex/.data/local-paths.json", {"brains": ["brain-acme", "brain-globex"], "transcripts_dir": "Documents/Transcripts"})
+        data = self.saved("transcripts_dir", "Documents/Meetings")
+        self.assertEqual(data["workspace"]["transcripts"]["value"], "Documents/Meetings")
+        self.assertEqual(self.read_json("brain-globex/.data/local-paths.json")["transcripts_dir"], "Documents/Meetings")
+        data = self.saved("brains", ["brain-globex", "brain-acme"])
+        self.assertEqual(data["workspace"]["needed_brains"]["value"], ["brain-globex", "brain-acme"])
+        self.assertEqual(data["workspace"]["needed_brains"]["warnings"], [])
+        data = self.saved("brains", "brain-globex brain-acme brain-initech")  # a text list works too
+        self.assertIn("Some of these brains are not on this computer yet", data["message"])
+
+        data = self.saved("brain-globex.owner", "Max Roe")
+        data = self.saved("brain-globex.description", "Globex missions only.")
+        data = self.saved("brain-globex.scope", "Supplier")  # the stored kind is a lowercase word
+        brains = {brain["name"]: brain for brain in data["brains"]["brains"]}
+        self.assertEqual((brains["brain-globex"]["owner"], brains["brain-globex"]["description"], brains["brain-globex"]["scope"], brains["brain-globex"]["kind"]),
+                         ("Max Roe", "Globex missions only.", "supplier", "other"))
+        self.assertEqual(data["message"], "Saved.")
+        self.assertEqual(self.read_json("brain-globex/.data/brain.json")["remote"], "")  # the other keys are kept
+        self.assertEqual(self.read_json("brain-acme/.data/brain.json")["remote"], "git@git.acme.example:acme/*")
+        self.assertNotIn("brain-globex.owner", {item["key"] for item in data["setup"]["todo"]})
+
+    def test_use_the_default(self):
+        data = self.saved("artifactsDir", default=True)
+        self.assertTrue(data["message"].startswith("Reset to the default."))
+        self.assertEqual(data["workspace"]["artifacts"]["value"], "artifacts")
+        self.assertNotIn("artifactsDir", {item["key"] for item in data["setup"]["todo"]})
+        self.assertEqual(self.saved("artifactsDir", default=True)["message"], "Already set: nothing was changed.")
+        data = self.saved("brain-globex.owner", default=True)  # the owner of the other brain
+        self.assertEqual({brain["name"]: brain["owner"] for brain in data["brains"]["brains"]}["brain-globex"], "Jane Doe")
+        data = self.saved("brain-globex.description", default=True)  # the sentence of a client brain
+        self.assertTrue({brain["name"]: brain["description"] for brain in data["brains"]["brains"]}["brain-globex"])
+    def test_invalid_values_are_refused_in_plain_words(self):
+        refusals = [
+            (("defaultBrain", "brain-initech"), "Choose one of the brains of this workspace."),
+            (("defaultBrain", "Acme"), "Choose one of the brains of this workspace."),
+            (("artifactsDir", str(self.home / "missing")), "That folder does not exist yet: create it or sync it on this computer first, then try again."),
+            (("artifactsDir", ""), "Enter a folder inside the workspace, or the full path of a synced folder."),
+            (("transcripts_dir", "/etc/meetings"), "Choose a folder inside your home folder."),
+            (("transcripts_dir", ""), "Choose a folder inside your home folder."),
+            (("brains", "brain-globex"), "The list must include the default brain."),
+            (("brains", "Acme"), "Choose among the brains of this workspace."),
+            (("brain-globex.owner", "   "), "Enter a name."),
+            (("brain-globex.description", ""), "Describe in one sentence what it holds."),
+            (("brain-globex.scope", "Not valid!"), "Use a short word, such as personal, employer or client."),
+        ]
+        before = {path: path.read_bytes() for path in self.work.rglob("*") if path.is_file()}
+        for (key, value), message in refusals:
+            self.assertEqual(self.refused(key, value), message, (key, value))
+        self.assertEqual(before, {path: path.read_bytes() for path in self.work.rglob("*") if path.is_file()})  # nothing was written
+        for payload in ({"key": "artifactsDir", "value": 3}, {"key": "artifactsDir", "value": "x" * 601}, {"key": "brains", "value": [1]},
+                        {"key": "artifactsDir"}, {"key": "artifactsDir", "value": "a", "default": True}, {"key": "artifactsDir", "default": False}, {"value": "a"}, []):
+            status, data = self.request("POST", "/api/settings", payload)
+            self.assertEqual(status, 400, payload)
+            self.assertEqual(set(data), {"error"})
+
+    def test_a_damaged_file_is_reported_without_its_name(self):
+        (self.work / "brain-globex/.data/brain.json").write_text("{ not json", encoding="utf-8")
+        error = self.refused("brain-globex.owner", "Max Roe")
+        self.assertEqual(error, "A settings file on this computer is damaged: ask your agent to look at it.")
+        data = self.settings()
+        self.assertEqual({brain["name"]: brain["problem"] for brain in data["brains"]["brains"]}["brain-globex"],
+                         "The details of this brain cannot be read: ask your agent to look at them.")
+
+    def test_a_failing_section_reports_its_error_and_leaves_the_others(self):
+        (self.work / "brain-acme/.data/work-config.json").write_text("{ not json", encoding="utf-8")
+        data = self.settings()
+        self.assertEqual(data["skills"], {"error": "A settings file on this computer is damaged: ask your agent to look at it."})
+        self.assertEqual(data["workspace"]["default_brain"]["value"], "brain-acme")
+        self.assertEqual(len(data["brains"]["brains"]), 2)
+        self.assertIn("todo", data["setup"])
+
+    def test_technical_and_unknown_settings_are_refused(self):
+        for key in ("brain-acme.remote", "brain-acme.email", "brain-globex.remote", "brain-initech.owner", "brain-nobody.scope", "tools-env", "obsidian",
+                    "bootstrap", "recordings_dir", "owner", ".owner", "brain-acme.", "brain-acme.allow", "../x", ""):
+            self.assertEqual(self.refused(key, "x"), "This setting cannot be changed here.", key)
+        self.assertEqual(self.read_json("brain-acme/.data/brain.json")["remote"], "git@git.acme.example:acme/*")
+        self.assertEqual(self.read_json("brain-acme/.data/brain.json")["email"], "*@acme.example")
+
+    def test_the_write_is_protected_like_the_other_writes(self):
+        before = {path: path.read_bytes() for path in self.work.rglob("*") if path.is_file()}
+        body = {"key": "brain-globex.owner", "value": "Max Roe"}
+        self.assertEqual(self.request("POST", "/api/settings", body, origin=False)[0], 403)
+        self.assertEqual(self.request("POST", "/api/settings", body, token=False)[0], 403)
+        request = Request(self.base + "/api/settings", data=json.dumps(body).encode(), method="POST",
+                          headers={"Content-Type": "application/json", "X-Tasks-Token": self.server.token, "Origin": "http://evil.example"})
+        with self.assertRaises(HTTPError) as refused:
+            urlopen(request, timeout=3)
+        self.assertEqual(refused.exception.code, 403)
+        refused.exception.close()
+        request = Request(self.base + "/api/settings", data=b"owner=x", method="POST",
+                          headers={"Content-Type": "text/plain", "X-Tasks-Token": self.server.token, "Origin": self.base})
+        with self.assertRaises(HTTPError) as refused:
+            urlopen(request, timeout=3)
+        self.assertEqual(refused.exception.code, 415)
+        refused.exception.close()
+        self.assertEqual(before, {path: path.read_bytes() for path in self.work.rglob("*") if path.is_file()})
+        for method in ("PATCH", "DELETE"):
+            self.assertIn(self.request(method, "/api/settings", {})[0], (403, 404, 405, 501), method)
+
+    def test_no_secret_is_ever_returned(self):
+        bodies = []
+        with urlopen(Request(self.base + "/api/settings", headers={}), timeout=10) as response:
+            self.assertEqual(response.status, 200)
+            bodies.append(response.read().decode("utf-8"))
+        bodies.append(json.dumps(self.saved("brain-globex.owner", "Max Roe")))
+        bodies.append(json.dumps(self.refused("brain-acme.remote", "x")))
+        for body in bodies:
+            for secret in ("sk-fictitious-secret-123", "ACME_TOKEN", "acme-secret-repo", "private/acme", "client-repos", "git.acme.example", "*@acme.example"):
+                self.assertNotIn(secret, body)
+
+    def test_nothing_the_page_shows_is_technical(self):
+        texts = [json.dumps(self.settings())]
+        texts += [json.dumps(self.saved(key, value)) for key, value in (("defaultBrain", "brain-globex"), ("artifactsDir", "deliverables"), ("brain-globex.owner", "Max Roe"))]
+        texts += [json.dumps(self.saved("artifactsDir", default=True)), json.dumps(self.settings())]
+        texts += [self.refused(key, value) for key, value in (("brain-acme.scope", "No!"), ("brains", "x"), ("transcripts_dir", "/etc"), ("brain-acme.remote", "x"), ("artifactsDir", ""))]
+        (self.work / "brain-globex/.data/brain.json").write_text("{ not json", encoding="utf-8")
+        texts += [json.dumps(self.settings()), self.refused("brain-globex.owner", "Max Roe")]
+        for text in texts:
+            for term in self.TECHNICAL:
+                self.assertNotIn(term, text, term)
+        # The rendering code of the Settings view is held to the same rule, the Version section (its own rules) apart.
+        view = self.SCRIPT[self.SCRIPT.index("// ---------- Settings ----------"):self.SCRIPT.index("// ---------- Update ----------")]
+        for term in (*self.TECHNICAL, "copyCommand", "commandLine"):
+            self.assertNotIn(term, view, term)
+
+    def test_the_view_never_writes_when_read(self):
+        before = {path: path.read_bytes() for path in self.work.rglob("*") if path.is_file()}
+        self.settings()
+        self.assertEqual(before, {path: path.read_bytes() for path in self.work.rglob("*") if path.is_file()})
+
+
 class PortabilityTest(unittest.TestCase):
     """What the server does differently on Windows, checked from here: the system is passed in, never faked globally."""
 
@@ -5060,6 +5363,229 @@ class PortabilityTest(unittest.TestCase):
 
     def test_the_port_is_never_shared_on_windows(self):
         self.assertEqual(tasks_web.TaskServer.allow_reuse_address, os.name != "nt")
+
+
+class UpdateRoutesTest(unittest.TestCase):
+    """`/api/update*`: the Update routes against temporary fictitious repositories (a bare remote and a clone served as Work); the restart is stubbed."""
+    NOTES = "Highlights\n\n- add the thing\n\n<script>alert(1)</script>"  # no "#" line: git strips them from a message given with -m
+
+    def git(self, cwd, *args):
+        return subprocess.run(["git", *args], cwd=cwd, env=os.environ, check=True, capture_output=True, text=True).stdout.strip()
+
+    def commit(self, repo, name, text, message):
+        (repo / name).write_text(text, encoding="utf-8")
+        self.git(repo, "add", name)
+        self.git(repo, "commit", "-q", "-m", message)
+
+    def publish(self, tag, message=None):
+        self.git(self.seed, "tag", "-a", tag, "-m", message or self.NOTES)
+        self.git(self.seed, "push", "-q", "origin", "main", tag)
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)  # last: the server is stopped first
+        base = Path(self.temp.name).resolve()
+        patcher = patch.dict(os.environ, {"HOME": str(base), "USERPROFILE": str(base), "GIT_CONFIG_GLOBAL": str(base / ".gitconfig"), "GIT_CONFIG_NOSYSTEM": "1",
+                                          "GIT_TERMINAL_PROMPT": "0", "GIT_AUTHOR_NAME": "Ada", "GIT_AUTHOR_EMAIL": "ada@acme.example",
+                                          "GIT_COMMITTER_NAME": "Ada", "GIT_COMMITTER_EMAIL": "ada@acme.example"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for name in [key for key in os.environ if key.startswith("GIT_") and not key.startswith(("GIT_AUTHOR", "GIT_COMMITTER", "GIT_CONFIG", "GIT_TERMINAL"))]:
+            del os.environ[name]  # restored by the patcher: a hook's GIT_DIR must not leak into the temporary repositories
+        self.remote, self.seed, self.work = base / "remote.git", base / "seed", base / "Work"
+        self.git(base, "init", "-q", "--bare", "-b", "main", str(self.remote))
+        self.git(base, "clone", "-q", str(self.remote), str(self.seed))
+        self.git(self.seed, "checkout", "-q", "-b", "main")
+        self.commit(self.seed, "a.txt", "one\n", "feat: first")
+        self.publish("v0.1.0", "First")
+        self.git(base, "clone", "-q", str(self.remote), str(self.work))
+        brain = self.work / "brain-acme"
+        (brain / ".data").mkdir(parents=True)
+        (brain / "AGENTS.md").write_text("# Brain\n", encoding="utf-8")
+        (brain / "projects").mkdir()
+        stub = base / "stub-update.sh"
+        stub.write_text("#!/bin/bash\necho stub ran\necho done > update-ran.txt\n", encoding="utf-8")
+        env_patcher = patch.dict(os.environ, {"WORK_UPDATE_SCRIPT": str(stub)})
+        env_patcher.start()
+        self.addCleanup(env_patcher.stop)
+        self.server = tasks_web.TaskServer(("127.0.0.1", 0), tasks_web.Store(brain), work=self.work)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self.stop)
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+    def request(self, method, path, payload=None, token=True, origin=True):
+        return TasksWebTest.request(self, method, path, payload, token, origin)
+
+    def release_two(self):
+        self.commit(self.seed, "b.txt", "two\n", "feat: second")
+        self.publish("v0.2.0")
+
+    def test_get_before_any_check_is_empty_and_makes_no_network_call(self):
+        with patch.object(tasks_web, "run_update") as runner:
+            self.assertEqual(self.request("GET", "/api/update"), (200, {"state": None}))
+        runner.assert_not_called()
+
+    def test_check_reports_an_available_release_with_rendered_notes(self):
+        self.release_two()
+        status, data = self.request("POST", "/api/update/check", {})
+        self.assertEqual(status, 200, data)
+        self.assertEqual((data["state"], data["current"], data["latest"], data["kind"]), ("available", "v0.1.0", "v0.2.0", "minor"))
+        self.assertEqual(data["commits"], ["feat: second"])
+        self.assertIn("<p>Highlights</p>", data["notes_html"])
+        self.assertIn("<li>add the thing</li>", data["notes_html"])
+        self.assertNotIn("<script>", data["notes_html"])  # raw HTML is escaped
+        self.assertRegex(data["checked_at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        status, again = self.request("GET", "/api/update")
+        self.assertEqual((status, again["state"], again["latest"], again["checked_at"]), (200, "available", "v0.2.0", data["checked_at"]))
+
+    def test_up_to_date_has_no_newer_release(self):
+        status, data = self.request("POST", "/api/update/check", {})
+        self.assertEqual((status, data["state"], data["current"], data["latest"], data["notes_html"]), (200, "up-to-date", "v0.1.0", "v0.1.0", ""))
+
+    def test_checks_are_throttled_to_one_per_hour_unless_forced(self):
+        calls = []
+        real = tasks_web.run_update
+        with patch.object(tasks_web, "run_update", side_effect=lambda *args: calls.append(args) or real(*args)):
+            self.assertFalse(self.request("POST", "/api/update/check", {})[1]["cached"])
+            self.release_two()  # published after the first check: a cached answer cannot know it
+            status, cached = self.request("POST", "/api/update/check", {})
+            self.assertEqual((status, cached["state"], cached["cached"], len(calls)), (200, "up-to-date", True, 1))
+            status, forced = self.request("POST", "/api/update/check", {"force": True})
+            self.assertEqual((status, forced["state"], forced["cached"], len(calls)), (200, "available", False, 2))
+            self.assertEqual(self.request("POST", "/api/update/check", {})[1]["state"], "available")
+            self.assertEqual(len(calls), 2)
+        state = tasks_web.UpdateState()
+        clock = iter([0.0, 3599.0, 3601.0, 3601.0])
+        with patch.object(tasks_web, "run_update", return_value={"state": "up-to-date"}) as runner:
+            state.check(self.work, False, clock=lambda: next(clock))
+            state.check(self.work, False, clock=lambda: next(clock))
+            self.assertEqual(runner.call_count, 1)
+            state.check(self.work, False, clock=lambda: next(clock))
+            self.assertEqual(runner.call_count, 2)
+
+    def test_notes_are_rendered_with_the_app_markdown_renderer(self):
+        html = tasks_web.update_notes_html({"notes": "### Features\n\n- **api**: add `x`\n\n[site](https://acme.example/r)\n\n<b>raw</b>"})
+        self.assertIn("<h3", html)
+        self.assertIn("<strong>api</strong>", html)
+        self.assertIn('href="https://acme.example/r" target="_blank" rel="noopener noreferrer"', html)
+        self.assertIn("&lt;b&gt;raw&lt;/b&gt;", html)
+        self.assertEqual((tasks_web.update_notes_html({"notes": None}), tasks_web.update_notes_html({})), ("", ""))
+
+    def test_a_failed_check_is_not_cached(self):
+        with patch.object(tasks_web, "run_update", return_value={"state": "error", "error": "fetch failed"}) as runner:
+            self.assertEqual(self.request("POST", "/api/update/check", {})[1]["state"], "error")
+            self.assertEqual(self.request("POST", "/api/update/check", {})[1]["state"], "error")
+        self.assertEqual(runner.call_count, 2)
+
+    def test_check_body_is_validated(self):
+        for body in ({"force": "yes"}, {"other": 1}, []):
+            self.assertEqual(self.request("POST", "/api/update/check", body)[0], 400, body)
+
+    def test_apply_refuses_a_missing_or_malformed_version(self):
+        self.release_two()
+        for body in ({}, {"version": "latest"}, {"version": 2}, {"version": "v0.2.0", "force": True}, {"version": "v0.2.0; rm -rf"}):
+            status, data = self.request("POST", "/api/update/apply", body)
+            self.assertEqual(status, 400, (body, data))
+        self.assertFalse(self.server.restart_requested)
+        self.assertEqual(self.git(self.work, "describe", "--tags"), "v0.1.0")
+
+    def test_apply_refuses_a_version_that_is_not_the_latest(self):
+        self.release_two()
+        status, data = self.request("POST", "/api/update/apply", {"version": "v0.1.5"})
+        self.assertEqual(status, 409, data)
+        self.assertFalse(data["applied"] or data["restarting"])
+        self.assertIn("not the latest", data["error"])
+        self.assertEqual(self.git(self.work, "describe", "--tags"), "v0.1.0")
+        self.assertFalse((self.work / "update-ran.txt").exists())
+
+    def test_apply_fast_forwards_runs_the_update_script_and_asks_for_a_restart(self):
+        self.release_two()
+        status, data = self.request("POST", "/api/update/apply", {"version": "v0.2.0"})
+        self.assertEqual(status, 200, data)
+        self.assertEqual((data["applied"], data["restarting"], data["from"], data["to"]), (True, True, "v0.1.0", "v0.2.0"))
+        self.assertEqual((data["update_script"]["ran"], data["update_script"]["exit_code"]), (True, 0))
+        self.assertEqual(self.git(self.work, "rev-parse", "HEAD"), self.git(self.work, "rev-parse", "v0.2.0^{commit}"))
+        self.assertEqual((self.work / "b.txt").read_text(encoding="utf-8"), "two\n")
+        self.assertEqual((self.work / "update-ran.txt").read_text(encoding="utf-8").strip(), "done")
+        self.thread.join(timeout=5)  # the server shuts itself down once the response is sent, so that main() can restart it
+        self.assertFalse(self.thread.is_alive())
+        self.assertTrue(self.server.restart_requested)
+
+    def test_main_restarts_the_process_after_an_update_and_not_otherwise(self):
+        brain = self.work / "brain-acme"
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        for requested, expected in ((True, 1), (False, 0)):
+            real_init = tasks_web.TaskServer.__init__
+
+            def init(server, *args, **kwargs):
+                real_init(server, *args, **kwargs)
+                server.restart_requested = requested
+                threading.Timer(0.3, server.shutdown).start()
+
+            with patch.object(tasks_web.TaskServer, "__init__", init), patch.object(tasks_web, "restart_process") as restart, \
+                    patch.object(sys, "argv", ["tasks-web.py", "--brain", str(brain), "--port", str(port)]), patch.dict(os.environ, {"WORK_DIR": str(self.work)}), \
+                    redirect_stdout(io.StringIO()):
+                tasks_web.main()
+            self.assertEqual(restart.call_count, expected)
+
+    def test_restart_command_reruns_the_same_arguments(self):
+        with patch.object(tasks_web.tasks_launch, "find_uv", return_value="/opt/uv"), patch.object(sys, "argv", ["tasks-web.py", "--port", "8800"]):
+            self.assertEqual(tasks_web.restart_command(), ["/opt/uv", "run", str(Path(tasks_web.__file__).resolve()), "--port", "8800"])
+        with patch.object(tasks_web.tasks_launch, "find_uv", return_value=None), patch.object(sys, "argv", ["tasks-web.py", "--port", "8800"]):
+            self.assertEqual(tasks_web.restart_command(), [sys.executable, "tasks-web.py", "--port", "8800"])
+        with patch.object(tasks_web.os, "execv") as execv, patch.object(tasks_web, "restart_command", return_value=["/opt/uv", "run", "x"]):
+            tasks_web.restart_process()
+        execv.assert_called_once_with("/opt/uv", ["/opt/uv", "run", "x"])
+
+    def test_blocked_by_local_commits_cannot_be_applied(self):
+        self.commit(self.work, "local.txt", "mine\n", "feat: local")
+        self.release_two()
+        status, data = self.request("POST", "/api/update/check", {})
+        self.assertEqual((status, data["state"], data["latest"]), (200, "blocked", "v0.2.0"))
+        self.assertTrue(any("diverged" in reason for reason in data["reasons"]))
+        before = self.git(self.work, "rev-parse", "HEAD")
+        status, data = self.request("POST", "/api/update/apply", {"version": "v0.2.0"})
+        self.assertEqual((status, data["applied"], data["restarting"]), (409, False, False))
+        self.assertIn("diverged", data["error"])
+        self.assertEqual(self.git(self.work, "rev-parse", "HEAD"), before)
+        self.assertFalse(self.server.restart_requested)
+
+    def test_only_one_apply_runs_at_a_time(self):
+        self.release_two()
+        self.assertTrue(tasks_web.UPDATE_APPLY_LOCK.acquire(blocking=False))
+        try:
+            status, data = self.request("POST", "/api/update/apply", {"version": "v0.2.0"})
+        finally:
+            tasks_web.UPDATE_APPLY_LOCK.release()
+        self.assertEqual((status, data["error"]), (409, "An update is already running."))
+        self.assertEqual(self.git(self.work, "describe", "--tags"), "v0.1.0")
+
+    def test_the_post_routes_check_token_origin_and_content_type(self):
+        self.release_two()
+        for path, body in (("/api/update/check", {}), ("/api/update/apply", {"version": "v0.2.0"})):
+            self.assertEqual(self.request("POST", path, body, token=False)[0], 403)
+            self.assertEqual(self.request("POST", path, body, origin=False)[0], 403)
+            request = Request(self.base + path, data=json.dumps(body).encode(), method="POST",
+                              headers={"X-Tasks-Token": self.server.token, "Origin": "http://evil.example", "Content-Type": "application/json"})
+            with self.assertRaises(HTTPError) as caught:
+                urlopen(request, timeout=3)
+            self.assertEqual(caught.exception.code, 403)
+            caught.exception.close()
+            request = Request(self.base + path, data=b"{}", method="POST", headers={"X-Tasks-Token": self.server.token, "Origin": self.base, "Content-Type": "text/plain"})
+            with self.assertRaises(HTTPError) as caught:
+                urlopen(request, timeout=3)
+            self.assertEqual(caught.exception.code, 415)
+            caught.exception.close()
+        self.assertEqual(self.git(self.work, "describe", "--tags"), "v0.1.0")
+        self.assertFalse(self.server.restart_requested)
 
 
 if __name__ == "__main__":

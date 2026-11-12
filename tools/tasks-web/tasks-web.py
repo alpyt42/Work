@@ -35,9 +35,11 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unicodedata
 from array import array
 from bisect import bisect_left, bisect_right
+from dataclasses import asdict
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -452,6 +454,440 @@ def brain_boundary(brain: Path) -> dict[str, str]:
             if isinstance(declared.get(key), str):
                 values[key] = " ".join(declared[key].split())
     return values
+
+
+# --- Settings: the Work configuration of this computer, in plain words, editable --------------------------------
+# `GET /api/settings` answers with what a business user can read and change; `POST /api/settings` saves one setting
+# through tools/machine/setup.py (`apply`, which validates and writes it where it belongs). Technical settings (the
+# Git remote and e-mail patterns of a brain) and the checks only an owner or an agent can do are never editable here:
+# the page only says that the agent takes care of them. Every user-facing string is plain language: no command, no
+# file name, no JSON key. Only names, values and states are returned: never the content of `.env`,
+# `.data/client-repos.json`, keys or SSH and home configuration, which no section reads. A section that fails
+# reports an `error` and leaves the others intact.
+
+_setup_spec = importlib.util.spec_from_file_location("work_setup", TOOLS_ROOT / "tools/machine/setup.py")
+assert _setup_spec and _setup_spec.loader
+setup_tool = importlib.util.module_from_spec(_setup_spec)
+sys.modules["work_setup"] = setup_tool  # dataclasses look their module up here
+_setup_spec.loader.exec_module(setup_tool)
+SETTINGS_LOCK = threading.Lock()
+SETTINGS_TEXT_LIMIT = 600
+SETTINGS_VALUE_LIMIT = 600
+SETTINGS_BRAIN_FIELDS = ("owner", "description", "scope")  # the fields of a brain a business user may change
+SETTINGS_KEYS = ("defaultBrain", "artifactsDir", "transcripts_dir", "brains")
+SETTINGS_TECHNICAL_RE = re.compile(r"uv run|\.py\b|\.sh\b|\.json\b|\.env\b|setup\.py|work\.py|update\.sh|[`<>]|://|\bgit\b", re.IGNORECASE)
+SKILL_CODE_ASIDE_RE = re.compile(r"\s*(?:—[^—]*`[^—]*—|\([^()]*`[^()]*\))")  # an aside between dashes or brackets that holds code
+SKILL_COMMAND_RE = re.compile(r"uv run|\.py\b|\.sh\b|\.json\b|\.env\b|[<>]|://", re.IGNORECASE)  # a skill summary that still holds a command is not shown
+SETTINGS_CHECK_TITLES = {
+    "command.git": "A program that keeps the history of your notes is missing on this computer.",
+    "command.uv": "A program that runs the workspace tools is missing on this computer.",
+    "command.npx": "A program needed to install some skills is missing on this computer.",
+    "install": "The workspace is not fully set up yet.",
+    "bootstrap": "The workspace setup is incomplete on this computer.",
+    "git-identity": "The name and e-mail used to sign your saved work need attention on this computer.",
+    "artifacts-link": "The deliverables folder is not connected to the workspace yet.",
+    "tools-env": "Some access details needed by your skills are missing on this computer.",
+    "expected-brains": "Some brains that every computer must have are not on this computer yet.",
+    "transcripts-folder": "Your meeting transcripts folder is not on this computer.",
+    "obsidian": "Your notes app (Obsidian) is not set up on this computer.",
+}
+SETTINGS_CHECK_FALLBACK = "Something needs attention on this computer."
+SETTINGS_DAMAGED = "A settings file on this computer is damaged: ask your agent to look at it."
+
+
+def settings_text(value: object) -> str:
+    """A configured string as shown: one line, credentials of a URL hidden, bounded."""
+    text = " ".join(str(value).split())
+    return "".join(char for char in preflight_push.redact(text) if char.isprintable())[:SETTINGS_TEXT_LIMIT]
+
+
+def settings_config_module(work: Path):
+    """A private copy of work_config.py pointed at `work` (its functions read module-level paths)."""
+    spec = importlib.util.spec_from_file_location("work_config_view", TOOLS_ROOT / "tools/machine/work_config.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.ROOT, module.EXAMPLE, module.LOCAL, module.LOCK, module.STATE = (
+        work, work / "work-config.example.json", work / "work-config.local.json", work / "skills-lock.json", work / ".work-state.json")
+    return module
+
+
+def settings_json_object(path: Path) -> tuple[dict | None, bool]:
+    """(object, False) of a JSON file; (None, False) when absent; (None, True) when unreadable or not an object."""
+    if not path.is_file():
+        return None, False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, True
+    return (data, False) if isinstance(data, dict) else (None, True)
+
+
+def settings_found_brains(wc, work: Path) -> list[Path]:
+    try:
+        return wc.discover_brains(work)
+    except (wc.ConfigError, OSError):
+        try:
+            return wc.find_brains(work)
+        except OSError:
+            return []
+
+
+def settings_key_editable(key: str, names: list[str]) -> bool:
+    """A key the page may write: four workspace settings, and owner, description and kind of a brain of this Work."""
+    name, dot, field = key.partition(".")
+    return key in SETTINGS_KEYS or bool(dot and name in names and field in SETTINGS_BRAIN_FIELDS)
+
+
+def settings_check_title(item) -> str:
+    title = SETTINGS_CHECK_TITLES.get(item.key)
+    if title:
+        return title
+    why = settings_text(item.why).rstrip(".")
+    return f"{why[:1].upper()}{why[1:]} needs attention." if why and not SETTINGS_TECHNICAL_RE.search(why) else SETTINGS_CHECK_FALLBACK
+
+
+def settings_brain_options(wc, brains: list[Path], extra: list[str] = ()) -> list[dict]:
+    options = [{"name": brain.name, "label": brain_label(brain.name), "present": True} for brain in brains]
+    options += [{"name": name, "label": brain_label(name), "present": False} for name in extra if name not in {brain.name for brain in brains}]
+    return options
+
+
+def settings_todo_item(item, options: list[dict]) -> dict:
+    """One missing, editable setting as a plain question with the value to prefill."""
+    key = item.key
+    entry: dict = {"key": key, "input": "text", "value": item.default or "", "has_default": item.default is not None, "placeholder": "", "options": []}
+    brain, _, field = key.partition(".")
+    label = brain_label(brain) if field else ""
+    if key == "defaultBrain":
+        entry.update(label="Which brain should the app open by default?", input="brain", value=item.suggestion or (options[0]["name"] if options else ""), options=options)
+    elif key == "artifactsDir":
+        entry.update(label="Where should your deliverables and received files be kept? Keep the default to store them inside the workspace, or enter the full path of a synced folder.")
+    elif key == "transcripts_dir":
+        entry.update(label="Which folder holds your meeting transcripts? Give its place inside your home folder.")
+    elif key == "brains":
+        names = [part.strip() for part in (item.default or "").split(",") if part.strip()]
+        entry.update(label="Which brains must every computer have?", input="brains", value=names, options=options)
+    elif field == "owner":
+        entry.update(label=f"Whose name should the actions of {label} carry?", placeholder="First and last name")
+    elif field == "scope":
+        entry.update(label=f"What kind of brain is {label}?", input="scope", value=item.default or item.suggestion or "")
+    else:
+        entry.update(label=f"In one sentence, what does {label} hold, and what must it never hold?", input="textarea", placeholder="What it holds, and what it must never hold")
+    if item.detail and "not on this machine" in item.detail:
+        entry["note"] = "The folder chosen before is not on this computer."
+    return entry
+
+
+def settings_setup(work: Path, wc, brains: list[Path]) -> dict:
+    names = [brain.name for brain in brains]
+    options = settings_brain_options(wc, brains)
+    todo, agent, technical = [], [], False
+    for item in setup_tool.collect(work):
+        if item.kind == "setting" and item.state == "missing":
+            if settings_key_editable(item.key, names):
+                todo.append(settings_todo_item(item, options))
+            else:
+                technical = True
+        elif item.kind == "check" and item.state == "owner-action":
+            agent.append({"key": item.key, "title": settings_check_title(item)})
+    return {"todo": todo, "technical_missing": technical, "agent": agent}
+
+
+def settings_workspace(work: Path, wc, brains: list[Path]) -> dict:
+    local, _ = settings_json_object(wc.LOCAL)
+    try:
+        default = wc.default_brain(work)
+    except wc.ConfigError:
+        default = None
+    options = settings_brain_options(wc, brains)
+    result: dict = {"default_brain": {"key": "defaultBrain", "value": default.name if default else "", "label": brain_label(default.name) if default else "",
+                                      "options": options, "problem": "" if default else "No default brain is chosen yet."}}
+    configured = isinstance(local, dict) and isinstance(local.get("artifactsDir"), str)
+    folder = wc.artifacts_dir(work)
+    inside = folder.resolve().is_relative_to(work.resolve())
+    link = work / wc.ARTIFACTS
+    warnings = []
+    if not folder.is_dir():
+        warnings.append("This folder is not on this computer.")
+    elif not inside and not (link.is_symlink() and link.resolve() == folder.resolve()):
+        warnings.append("The folder is not connected to the workspace yet: ask your agent to take care of it.")
+    result["artifacts"] = {"key": "artifactsDir", "value": local["artifactsDir"].strip() if configured else "", "status": "Inside Work" if inside else "Synced folder",
+                           "warnings": warnings}
+    paths, _ = settings_json_object(default / ".data/local-paths.json") if default else (None, False)
+    transcripts = paths.get("transcripts_dir") if paths else None
+    value = transcripts.strip() if isinstance(transcripts, str) else ""
+    warnings = []
+    if value and not Path(value).is_absolute() and ".." not in Path(value).parts and not (Path.home() / value).is_dir():
+        warnings.append("This folder is not on this computer yet.")
+    result["transcripts"] = {"key": "transcripts_dir", "value": value, "note": "Relative to your home folder.", "warnings": warnings}
+    expected = paths.get("brains") if paths else None
+    wanted = [name for name in expected if isinstance(name, str)] if isinstance(expected, list) else []
+    present = {brain.name for brain in brains}
+    result["needed_brains"] = {"key": "brains", "value": wanted, "options": settings_brain_options(wc, brains, wanted),
+                               "warnings": [f"{brain_label(name)} is not on this computer yet: ask your agent to fetch it." for name in wanted if name not in present]}
+    return result
+
+
+def settings_scope_kind(scope: str) -> str:
+    return scope if scope in ("personal", "employer", "client") else "other" if scope else ""
+
+
+def settings_brains(wc, brains: list[Path], default: str) -> list[dict]:
+    result = []
+    for brain in brains:
+        boundary, boundary_bad = settings_json_object(brain / ".data/brain.json")
+        doctor, doctor_bad = settings_json_object(brain / ".data/doctor.json")
+        scope = settings_text(boundary["scope"]) if boundary and isinstance(boundary.get("scope"), str) else ""
+        result.append({
+            "name": brain.name, "label": brain_label(brain.name), "default": brain.name == default,
+            "owner": settings_text(doctor["owner"]) if doctor and isinstance(doctor.get("owner"), str) else "",
+            "description": settings_text(boundary["description"]) if boundary and isinstance(boundary.get("description"), str) else "",
+            "scope": scope, "kind": settings_scope_kind(scope),
+            "problem": "The details of this brain cannot be read: ask your agent to look at them." if boundary_bad or doctor_bad else "",
+        })
+    return result
+
+
+def settings_skill_summary(path: Path) -> str:
+    """The first sentence of the `description` in the front matter of a SKILL.md; "" when absent or too technical to show."""
+    try:
+        text = path.read_text(encoding="utf-8")[:20000]
+    except (OSError, UnicodeDecodeError):
+        return ""
+    value = next((value for key, value in split_front_matter(text)[0] if key == "description"), "")
+    value = re.sub(r"^[>|][+-]?\s*", "", value).strip().strip("\"'").strip()
+    # An aside that names files or code ("— the lines of `inbox/inbox.md` —") goes; other code spans keep their words.
+    value = SKILL_CODE_ASIDE_RE.sub("", value).replace("`", "")
+    sentence = settings_text(re.split(r"(?<=[.!?])\s", value, maxsplit=1)[0])
+    if len(sentence) > 200:
+        sentence = sentence[:199].rstrip() + "…"
+    return "" if SKILL_COMMAND_RE.search(sentence) else sentence
+
+
+def settings_skills(work: Path, wc, brains: list[Path]) -> dict:
+    config = wc.resolve()
+    disabled = set(config["disabled"])
+    groups = []
+    for brain in brains:
+        skills = [{"name": name, "summary": settings_skill_summary(skill["path"] / "SKILL.md")}
+                  for name, skill in sorted(config["own"].items()) if skill["brain"] == brain.name and name not in disabled]
+        if skills:
+            groups.append({"title": f"From {brain_label(brain.name)}", "skills": skills})
+    elsewhere = []
+    for name in sorted(config["thirdParty"]):
+        if name not in disabled:
+            installed = next((work / folder / name / "SKILL.md" for folder in (".claude/skills", ".agents/skills") if (work / folder / name / "SKILL.md").is_file()), None)
+            elsewhere.append({"name": name, "summary": settings_skill_summary(installed) if installed else ""})
+    if elsewhere:
+        groups.append({"title": "Installed from elsewhere", "skills": elsewhere})
+    return {"groups": groups, "turned_off": sorted(disabled), "needs_refresh": wc.stamp_state(config) != "current"}
+
+
+def settings_snapshot(work: Path) -> dict:
+    """The Settings view: what is left to complete, what the agent must do, the workspace, the brains and the skills; an `error` per failed section."""
+    result: dict = {}
+    with SETTINGS_LOCK:
+        wc = settings_config_module(work)
+        setup_tool.work_config = wc  # the checklist reads the same Work as the sections below
+        brains = settings_found_brains(wc, work)
+        try:
+            default = wc.default_brain(work)
+        except (wc.ConfigError, OSError):
+            default = None
+        default_name = default.name if default else ""
+        sections = {
+            "setup": lambda: settings_setup(work, wc, brains),
+            "workspace": lambda: settings_workspace(work, wc, brains),
+            "brains": lambda: {"brains": settings_brains(wc, brains, default_name)},
+            "skills": lambda: settings_skills(work, wc, brains),
+        }
+        for name, build in sections.items():
+            try:
+                result[name] = build()
+            except (wc.ConfigError, setup_tool.SetupError):
+                result[name] = {"error": SETTINGS_DAMAGED}
+            except (OSError, ValueError, KeyError, TypeError):
+                result[name] = {"error": "This part of the settings cannot be read right now."}
+    return result
+
+
+def settings_plain_error(key: str, problem: str) -> str:
+    """A refusal of tools/machine/setup.py in plain words: never a command, a file name or a technical term."""
+    text = problem.lower()
+    field = key.partition(".")[2] if "." in key else key
+    if "cannot read" in text or "fix it by hand" in text or "would be invalid" in text or "json object" in text:
+        return SETTINGS_DAMAGED
+    if "answer defaultbrain first" in text or "no default brain" in text:
+        return "Choose the default brain first."
+    if field == "defaultBrain":
+        return "Choose one of the brains of this workspace."
+    if field == "artifactsDir":
+        if "does not exist" in text:
+            return "That folder does not exist yet: create it or sync it on this computer first, then try again."
+        if "not a folder" in text:
+            return "That is not a folder."
+        return "Enter a folder inside the workspace, or the full path of a synced folder."
+    if field == "transcripts_dir":
+        if "outside the workspace" in text:
+            return "Choose a folder outside the workspace."
+        return "Choose a folder inside your home folder."
+    if field == "brains":
+        if "must include the default" in text:
+            return "The list must include the default brain."
+        return "Choose among the brains of this workspace."
+    if field == "owner":
+        return "Enter a name, in 120 characters at most." if "empty" not in text else "Enter a name."
+    if field == "description":
+        return "Describe in one sentence what it holds." if "empty" in text else "Keep it short: 500 characters at most."
+    if field == "scope":
+        return "Use a short word, such as personal, employer or client."
+    return "This value cannot be saved. Check it and try again."
+
+
+def settings_plain_notes(lines: list[str]) -> list[str]:
+    notes = []
+    for line in lines:
+        if not line.startswith("note: "):
+            continue
+        note = line[6:]
+        if note.startswith("created "):
+            notes.append("The folder was created.")
+        elif "does not link" in note:
+            notes.append("Your agent still has to connect this folder to the workspace: ask it to take care of it.")
+        elif "not at the Work root" in note:
+            notes.append("Some of these brains are not on this computer yet: ask your agent to fetch them.")
+        elif "not on this machine" in note:
+            notes.append("This folder is not on this computer yet.")
+    return notes
+
+
+def settings_apply(work: Path, key: str, value: str | None) -> str:
+    """Save one setting (None: its default) and return the message to show; TaskError 400 with a plain message when it is refused."""
+    with SETTINGS_LOCK:
+        wc = settings_config_module(work)
+        setup_tool.work_config = wc
+        names = [brain.name for brain in settings_found_brains(wc, work)]
+        if not settings_key_editable(key, names):
+            raise TaskError(HTTPStatus.BAD_REQUEST, "This setting cannot be changed here.")
+        try:
+            lines = setup_tool.apply(work, key, value)
+        except setup_tool.SetupError as problem:
+            raise TaskError(HTTPStatus.BAD_REQUEST, settings_plain_error(key, str(problem))) from None
+        except (wc.ConfigError, OSError):
+            raise TaskError(HTTPStatus.BAD_REQUEST, SETTINGS_DAMAGED) from None
+    if lines and "already set" in lines[0]:
+        return "Already set: nothing was changed."
+    parts = ["Reset to the default." if value is None else "Saved.", *settings_plain_notes(lines)]
+    if key == "defaultBrain":
+        parts.append("The new default brain applies the next time the app starts.")
+    return " ".join(parts)
+
+
+# --- Update: bring the Work workspace to the latest release ------------------------------------------------
+# `tools/machine/work.py` does the work (check, fast-forward to a release tag, run update.sh); the server only runs it
+# as a command in the served Work root and keeps the last check in memory. A check is throttled to one per hour, an
+# apply never runs twice at once, and the brains are never touched. After a successful apply the server restarts itself
+# (see `restart_process`) so that the new code and static files are served on the same port.
+
+UPDATE_CHECK_TIMEOUT = 45
+UPDATE_APPLY_TIMEOUT = 660  # update.sh may take up to 600 s
+UPDATE_THROTTLE = 3600.0
+UPDATE_VERSION_RE = re.compile(r"v\d+\.\d+\.\d+")
+UPDATE_APPLY_LOCK = threading.Lock()
+
+
+def update_command(work: Path, *args: str) -> list[str]:
+    """`work.py <args>` through uv (the served Work's own copy when it has one, else this checkout's)."""
+    script = work / "tools/machine/work.py"
+    path = str(script if script.is_file() else TOOLS_ROOT / "tools/machine/work.py")
+    uv = shutil.which("uv") or tasks_launch.find_uv()
+    return [uv, "run", path, *args] if uv else [sys.executable, path, *args]
+
+
+def run_update(work: Path, args: list[str], timeout: int) -> dict:
+    """The JSON report of `work.py update …`; a report with state `error` when the command cannot run or answers nothing readable."""
+    failure = {"state": "error", "current": None, "latest": None, "kind": None, "notes": None, "commits": [], "commits_total": 0,
+               "files": 0, "reasons": [], "error": None, "fetched": False, "branch": None, "remote": None, "head": None}
+    environment = python_environment()
+    environment["WORK_DIR"] = str(work)
+    try:
+        result = subprocess.run(update_command(work, "update", *args, "--json"), cwd=work, env=environment, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        return {**failure, "error": "The update command timed out.", "reasons": ["The update command timed out."]}
+    except OSError:
+        return {**failure, "error": "Could not start the update command.", "reasons": ["Could not start the update command."]}
+    try:
+        report = json.loads(result.stdout)
+        if not isinstance(report, dict) or "state" not in report:
+            raise ValueError
+    except ValueError:
+        message = "The update command gave no readable answer."
+        return {**failure, "error": message, "reasons": [message]}
+    return report
+
+
+def update_notes_html(report: dict) -> str:
+    notes = report.get("notes")
+    return MARKDOWN.render(notes, {"id": "", "ids": set()}) if isinstance(notes, str) and notes.strip() else ""
+
+
+class UpdateState:
+    """The last update check of the served Work, kept in memory."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.report: dict | None = None
+        self.stamp = 0.0
+        self.checked_at: str | None = None
+
+    def public(self, cached: bool = False) -> dict:
+        if self.report is None:
+            return {"state": None}
+        return {**self.report, "notes_html": update_notes_html(self.report), "checked_at": self.checked_at, "cached": cached}
+
+    def check(self, work: Path, force: bool, clock=time.monotonic) -> dict:
+        with self.lock:
+            if self.report is not None and not force and self.report["state"] != "error" and clock() - self.stamp < UPDATE_THROTTLE:
+                return self.public(cached=True)
+            self.report = run_update(work, ["--check"], UPDATE_CHECK_TIMEOUT)
+            self.stamp = clock()
+            self.checked_at = datetime.now(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")
+            return self.public()
+
+    def forget(self) -> None:
+        with self.lock:
+            self.report = None
+
+
+def update_apply(work: Path, version: str, state: UpdateState) -> tuple[HTTPStatus, dict]:
+    """Apply the release the page showed. 409 when the update is refused or fails before any change; 200 otherwise."""
+    if not UPDATE_APPLY_LOCK.acquire(blocking=False):
+        raise TaskError(HTTPStatus.CONFLICT, "An update is already running.")
+    try:
+        report = run_update(work, ["--apply", "--to", version], UPDATE_APPLY_TIMEOUT)
+        state.forget()
+    finally:
+        UPDATE_APPLY_LOCK.release()
+    report.setdefault("applied", False)
+    if report["applied"] or report["state"] == "up-to-date":
+        return HTTPStatus.OK, report
+    message = "; ".join(str(reason) for reason in report.get("reasons") or []) or report.get("error") or "The update was refused."
+    return HTTPStatus.CONFLICT, {**report, "error": message}
+
+
+def restart_command() -> list[str]:
+    """This same command line, run again: through uv when it is found, else with the interpreter that runs this script."""
+    uv = tasks_launch.find_uv()
+    script = str(Path(__file__).resolve())
+    return [uv, "run", script, *sys.argv[1:]] if uv else [sys.executable, *sys.argv]
+
+
+def restart_process() -> None:
+    """Replace this process by a new one on the same command line (never returns). Tests replace it."""
+    command = restart_command()
+    os.execv(command[0], command)
 
 
 # --- Git: save and send the changes of a brain -------------------------------------------------------------
@@ -1183,6 +1619,7 @@ SEARCH_QUERY_LIMIT = 300
 SEARCH_MAX_TERMS = 10
 SEARCH_TERM_MAX = 60
 SEARCH_RESULT_LIMIT = 50
+DOC_KINDS = ("note", "source", "workstream", "journal", "page")  # what `doc_type` returns: the Type filter of Docs and of the search
 SEARCH_SNIPPETS = 2
 SEARCH_WINDOW = 160
 SEARCH_LEAD = 40
@@ -2204,16 +2641,23 @@ class Store:
         items.sort(key=lambda item: item["date"], reverse=True)
         return {"docs": items}
 
-    def search(self, query: str, project: str, archived: bool = False) -> dict:
-        """The global search of the documents; ``archived``: of the archived projects only (the Archives view), never both."""
+    def search(self, query: str, project: str, archived: bool = False, kind: str = "") -> dict:
+        """The global search of the documents; ``archived``: of the archived projects only (the Archives view), never both.
+
+        ``kind``: only the documents of that type (see `doc_type`), filtered before the best results are kept; ``types`` counts the
+        matches of each type whatever ``kind`` is, so the page can say what another type would find.
+        """
+        if kind and kind not in DOC_KINDS:
+            raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid type parameter.")
         terms = parse_query(query)
-        empty = {"query": query, "terms": terms, "results": [], "total": 0, "truncated": False}
+        empty = {"query": query, "terms": terms, "results": [], "total": 0, "truncated": False, "types": {}}
         if not terms:
             return empty
         projects = self._doc_projects(archived)
         folders = {register: folder for folder, _, register in projects}
         now = datetime.now().timestamp()
-        matches: list[tuple[float, str, DocEntry, tuple[str, str] | None]] = []
+        types: dict[str, int] = {}
+        matches: list[tuple[float, str, DocEntry, tuple[str, str] | None, str | None]] = []
         for entry in self.docs(archived):
             owner = self._doc_project(entry.id, projects)
             if project == "none" and owner is not None:
@@ -2229,14 +2673,19 @@ class Store:
                 score += (10 if in_title else 0) + (5 if in_path else 0)
                 score += 3 * min(entry.norm_heads.count(term), 5) + min(body, SEARCH_BODY_CAP)
             else:
+                entry_kind = self._doc_kind(entry.id, owner, folders)
+                if entry_kind:
+                    types[entry_kind] = types.get(entry_kind, 0) + 1
+                if kind and entry_kind != kind:
+                    continue
                 age_days = max(0.0, (now - entry.mtime) / 86400)
-                matches.append((round(score + 0.5 / (1 + age_days / 30), 2), entry.id, entry, owner))
+                matches.append((round(score + 0.5 / (1 + age_days / 30), 2), entry.id, entry, owner, entry_kind))
         matches.sort(key=lambda item: (-item[0], item[1]))
         results = [{
             "id": entry.id, "title": entry.title, "project": owner[0] if owner else None, "register": owner[1] if owner else None,
-            "type": self._doc_kind(entry.id, owner, folders), "snippets": doc_snippets(entry, terms), "score": score,
-        } for score, _, entry, owner in matches[:SEARCH_RESULT_LIMIT]]
-        return {**empty, "results": results, "total": len(matches), "truncated": len(matches) > SEARCH_RESULT_LIMIT}
+            "type": entry_kind, "snippets": doc_snippets(entry, terms), "score": score,
+        } for score, _, entry, owner, entry_kind in matches[:SEARCH_RESULT_LIMIT]]
+        return {**empty, "results": results, "total": len(matches), "truncated": len(matches) > SEARCH_RESULT_LIMIT, "types": types}
 
     def render_doc(self, doc_id: object, archived: bool = False) -> dict:
         """A document rendered for the reader; ``archived``: a document of an archived project (read-only, the Archives view), and only those."""
@@ -2529,6 +2978,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/tools":
             self._json(HTTPStatus.OK, {"tools": tool_catalog()})
             return
+        if path == "/api/settings":
+            self._json(HTTPStatus.OK, settings_snapshot(self.server.work))
+            return
+        if path == "/api/update":
+            self._json(HTTPStatus.OK, self.server.update.public(cached=True))
+            return
         if path in {"/api/notes", "/api/notes/content", "/api/notes/backlinks"}:
             self._notes_request(path, store)
             return
@@ -2582,7 +3037,7 @@ class Handler(BaseHTTPRequestHandler):
             if archived not in {"", "1"}:
                 raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid archived parameter.")
             if path == "/api/search":
-                result = store.search(one("q", ""), one("project", ""), archived=archived == "1")
+                result = store.search(one("q", ""), one("project", ""), archived=archived == "1", kind=one("type", ""))
             elif path == "/api/docs/recent":
                 result = store.recent_docs(one("project", ""))
             elif path == "/api/docs/list":
@@ -2766,6 +3221,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/tools/run":
             self._tool_request()
             return
+        if path in {"/api/update/check", "/api/update/apply"}:
+            self._update_request(path)
+            return
+        if path == "/api/settings":
+            self._settings_request()
+            return
         if path in {"/api/git/save", "/api/git/send"}:
             self._git_write_request(path)
             return
@@ -2829,6 +3290,79 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeDecodeError):
             self._json(HTTPStatus.BAD_REQUEST, {"error": "Invalid JSON."})
 
+    def _settings_request(self) -> None:
+        """`POST /api/settings` with {"key": K, "value": V} or {"key": K, "default": true}: save one setting, answer with the fresh snapshot and a message."""
+        if not self._host_ok() or self.headers.get("Origin") not in {f"http://127.0.0.1:{self.server.server_port}", f"http://localhost:{self.server.server_port}"}:
+            self._json(HTTPStatus.FORBIDDEN, {"error": "Origin refused."})
+            return
+        if self.headers.get("X-Tasks-Token") != self.server.token:
+            self._json(HTTPStatus.FORBIDDEN, {"error": "Invalid local token."})
+            return
+        if self.headers.get("Content-Type", "").split(";", 1)[0] != "application/json":
+            self._json(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "JSON required."})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 4096:
+                raise TaskError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Request too large.")
+            payload = json.loads(self.rfile.read(length))
+            if not isinstance(payload, dict) or not isinstance(payload.get("key"), str) or set(payload) not in ({"key", "value"}, {"key", "default"}):
+                raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid settings request.")
+            value: str | None = None
+            if "default" in payload:
+                if payload["default"] is not True:
+                    raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid settings request.")
+            else:
+                value = payload["value"]
+                if isinstance(value, list) and all(isinstance(name, str) for name in value):
+                    value = ", ".join(value)  # the brains every computer must have
+                if not isinstance(value, str) or len(value) > SETTINGS_VALUE_LIMIT:
+                    raise TaskError(HTTPStatus.BAD_REQUEST, "Enter a value of 600 characters at most.")
+            with WRITE_LOCK:
+                message = settings_apply(self.server.work, payload["key"], value)
+            self._json(HTTPStatus.OK, {**settings_snapshot(self.server.work), "message": message})
+        except TaskError as error:
+            self._json(error.status, {"error": error.message})
+        except (ValueError, UnicodeDecodeError):
+            self._json(HTTPStatus.BAD_REQUEST, {"error": "Invalid JSON."})
+
+    def _update_request(self, path: str) -> None:
+        if not self._host_ok() or self.headers.get("Origin") not in {f"http://127.0.0.1:{self.server.server_port}", f"http://localhost:{self.server.server_port}"}:
+            self._json(HTTPStatus.FORBIDDEN, {"error": "Origin refused."})
+            return
+        if self.headers.get("X-Tasks-Token") != self.server.token:
+            self._json(HTTPStatus.FORBIDDEN, {"error": "Invalid local token."})
+            return
+        if self.headers.get("Content-Type", "").split(";", 1)[0] != "application/json":
+            self._json(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "JSON required."})
+            return
+        restart = False
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 256:
+                raise TaskError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Request too large.")
+            payload = json.loads(self.rfile.read(length))
+            if not isinstance(payload, dict):
+                raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid update request.")
+            if path == "/api/update/check":
+                if set(payload) - {"force"} or not isinstance(payload.get("force", False), bool):
+                    raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid update request.")
+                self._json(HTTPStatus.OK, self.server.update.check(self.server.work, payload.get("force", False)))
+                return
+            version = payload.get("version")
+            if set(payload) != {"version"} or not isinstance(version, str) or not UPDATE_VERSION_RE.fullmatch(version):
+                raise TaskError(HTTPStatus.BAD_REQUEST, "A release version such as v1.2.3 is required.")
+            status, report = update_apply(self.server.work, version, self.server.update)
+            restart = bool(report.get("applied"))
+            self._json(status, {**report, "restarting": restart})
+        except TaskError as error:
+            self._json(error.status, {"error": error.message})
+        except (ValueError, UnicodeDecodeError):
+            self._json(HTTPStatus.BAD_REQUEST, {"error": "Invalid JSON."})
+        if restart:  # after the response is sent: main() re-executes this command once serve_forever returns
+            self.server.restart_requested = True
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+
     def do_PATCH(self) -> None:
         path = urlsplit(self.path).path
         self._write_request("note_update" if path == "/api/notes" else "change_subtask" if SUBTASK_ROUTE.fullmatch(path) else "update")
@@ -2861,6 +3395,8 @@ class TaskServer(ThreadingHTTPServer):
         self._stores: dict[str, Store] = {}
         self._stores_lock = threading.Lock()
         self.token = secrets.token_urlsafe(32)
+        self.update = UpdateState()
+        self.restart_requested = False
 
     def _catalog(self) -> tuple[dict[str, Path], str]:
         """(brain name -> folder, name of the default brain), rediscovered on every call.
@@ -2940,6 +3476,10 @@ def main() -> None:
             server.serve_forever()
         except KeyboardInterrupt:
             pass
+        restart = getattr(server, "restart_requested", False)
+    if restart:  # the server is closed, so the port is free for the new process
+        print("Restarting after an update…", flush=True)
+        restart_process()
 
 
 if __name__ == "__main__":

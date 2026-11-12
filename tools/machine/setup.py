@@ -104,6 +104,7 @@ class Item:
     suggestion: str | None = None
     instruction: str = ""
     detail: str = ""
+    value: str = ""  # the effective value of a setting, for the tasks-web Settings view; never printed by `status`
 
 
 def rel(root: Path, path: Path) -> str:
@@ -252,6 +253,8 @@ def default_brain_item(ws: Workspace) -> Item:
         "defaultBrain", "setting", "done", LOCAL, "every tool that acts on a brain when none is named",
         question=f"Which brain should the tools use when none is named ({', '.join(ws.names)})?",
     )
+    if ws.default is not None:
+        item.value = ws.default.name
     if ws.default is None:
         scopes = {brain.name: ws.field(brain, "scope") or scope_default(brain) or "" for brain in ws.ordered}
         item.state, item.detail = "missing", ws.default_problem
@@ -274,6 +277,7 @@ def artifacts_item(ws: Workspace) -> Item:
     except work_config.ConfigError as error:
         item.state, item.detail = "missing", str(error)
         return item
+    item.value = str(ws.local["artifactsDir"])
     if not path.is_dir():
         item.state, item.detail = "missing", "the configured folder is not on this machine"
     return item
@@ -287,6 +291,8 @@ def brains_item(ws: Workspace) -> Item:
     )
     value = ws.paths.get("brains")
     valid = isinstance(value, list) and value and all(isinstance(name, str) and work_config.BRAIN_NAME.fullmatch(name) for name in value)
+    if valid:
+        item.value = ", ".join(value)
     if ws.default is None:
         item.state, item.detail = "missing", "answer defaultBrain first"
     elif not valid:
@@ -301,6 +307,8 @@ def transcripts_item(ws: Workspace) -> Item:
         default=TRANSCRIPTS_DEFAULT,
     )
     value = ws.paths.get("transcripts_dir")
+    if isinstance(value, str):
+        item.value = value.strip()
     if ws.default is None:
         item.state, item.detail = "missing", "answer defaultBrain first"
     elif not isinstance(value, str) or not value.strip():
@@ -330,7 +338,8 @@ def brain_items(ws: Workspace, brain: Path) -> list[Item]:
     for field in BRAIN_FIELDS:
         file, why, question = specs[field]
         item = Item(f"{name}.{field}", "setting", "done", f"{name}/.data/{file}", why, question=question)
-        if not ws.field(brain, field):
+        item.value = ws.field(brain, field)
+        if not item.value:
             item.state, item.detail = "missing", "not set"
             item.default, item.suggestion = brain_default(ws, brain, field)
         items.append(item)
@@ -718,7 +727,8 @@ def main(argv: list[str] | None = None) -> int:
             missing = sum(item.state == "missing" for item in items)
             if args.json:
                 summary = {state: sum(item.state == state for item in items) for state in ("missing", "owner-action", "done")}
-                print(json.dumps({"complete": not missing, "counts": summary, "items": [asdict(item) for item in items]}, indent=2, ensure_ascii=False))
+                listed = [{key: value for key, value in asdict(item).items() if key != "value"} for item in items]  # no configured value
+                print(json.dumps({"complete": not missing, "counts": summary, "items": listed}, indent=2, ensure_ascii=False))
             else:
                 print_status(items)
             return 1 if missing else 0

@@ -60,6 +60,10 @@
         </section>
       </div>
       <div class="sidebar-footer">
+        <button id="updateButton" class="update-button" type="button" hidden>
+          <svg class="nav-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 12.5v-9M4.5 7 8 3.5 11.5 7"/></svg>
+          <span id="updateButtonLabel">Update</span>
+        </button>
         <div class="footer-nav">
           <button id="archivesButton" class="nav-item nav-compact" type="button" data-view="archives" title="The archived clients, missions and projects, read-only; unarchive one to work on it again.">
             <svg class="nav-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3" width="11" height="3" rx="1"/><path d="M3.5 6v6.5h9V6M6.5 8.75h3"/></svg>
@@ -72,6 +76,10 @@
           <button id="gitButton" class="nav-item nav-compact" type="button" data-view="git" title="Save the changes of each brain and send them to its online copy. Nothing is saved or sent until you click.">
             <svg class="nav-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="5" cy="4" r="1.5"/><circle cx="5" cy="12" r="1.5"/><circle cx="11" cy="6" r="1.5"/><path d="M5 5.5v5M11 7.5c0 2-2 2.5-6 3"/></svg>
             <span class="nav-label">Sync</span><span id="gitCount" class="nav-count"></span>
+          </button>
+          <button id="settingsButton" class="nav-item nav-compact" type="button" data-view="settings" title="See what is left to set up in your workspace, and change your settings.">
+            <svg class="nav-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.25"/><path d="M8 2v1.75M8 12.25V14M2 8h1.75M12.25 8H14M3.75 3.75l1.25 1.25M11 11l1.25 1.25M12.25 3.75 11 5M5 11l-1.25 1.25"/></svg>
+            <span class="nav-label">Settings</span>
           </button>
         </div>
         <div class="footer-meta">
@@ -242,6 +250,7 @@
             <pre id="toolResultOutput" tabindex="0" hidden></pre>
           </section>
         </div>
+        <div id="settingsView" class="settings-view" aria-label="Settings" hidden></div>
         <div id="gitView" class="git-view" aria-label="Save and send" hidden>
           <div id="gitCards" class="git-cards"></div>
         </div>
@@ -366,6 +375,17 @@
       <ul id="archiveDialogList" class="git-confirm-list archive-dialog-list" hidden></ul>
       <p id="archiveDialogError" class="form-error" role="alert" hidden></p>
       <div class="dialog-actions"><button id="archiveCancel" class="button" type="submit" value="cancel" autofocus>Cancel</button><button id="archiveConfirm" class="button button-primary" type="button" disabled>Archive</button></div>
+    </form>
+  </dialog>
+  <dialog id="updateDialog" class="dialog dialog-small update-dialog" aria-labelledby="updateHeading" aria-describedby="updateText">
+    <form method="dialog">
+      <h2 id="updateHeading">Update</h2>
+      <p id="updateText" class="dialog-intro"></p>
+      <div id="updateNotes" class="markdown-body update-notes" hidden></div>
+      <ul id="updateList" class="git-confirm-list" hidden></ul>
+      <p id="updateWhat" class="dialog-intro"></p>
+      <p id="updateError" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button id="updateCancel" class="button" type="submit" value="cancel" autofocus>Cancel</button><button id="updateRecheck" class="button" type="button" hidden>Check again</button><button id="updateConfirm" class="button button-primary" type="button">Update</button></div>
     </form>
   </dialog>
   <dialog id="gitChangesDialog" class="dialog dialog-wide" aria-labelledby="gitChangesTitle">

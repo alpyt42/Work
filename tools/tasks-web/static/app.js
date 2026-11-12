@@ -4,7 +4,7 @@ const token = document.querySelector('meta[name="csrf-token"]').content;
 const ids = Object.fromEntries([
   'app', 'sidebar', 'scrim', 'sidebarToggle', 'brainMini', 'sidebarClose', 'mainContent',
   'brainSwitch', 'brainStatic', 'brainStaticName', 'brainButton', 'brainName', 'brainMenu',
-  'todayButton', 'listButton', 'boardButton', 'timelineButton', 'docsButton', 'archivesButton', 'toolsButton', 'gitButton',
+  'todayButton', 'listButton', 'boardButton', 'timelineButton', 'docsButton', 'archivesButton', 'toolsButton', 'gitButton', 'settingsButton',
   'archiveScopeButton', 'archivesView', 'archiveStatus', 'archiveList', 'archivePane', 'archiveBack', 'archivePaneTitle', 'archivePaneMeta', 'archiveUnarchive',
   'archivePaneEmpty', 'archiveBody', 'archiveDialog', 'archiveHeading', 'archiveText', 'archiveDialogList', 'archiveDialogError', 'archiveCancel', 'archiveConfirm',
   'todayCount', 'openCount', 'gitCount', 'projectNav', 'lastSync',
@@ -17,7 +17,7 @@ const ids = Object.fromEntries([
   'timelineTrayBody', 'timelineTrayList', 'docsView', 'docStatus', 'docList', 'docPane', 'docBack', 'docPaneTitle', 'docPaneMeta',
   'docPanePath', 'docEdit', 'docDelete', 'docCancel', 'docSave', 'docPaneEmpty', 'docPaneError', 'docArticle', 'docEditorToolbar', 'docEditor',
   'toolsView', 'toolsCatalog', 'toolResult', 'toolResultTitle', 'toolResultCommand', 'toolResultStatus', 'toolResultEmpty', 'toolResultOutput',
-  'gitView', 'gitCards', 'syncInfo', 'gitConfirmDialog', 'gitConfirmText', 'gitConfirmList', 'gitConfirmGo',
+  'settingsView', 'gitView', 'gitCards', 'syncInfo', 'gitConfirmDialog', 'gitConfirmText', 'gitConfirmList', 'gitConfirmGo',
   'gitChangesDialog', 'gitChangesTitle', 'gitChangesMeta', 'gitChangesBody', 'gitChangesClose',
   'editor', 'editorForm', 'editorTitle', 'editorHint', 'closeEditor', 'editorProjectField', 'editorProject', 'editorActionTitle',
   'editorState', 'editorOwner', 'editorDue', 'editorScheduled', 'editorPriority', 'editorGroup', 'editorGroupNewLabel',
@@ -25,7 +25,7 @@ const ids = Object.fromEntries([
   'editorSubtasks', 'editorSubtasksCount', 'editorSubtasksBar', 'editorSubtaskList', 'subtaskForm', 'subtaskInput', 'submitSubtask', 'subtaskHint', 'subtaskError',
   'noteInput', 'noteWords', 'submitNote', 'closeNoteForm', 'noteError', 'editorStamps', 'editorError', 'deleteEditor', 'cancelEditor', 'saveEditor',
   'popover', 'newNoteDialog', 'newNoteForm', 'closeNewNote', 'newNoteTitle', 'newNoteProject', 'newNoteWhere', 'newNoteToolbar', 'newNoteContent',
-  'newNoteError', 'cancelNewNote', 'saveNewNote', 'deleteNoteDialog', 'deleteNoteHeading', 'deleteNoteText', 'deleteNoteLinks', 'deleteNoteError', 'deleteNoteCancel', 'deleteNoteConfirm', 'quitDialog', 'quitConfirm', 'shortcutsDialog', 'toast', 'toastText', 'toastAction'
+  'newNoteError', 'cancelNewNote', 'saveNewNote', 'deleteNoteDialog', 'deleteNoteHeading', 'deleteNoteText', 'deleteNoteLinks', 'deleteNoteError', 'deleteNoteCancel', 'deleteNoteConfirm', 'updateButton', 'updateButtonLabel', 'updateDialog', 'updateHeading', 'updateText', 'updateNotes', 'updateList', 'updateWhat', 'updateError', 'updateCancel', 'updateRecheck', 'updateConfirm', 'quitDialog', 'quitConfirm', 'shortcutsDialog', 'toast', 'toastText', 'toastAction'
 ].map(id => [id, document.getElementById(id)]));
 
 // The interface text is English; dates, relative times, case changes and sorting follow the browser's locale.
@@ -41,10 +41,10 @@ function readUIState() {
 }
 const savedUI = readUIState();
 // `search` is the results page of the header field: no button, no digit, never restored (it has no query to show).
-const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git'];
+const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git', 'settings'];
 const ACTION_VIEWS = ['today', 'list', 'board', 'timeline'];
-const VIEW_TITLES = {today: 'Today', list: 'Actions', board: 'Board', timeline: 'Timeline', docs: 'Docs', search: 'Search', archives: 'Archives', tools: 'Tools', git: 'Sync'};
-const NAV_BUTTONS = {today: 'todayButton', list: 'listButton', board: 'boardButton', timeline: 'timelineButton', docs: 'docsButton', archives: 'archivesButton', tools: 'toolsButton', git: 'gitButton'};
+const VIEW_TITLES = {today: 'Today', list: 'Actions', board: 'Board', timeline: 'Timeline', docs: 'Docs', search: 'Search', archives: 'Archives', tools: 'Tools', git: 'Sync', settings: 'Settings'};
+const NAV_BUTTONS = {today: 'todayButton', list: 'listButton', board: 'boardButton', timeline: 'timelineButton', docs: 'docsButton', archives: 'archivesButton', tools: 'toolsButton', git: 'gitButton', settings: 'settingsButton'};
 // The Docs view was called Notes: a view saved under the old name opens it.
 let view = VIEWS.includes(savedUI.view) && savedUI.view !== 'search' ? savedUI.view : savedUI.view === 'notes' ? 'docs' : 'today';
 let searchReturn = 'today'; // the view the results page goes back to
@@ -70,6 +70,14 @@ let timelineDrag = null;
 let snapshot = {actions: [], registers: [], owner: '', today: ''};
 let toastTimer;
 let tools = [];
+// Settings view: the last answer of /api/settings, the request in flight, and the last error.
+let settingsData = null;
+let settingsLoading = null;
+let settingsError = '';
+let updateInfo = null; // the last answer of POST /api/update/check; null before the first one
+let updateChecking = false;
+let updateBusy = false;
+let updateReloadOnClose = false;
 let editorHistoryRequest = 0;
 let noteState = null;
 let noteBusy = false;
@@ -85,6 +93,7 @@ let docResults = [];
 let docTotal = 0;
 let docTruncated = false;
 let docTerms = [];
+let docTypes = {}; // the number of matching documents of each type, whatever the Type filter: what another type would find
 let docError = '';
 let docSearchRequest = 0;
 let docSelectedId = null;
@@ -1856,7 +1865,7 @@ function renderFilterChips() {
   ids.scopeChip.hidden = !(view === 'list' || view === 'board');
   ids.groupChip.hidden = !actionView;
   ids.docProjectChip.hidden = !docs;
-  ids.docTypeChip.hidden = !docsList;
+  ids.docTypeChip.hidden = !docs;
   ids.ownerChip.classList.toggle('is-active', ids.ownerFilter.value !== '');
   ids.boardOwnerChip.classList.toggle('is-active', ids.boardOwner.value !== '');
   ids.scopeChip.classList.toggle('is-active', ids.scopeFilter.value !== 'active');
@@ -1867,7 +1876,7 @@ function renderFilterChips() {
     const chosen = select.selectedOptions[0];
     select.parentElement.querySelector('.chip-value').textContent = chosen?.dataset.name || chosen?.textContent || '';
   }
-  const active = actionView ? actionFiltersActive() : docs ? Boolean(projectScope || ids.docProject.value || (docsList && ids.docType.value)) : false;
+  const active = actionView ? actionFiltersActive() : docs ? Boolean(projectScope || ids.docProject.value || ids.docType.value) : false;
   ids.resetFilters.hidden = !active;
   ids.foldAllButton.hidden = view !== 'list' || !listProjectKeys().length;
   const archivable = (actionView || view === 'docs') && scopeArchive();
@@ -1881,6 +1890,7 @@ function render() {
   closePopover(false);
   if (view === 'tools') countTools();
   else if (view === 'git') renderGit();
+  else if (view === 'settings') renderSettings();
   else if (view === 'archives') renderArchives();
   else if (isDocsView()) renderDocsView();
   else {
@@ -1909,6 +1919,7 @@ function setView(next, persist = true) {
   ids.searchInput.setAttribute('aria-label', next === 'archives' ? 'Search the archived projects (words or "exact phrase")' : 'Search the actions and the documents of the brain (words or "exact phrase")');
   ids.toolsView.hidden = next !== 'tools';
   ids.gitView.hidden = next !== 'git';
+  ids.settingsView.hidden = next !== 'settings';
   ids.syncInfo.hidden = next !== 'git';
   for (const [name, id] of Object.entries(NAV_BUTTONS)) {
     if (name === next) ids[id].setAttribute('aria-current', 'page'); else ids[id].removeAttribute('aria-current');
@@ -1926,6 +1937,7 @@ function setView(next, persist = true) {
   render();
   if (next === 'tools' && !tools.length) loadTools();
   if (next === 'git') loadGit();
+  if (next === 'settings' && !settingsData) loadSettings();
   if (next === 'archives') loadArchives();
   if (isDocsView()) refreshDocsView();
   if (persist) {
@@ -2556,7 +2568,7 @@ function updateDue(action, due, anchor = null) {
 // ---------- Brains ----------
 const BRAIN_STORAGE_KEY = 'actions-brain-current-v1';
 // Routes that do not depend on the selected brain: their answers are never dropped when the brain changes.
-const BRAIN_NEUTRAL = new Set(['/api/brains', '/api/tools', '/api/shutdown']);
+const BRAIN_NEUTRAL = new Set(['/api/brains', '/api/tools', '/api/settings', '/api/shutdown']);
 let brains = [];
 let currentBrain = '';
 let brainEpoch = 0;
@@ -3247,6 +3259,489 @@ async function confirmArchive() {
     if (archiveAsk === ask) showArchiveRefusal(error);
   }
 }
+
+// ---------- Settings ----------
+// `GET /api/settings` answers with the workspace in plain words; `POST /api/settings` saves one setting and answers with the fresh view and a message.
+const SCOPE_KINDS = [['personal', 'Personal'], ['employer', 'Employer'], ['client', 'Client']];
+const settingsEdits = new Map(); // setting key -> {draft, busy, error}: what is being typed, kept while the view is redrawn
+const settingsNotes = new Map(); // setting key -> message of the last save
+function settingsRows(rows) {
+  const list = element('dl', 'settings-dl');
+  for (const [label, value] of rows) {
+    if (value === '' || value === null || value === undefined) continue;
+    list.append(element('dt', '', label), element('dd', '', value));
+  }
+  return list;
+}
+function settingsBadge(text, tone = '') {
+  return element('span', `settings-badge${tone ? ` is-${tone}` : ''}`, text);
+}
+function settingsSection(title, note, ...children) {
+  const section = element('section', 'settings-section');
+  const head = element('div', 'settings-section-head');
+  head.append(element('h2', '', title));
+  if (note) head.append(element('p', '', note));
+  section.append(head, ...children);
+  return section;
+}
+function settingsCard(tone, ...children) {
+  const card = element('div', 'settings-card');
+  if (tone) card.dataset.tone = tone;
+  card.append(...children);
+  return card;
+}
+function settingsFailure(section) {
+  return section && section.error ? element('p', 'error-note settings-error', section.error) : null;
+}
+function settingsStack(nodes) {
+  const stack = element('div', 'settings-stack');
+  stack.append(...nodes);
+  return stack;
+}
+function optionLabel(options, name) { return options.find(option => option.name === name)?.label || name; }
+function scopeLabel(slug) { return SCOPE_KINDS.find(([value]) => value === slug)?.[1] || (slug ? `Other (${slug})` : ''); }
+function settingDisplay(field) {
+  if (field.input === 'brain') return field.value ? optionLabel(field.options, field.value) : '';
+  if (field.input === 'brains') return field.value.map(name => optionLabel(field.options, name)).join(', ');
+  if (field.input === 'scope') return scopeLabel(field.value);
+  return field.value || '';
+}
+function scopeSlug(text) { return text.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); }
+// The input that edits one setting; `change` receives the new draft (text, a brain name, a list of brain names or a kind).
+function settingControl(field, draft, label, change) {
+  if (field.input === 'brain') {
+    const select = element('select');
+    select.setAttribute('aria-label', label);
+    if (!field.options.some(option => option.name === draft)) select.append(new Option('Choose a brain…', ''));
+    for (const option of field.options) select.append(new Option(option.label, option.name));
+    select.value = draft;
+    select.addEventListener('change', () => change(select.value));
+    return select;
+  }
+  if (field.input === 'brains') {
+    const group = element('div', 'settings-checks');
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-label', label);
+    const chosen = new Set(draft);
+    for (const option of field.options) {
+      const row = element('label', 'settings-check');
+      const box = element('input');
+      box.type = 'checkbox';
+      box.checked = chosen.has(option.name);
+      box.addEventListener('change', () => {
+        if (box.checked) chosen.add(option.name); else chosen.delete(option.name);
+        change(field.options.filter(entry => chosen.has(entry.name)).map(entry => entry.name));
+      });
+      row.append(box, element('span', '', option.present ? option.label : `${option.label} (not on this computer yet)`));
+      group.append(row);
+    }
+    return group;
+  }
+  if (field.input === 'scope') {
+    const wrap = element('div', 'settings-scope');
+    const kind = element('select');
+    kind.setAttribute('aria-label', label);
+    if (!draft) kind.append(new Option('Choose a kind…', ''));
+    for (const [value, text] of SCOPE_KINDS) kind.append(new Option(text, value));
+    kind.append(new Option('Other', 'other'));
+    const known = SCOPE_KINDS.some(([value]) => value === draft);
+    kind.value = known ? draft : draft ? 'other' : '';
+    const other = element('input');
+    other.type = 'text';
+    other.maxLength = 40;
+    other.placeholder = 'A short word, such as supplier';
+    other.setAttribute('aria-label', `${label}: other kind`);
+    other.value = known ? '' : draft;
+    other.hidden = kind.value !== 'other';
+    kind.addEventListener('change', () => {
+      other.hidden = kind.value !== 'other';
+      change(kind.value === 'other' ? scopeSlug(other.value) : kind.value);
+      if (kind.value === 'other') other.focus();
+    });
+    other.addEventListener('input', () => change(scopeSlug(other.value)));
+    wrap.append(kind, other);
+    return wrap;
+  }
+  const area = field.input === 'textarea';
+  const control = element(area ? 'textarea' : 'input');
+  if (area) { control.rows = 3; control.maxLength = 500; } else control.type = 'text';
+  control.placeholder = field.placeholder || '';
+  control.setAttribute('aria-label', label);
+  control.value = draft;
+  control.addEventListener('input', () => change(control.value));
+  return control;
+}
+// One setting. `always` shows its input at once (to complete); otherwise the value is read until Edit.
+function settingField(field, {label, always = false, hasDefault = false, badge = null}) {
+  const wrap = element('div', 'settings-field');
+  wrap.append(element('div', 'settings-field-label', label));
+  const slot = always ? `to-complete:${field.key}` : field.key; // the same setting may be asked above and shown below
+  let edit = settingsEdits.get(slot);
+  if (always && !edit) { edit = {draft: field.value, busy: false, error: ''}; settingsEdits.set(slot, edit); }
+  if (edit) {
+    const row = element('div', 'settings-edit');
+    row.append(settingControl(field, edit.draft, label, draft => { edit.draft = draft; }));
+    const actions = element('div', 'settings-actions');
+    const save = element('button', 'button button-small button-primary', edit.busy ? 'Saving…' : 'Save');
+    save.type = 'button';
+    save.addEventListener('click', () => saveSetting(slot, field.key, edit.draft, false));
+    actions.append(save);
+    if (always && hasDefault) {
+      const reset = element('button', 'button button-small', 'Use the default');
+      reset.type = 'button';
+      reset.addEventListener('click', () => saveSetting(slot, field.key, null, true));
+      actions.append(reset);
+    }
+    if (!always) {
+      const cancel = element('button', 'button button-small', 'Cancel');
+      cancel.type = 'button';
+      cancel.addEventListener('click', () => { settingsEdits.delete(slot); renderSettings(); });
+      actions.append(cancel);
+    }
+    row.append(actions);
+    if (edit.busy) for (const control of row.querySelectorAll('input, select, textarea, button')) control.disabled = true;
+    row.addEventListener('keydown', event => {
+      if (event.key === 'Enter' && event.target.tagName === 'INPUT' && event.target.type === 'text' && !edit.busy) { event.preventDefault(); saveSetting(slot, field.key, edit.draft, false); }
+    });
+    wrap.append(row);
+    if (edit.error) {
+      const problem = element('p', 'error-note settings-error', edit.error);
+      problem.setAttribute('role', 'alert');
+      wrap.append(problem);
+    }
+  } else {
+    const row = element('div', 'settings-read');
+    const shown = settingDisplay(field);
+    row.append(element('span', shown ? 'settings-value' : 'settings-value is-empty', shown || 'Not set yet'));
+    if (badge) row.append(settingsBadge(badge, 'ok'));
+    const change = element('button', 'button button-small', 'Edit');
+    change.type = 'button';
+    change.setAttribute('aria-label', `Edit: ${label}`);
+    change.addEventListener('click', () => {
+      settingsNotes.delete(field.key);
+      settingsEdits.set(field.key, {draft: field.value, busy: false, error: ''});
+      renderSettings();
+    });
+    row.append(change);
+    wrap.append(row);
+    for (const text of field.warnings || []) wrap.append(element('p', 'settings-warning', text));
+    if (field.note) wrap.append(element('p', 'settings-note', field.note));
+    const saved = settingsNotes.get(field.key);
+    if (saved) wrap.append(element('p', 'settings-saved', saved));
+  }
+  return wrap;
+}
+async function saveSetting(slot, key, value, useDefault) {
+  const edit = settingsEdits.get(slot);
+  if (!edit || edit.busy) return;
+  edit.busy = true;
+  edit.error = '';
+  renderSettings();
+  try {
+    const {message, ...fresh} = await updatePost('/api/settings', useDefault ? {key, default: true} : {key, value});
+    settingsData = fresh;
+    settingsEdits.delete(slot);
+    settingsEdits.delete(key);
+    settingsNotes.set(key, message);
+    showToast(message);
+  } catch (error) {
+    edit.busy = false;
+    edit.error = error.message;
+  }
+  renderSettings();
+}
+function renderSettingsTodo(setup) {
+  const failure = settingsFailure(setup);
+  if (failure) return settingsSection('To complete', '', failure);
+  const nodes = setup.todo.map(item => settingsCard('warn', settingField(item, {label: item.label, always: true, hasDefault: item.has_default})));
+  if (setup.technical_missing) nodes.push(element('p', 'settings-note', 'A few technical settings are missing: your agent will ask for them at the start of your next conversation.'));
+  if (!setup.todo.length && !setup.technical_missing) nodes.push(element('p', 'settings-note', 'Nothing to complete: everything is set.'));
+  return settingsSection('To complete', setup.todo.length ? 'Answer these questions to finish setting up your workspace.' : '', settingsStack(nodes));
+}
+function renderSettingsAgent(setup) {
+  if (setup.error || !setup.agent.length) return null;
+  const list = element('ul', 'settings-tasks');
+  for (const task of setup.agent) {
+    const item = element('li');
+    item.append(element('span', '', task.title), element('span', 'settings-note', 'Ask your agent to take care of it.'));
+    list.append(item);
+  }
+  return settingsSection('Needs your agent', 'These cannot be done from this page.', settingsCard('info', list));
+}
+function renderSettingsWorkspace(workspace) {
+  const failure = settingsFailure(workspace);
+  if (failure) return settingsSection('Workspace', '', failure);
+  const {default_brain: brain, artifacts, transcripts, needed_brains: needed} = workspace;
+  const parts = [
+    settingField({...brain, input: 'brain'}, {label: 'Default brain'}),
+    settingField({...artifacts, input: 'text', placeholder: 'A folder name, or the full path of a synced folder'}, {label: 'Deliverables folder', badge: artifacts.status}),
+    settingField({...transcripts, input: 'text', placeholder: 'For example Documents/Transcripts'}, {label: 'Meeting transcripts folder'}),
+    settingField({...needed, input: 'brains'}, {label: 'Brains every computer must have'})
+  ];
+  if (brain.problem) parts.splice(1, 0, element('p', 'error-note settings-error', brain.problem));
+  return settingsSection('Workspace', 'Where your work lives on this computer.', settingsCard('', ...parts));
+}
+function renderSettingsBrains(brains) {
+  const failure = settingsFailure(brains);
+  if (failure) return settingsSection('Brains', '', failure);
+  const cards = brains.brains.map(brain => {
+    const head = element('div', 'settings-card-head');
+    head.append(element('strong', 'settings-key', brain.label));
+    if (brain.default) head.append(settingsBadge('Default', 'info'));
+    const parts = [head,
+      settingField({key: `${brain.name}.description`, input: 'textarea', value: brain.description, placeholder: 'What it holds, and what it must never hold'}, {label: 'What it holds'}),
+      settingField({key: `${brain.name}.owner`, input: 'text', value: brain.owner, placeholder: 'First and last name'}, {label: 'Owner of the actions'}),
+      settingField({key: `${brain.name}.scope`, input: 'scope', value: brain.scope}, {label: 'Kind'})];
+    if (brain.problem) parts.push(element('p', 'error-note settings-error', brain.problem));
+    return settingsCard('', ...parts);
+  });
+  return settingsSection('Brains', 'Each brain is a separate memory, with its own content and its own owner.', settingsStack(cards));
+}
+function renderSettingsSkills(skills) {
+  const failure = settingsFailure(skills);
+  if (failure) return settingsSection('Skills', '', failure);
+  const nodes = [];
+  if (skills.needs_refresh) nodes.push(settingsCard('warn', element('p', 'settings-note', 'Your agent needs to refresh the skills: ask it to update the workspace.')));
+  for (const group of skills.groups) {
+    const card = element('div', 'settings-card');
+    card.append(element('h3', 'settings-subhead', group.title));
+    const list = element('ul', 'settings-skills');
+    for (const skill of group.skills) {
+      const item = element('li');
+      item.append(element('strong', '', skill.name));
+      if (skill.summary) item.append(element('span', 'settings-skill-detail', skill.summary));
+      list.append(item);
+    }
+    card.append(list);
+    nodes.push(card);
+  }
+  if (!skills.groups.length) nodes.push(element('p', 'settings-note', 'No skill is turned on.'));
+  if (skills.turned_off.length) {
+    const card = element('div', 'settings-card');
+    card.append(element('h3', 'settings-subhead', 'Turned off on this computer'), element('p', 'settings-note', skills.turned_off.join(', ')));
+    nodes.push(card);
+  }
+  return settingsSection('Skills', 'What your agent can do. Read-only.', settingsStack(nodes));
+}
+function renderSettingsVersion() {
+  const info = updateInfo;
+  const newer = updateNewer(info);
+  const blocked = newer && info.state === 'blocked';
+  const head = element('div', 'settings-card-head');
+  head.append(element('strong', '', info?.state ? (info.current || 'Unreleased') : 'Not checked yet'));
+  if (info?.state) {
+    const [label, tone] = blocked ? ['Cannot update', 'warn'] : newer ? ['A new version is available', 'info'] : info.state === 'error' ? ['Could not check', 'warn'] : ['Up to date', 'ok'];
+    head.append(settingsBadge(label, tone));
+  }
+  const checkedAt = info?.checked_at ? new Date(info.checked_at).toLocaleString(LOCALE, {dateStyle: 'medium', timeStyle: 'short'}) : '';
+  const rows = settingsRows([
+    ['Version in use', info?.state ? (info.current || 'unreleased') : ''],
+    ['Latest version', info?.state && info.state !== 'error' ? (info.latest || 'none published yet') : ''],
+    ['Cannot update', blocked ? (info.reasons || []).join('; ') : ''],
+    ['Could not check', info?.state === 'error' ? (info.error || 'unknown reason') : ''],
+    ['Last checked', checkedAt]
+  ]);
+  const actions = element('div', 'update-actions');
+  const check = element('button', 'button button-small', updateChecking ? 'Checking…' : 'Check now');
+  check.type = 'button';
+  check.disabled = updateChecking || updateBusy;
+  check.addEventListener('click', () => checkUpdate({force: true}));
+  actions.append(check);
+  if (newer) {
+    const open = element('button', 'button button-small button-primary', blocked ? 'See details' : `Update to ${info.latest}…`);
+    open.type = 'button';
+    open.addEventListener('click', openUpdateDialog);
+    actions.append(open);
+  }
+  return settingsSection('Version', 'The version of the workspace in use, and the latest one available.', settingsCard(blocked ? 'warn' : newer ? 'info' : '', head, rows, actions));
+}
+function renderSettings() {
+  if (view !== 'settings') return;
+  const body = element('div', 'settings-body');
+  const bar = element('div', 'settings-bar');
+  const intro = element('p', '', 'Your workspace at a glance. Change what you like here: your agent takes care of anything technical.');
+  const refresh = element('button', 'button button-small', settingsLoading ? 'Refreshing…' : 'Refresh');
+  refresh.type = 'button';
+  refresh.disabled = Boolean(settingsLoading);
+  refresh.addEventListener('click', () => loadSettings());
+  bar.append(intro, refresh);
+  body.append(bar);
+  if (settingsError) {
+    const message = element('p', 'error-note', settingsError);
+    message.setAttribute('role', 'alert');
+    body.append(message);
+  }
+  if (settingsData) {
+    body.append(renderSettingsTodo(settingsData.setup));
+    const agent = renderSettingsAgent(settingsData.setup);
+    if (agent) body.append(agent);
+    body.append(renderSettingsWorkspace(settingsData.workspace), renderSettingsBrains(settingsData.brains), renderSettingsSkills(settingsData.skills));
+  } else if (!settingsError) body.append(element('p', 'loading-note', 'Loading your settings…'));
+  body.append(renderSettingsVersion());
+  const scroll = ids.settingsView.scrollTop;
+  ids.settingsView.replaceChildren(body);
+  ids.settingsView.scrollTop = scroll;
+  const missing = settingsData?.setup?.todo?.length || 0;
+  ids.resultCount.textContent = settingsData ? (missing ? `${plural(missing, 'setting')} to complete` : 'Nothing to complete') : '';
+  ids.settingsButton.setAttribute('aria-label', missing ? `Settings, ${plural(missing, 'setting')} to complete` : 'Settings');
+}
+function loadSettings() {
+  if (settingsLoading) return settingsLoading;
+  settingsLoading = (async () => {
+    try {
+      const data = await request('/api/settings', {}, '');
+      if (!data.setup?.todo || !data.workspace?.needed_brains) throw new Error('Restart the app: this page is newer than the one that is running.');
+      settingsData = data;
+      settingsError = '';
+    } catch (error) {
+      settingsError = error.message;
+    } finally {
+      settingsLoading = null;
+      renderSettings();
+    }
+  })();
+  renderSettings();
+  return settingsLoading;
+}
+
+// ---------- Update ----------
+// `POST /api/update/check` (throttled by the server to one real check per hour) on load and every 6 hours; the sidebar button shows only
+// when a newer release exists. The update itself (`POST /api/update/apply`) fast-forwards Work, runs update.sh and restarts this server.
+const UPDATE_CHECK_EVERY = 6 * 60 * 60 * 1000;
+const UPDATE_RESTART_WAIT = 60 * 1000;
+const UPDATE_WHAT = 'Installs version VERSION of the workspace, then restarts the app. Your brains and your work are not changed.';
+function updateNewer(info) {
+  return Boolean(info && (info.state === 'available' || info.state === 'blocked') && info.latest && info.latest !== info.current);
+}
+// Not `request()`: a check or an update must not hold back a brain switch, and neither carries a brain.
+async function updatePost(url, body) {
+  const response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Tasks-Token': token}, body: JSON.stringify(body)});
+  let payload;
+  try { payload = await response.json(); } catch { throw new Error('Unreadable local response.'); }
+  if (!response.ok) {
+    const error = new Error(payload.error || 'Operation failed.');
+    error.data = payload;
+    throw error;
+  }
+  return payload;
+}
+function renderUpdateButton() {
+  const newer = updateNewer(updateInfo);
+  ids.updateButton.hidden = !newer;
+  if (!newer) return;
+  const blocked = updateInfo.state === 'blocked';
+  ids.updateButtonLabel.textContent = `Update to ${updateInfo.latest}`;
+  ids.updateButton.classList.toggle('is-warn', blocked);
+  ids.updateButton.title = blocked ? `${updateInfo.latest} is available but cannot be applied yet. Click for the reasons.` : `Release ${updateInfo.latest} is available. Click to see what it brings.`;
+}
+async function checkUpdate({force = false} = {}) {
+  if (updateChecking) return;
+  updateChecking = true;
+  renderSettings();
+  try {
+    updateInfo = await updatePost('/api/update/check', force ? {force: true} : {});
+  } catch (error) {
+    if (force) showToast(`Could not check for updates: ${error.message}`); // the automatic checks stay silent
+  } finally {
+    updateChecking = false;
+    renderUpdateButton();
+    renderSettings();
+    if (ids.updateDialog.open && !updateBusy) fillUpdateDialog();
+  }
+}
+function updateSetError(message) {
+  ids.updateError.textContent = message;
+  ids.updateError.hidden = !message;
+}
+function fillUpdateDialog() {
+  const info = updateInfo;
+  if (!updateNewer(info)) { ids.updateDialog.close(); return; }
+  const blocked = info.state === 'blocked';
+  ids.updateHeading.textContent = `Update to ${info.latest}`;
+  ids.updateText.textContent = blocked ? `Cannot update to ${info.latest}:` : `${info.kind ? `${info.kind[0].toUpperCase()}${info.kind.slice(1)} release` : 'Release'}, from ${info.current || 'an unreleased version'}.`;
+  const hasNotes = Boolean(info.notes_html);
+  ids.updateNotes.hidden = !hasNotes;
+  if (hasNotes) ids.updateNotes.innerHTML = info.notes_html; // rendered by the server: raw HTML escaped
+  const lines = blocked ? info.reasons || [] : hasNotes ? [] : info.commits || [];
+  const more = !blocked && !hasNotes && info.commits_total > (info.commits || []).length ? info.commits_total - info.commits.length : 0;
+  ids.updateList.replaceChildren(...lines.map(text => element('li', '', text)), ...(more ? [element('li', 'git-confirm-more', `+${more} more`)] : []));
+  ids.updateList.hidden = !lines.length;
+  ids.updateWhat.textContent = blocked ? 'Ask your agent to resolve this, then check again.' : UPDATE_WHAT.replace('VERSION', info.latest);
+  ids.updateConfirm.hidden = blocked;
+  ids.updateRecheck.hidden = !blocked;
+  ids.updateRecheck.disabled = updateChecking;
+  ids.updateCancel.textContent = 'Cancel';
+  updateSetError('');
+}
+function openUpdateDialog() {
+  if (!updateNewer(updateInfo) || updateBusy) return;
+  ids.updateConfirm.disabled = false;
+  ids.updateConfirm.removeAttribute('aria-busy');
+  fillUpdateDialog();
+  if (!ids.updateDialog.open) ids.updateDialog.showModal();
+}
+// The new server has a new token: the page it serves differs from this one, which also tells it from the old server still shutting down.
+async function waitForRestart() {
+  const deadline = Date.now() + UPDATE_RESTART_WAIT;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    try {
+      const response = await fetch('/', {cache: 'no-store'});
+      const match = response.ok ? (await response.text()).match(/name="csrf-token" content="([^"]*)"/) : null;
+      if (match && match[1] !== token) return true;
+    } catch { /* the server is down: it is restarting */ }
+  }
+  return false;
+}
+async function confirmUpdate() {
+  if (updateBusy || !updateNewer(updateInfo) || updateInfo.state !== 'available') return;
+  const version = updateInfo.latest;
+  updateBusy = true;
+  ids.updateConfirm.disabled = true;
+  ids.updateConfirm.setAttribute('aria-busy', 'true');
+  ids.updateCancel.disabled = true;
+  updateSetError('');
+  ids.updateWhat.textContent = 'Updating…';
+  let report;
+  try {
+    report = await updatePost('/api/update/apply', {version});
+  } catch (error) {
+    updateBusy = false;
+    ids.updateConfirm.disabled = false;
+    ids.updateConfirm.removeAttribute('aria-busy');
+    ids.updateCancel.disabled = false;
+    ids.updateWhat.textContent = UPDATE_WHAT.replace('VERSION', version);
+    updateSetError(error.message);
+    checkUpdate({force: true}); // the state may have changed under the page
+    return;
+  }
+  if (!report.restarting) { // already up to date: nothing was changed
+    updateBusy = false;
+    ids.updateDialog.close();
+    updateInfo = null;
+    checkUpdate({force: true});
+    return;
+  }
+  ids.updateWhat.textContent = 'Restarting…';
+  const back = await waitForRestart();
+  const script = report.update_script;
+  const scriptFailed = script && script.ran && script.exit_code !== 0;
+  if (back && !scriptFailed) { location.reload(); return; }
+  updateBusy = false;
+  ids.updateCancel.disabled = false;
+  ids.updateCancel.textContent = 'Reload';
+  ids.updateConfirm.hidden = true;
+  ids.updateConfirm.removeAttribute('aria-busy');
+  ids.updateWhat.textContent = '';
+  updateSetError(!back ? `Updated to ${version}, but the app did not come back within 60 seconds. Open it again from the Dock.` :
+    `Updated to ${version}, but a final step of the update failed. Ask your agent to finish it.${script.output_tail?.length ? ` ${script.output_tail.join(' | ')}` : ''}`);
+  updateReloadOnClose = true;
+}
+ids.updateButton.addEventListener('click', openUpdateDialog);
+ids.updateConfirm.addEventListener('click', confirmUpdate);
+ids.updateRecheck.addEventListener('click', () => checkUpdate({force: true}));
+ids.updateDialog.addEventListener('cancel', event => { if (updateBusy) event.preventDefault(); }); // never closed halfway through an update
+ids.updateDialog.addEventListener('close', () => { if (updateReloadOnClose) location.reload(); });
 
 // ---------- Tools ----------
 async function loadTools() {
@@ -3998,8 +4493,26 @@ function renderSearchResults() {
     ids.docList.replaceChildren(docEmpty('Nothing to search yet.', 'Type words of two characters or more, or "an exact phrase".'));
     return;
   }
-  const actions = sortActions(snapshot.actions.filter(action => docScopeMatch(action) && actionMatches(action, terms)));
+  const type = ids.docType.value; // a type of document chosen: the actions, which have none, are left out
+  const actions = type ? [] : sortActions(snapshot.actions.filter(action => docScopeMatch(action) && actionMatches(action, terms)));
   const docs = docResults.filter(docScopeMatch);
+  if (type) {
+    const docSection = element('section', 'search-section');
+    const label = ids.docType.selectedOptions[0]?.textContent || DOC_TYPE_LABELS[type] || type;
+    docSection.append(searchHead(label, docPending || docError ? '' : docTotal > docs.length ? `${docs.length} shown of ${docTotal}` : String(docTotal)));
+    if (docError) docSection.append(searchNone(`Search failed: ${docError}`, true));
+    else if (docs.length) {
+      const list = element('ul', 'doc-items');
+      list.append(...docs.map(item => docItem(item, true)));
+      docSection.append(list);
+    } else if (!docPending) {
+      const others = Object.entries(docTypes).filter(([kind]) => kind !== type).reduce((sum, [, count]) => sum + count, 0);
+      docSection.append(searchNone(`No document of this type contains these words.${others ? ` ${plural(others, 'document')} of other types do: choose All types.` : ''}`));
+    }
+    ids.resultCount.textContent = docPending || docError ? '' : plural(docTotal, 'document');
+    ids.docList.replaceChildren(docSection);
+    return;
+  }
   const actionSection = element('section', 'search-section');
   actionSection.append(searchHead('Actions', String(actions.length)));
   if (actions.length) {
@@ -4068,6 +4581,7 @@ function resetSearchResults() {
   docTotal = 0;
   docTruncated = false;
   docTerms = [];
+  docTypes = {};
   docError = '';
   docPending = false;
 }
@@ -4092,12 +4606,15 @@ async function runDocSearch() {
   setDocStatus('Searching…');
   renderDocsView();
   try {
-    const data = await request(`/api/search?${new URLSearchParams({q: query, project: docProjectParam()})}`);
+    const params = {q: query, project: docProjectParam()};
+    if (ids.docType.value) params.type = ids.docType.value;
+    const data = await request(`/api/search?${new URLSearchParams(params)}`);
     if (requestId !== docSearchRequest) return;
     docResults = nameDocs(data.results);
     docTotal = data.total;
     docTruncated = data.truncated;
     docTerms = data.terms;
+    docTypes = data.types || {};
     setDocStatus(data.truncated ? `The ${data.results.length} best documents are shown.` : '');
   } catch (error) {
     if (requestId !== docSearchRequest || error.stale) return;
@@ -4852,7 +5369,12 @@ ids.docProject.addEventListener('change', () => {
   renderFilterChips();
   saveUIState();
 });
-ids.docType.addEventListener('change', () => { renderDocsView(); renderFilterChips(); saveUIState(); }); // the list is already loaded: only filtered again
+ids.docType.addEventListener('change', () => {
+  if (view === 'search') runDocSearch(); // the server keeps the best documents of that type, not the best of all filtered here
+  else renderDocsView(); // the Docs list is already loaded: only filtered again
+  renderFilterChips();
+  saveUIState();
+});
 ids.docBack.addEventListener('click', docGoBack);
 ids.docEdit.addEventListener('click', startDocEdit);
 ids.docCancel.addEventListener('click', cancelDocEdit);
@@ -4889,7 +5411,7 @@ ids.resetFilters.addEventListener('click', () => {
   projectScope = '';
   if (isDocsView()) {
     ids.docProject.value = '';
-    if (view === 'docs') ids.docType.value = '';
+    ids.docType.value = '';
     refreshDocLists();
   } else {
     ids.groupFilter.value = '';
@@ -5108,3 +5630,5 @@ loadBrains({initial: true}).finally(() => {
   setView(view, false);
   refresh();
 });
+checkUpdate();
+setInterval(checkUpdate, UPDATE_CHECK_EVERY);

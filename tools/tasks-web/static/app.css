@@ -214,8 +214,23 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .project-empty { padding: 4px 8px; color: var(--text-quiet); font-size: var(--fs-xs); }
 
 .sidebar-footer { flex: none; border-top: 1px solid var(--line); padding: 6px 8px 8px; }
-.footer-nav { display: flex; gap: 2px; }
-.footer-nav .nav-item { flex: 1 1 auto; width: auto; min-width: 0; gap: 6px; padding: 0 6px; } /* three of them (Archives, Tools, Sync) share the width: the labels may shorten, never overflow */
+.update-button {
+  display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 26px; margin: 0 0 6px; padding: 0 8px;
+  border: 1px solid var(--accent); border-radius: var(--radius-control); background: var(--accent-soft); color: var(--accent-strong);
+  font: inherit; font-size: var(--fs-xs); font-weight: 600; cursor: pointer;
+}
+.update-button:hover { background: var(--accent); color: var(--on-accent); }
+.update-button[hidden] { display: none; }
+.update-button .nav-icon { width: 14px; height: 14px; }
+.update-button.is-warn { border-color: var(--st-wait); background: transparent; color: var(--st-wait); }
+.update-button.is-warn:hover { background: var(--st-wait); color: var(--on-accent); }
+.update-dialog { width: min(520px, calc(100vw - 32px)); }
+.markdown-body.update-notes { flex: none; max-height: 220px; margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--bg-sunken); font-size: 13px; line-height: 1.5; }
+.update-actions { display: flex; gap: 8px; margin-top: 10px; }
+.markdown-body.update-notes > * { max-width: none; }
+.markdown-body.update-notes h1, .markdown-body.update-notes h2, .markdown-body.update-notes h3 { font-size: 13px; margin: .8em 0 .3em; }
+.footer-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; }
+.footer-nav .nav-item { width: auto; min-width: 0; gap: 6px; padding: 0 6px; } /* four of them (Archives, Tools, Sync, Settings) in two columns: the labels may shorten, never overflow */
 .footer-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0 0 8px; }
 .last-sync { font-size: var(--fs-xs); color: var(--text-quiet); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .more { position: relative; }
@@ -957,6 +972,65 @@ mark { background: var(--mark-bg); color: var(--mark-text); border-radius: 2px; 
 /* ---------- Git: save and send ---------- */
 /* One card per brain, in the brain's own accent: where things stand in one sentence, the changed notes, one primary button. */
 .loading-note { padding: 16px 24px; color: var(--text-muted); }
+/* ---------- Settings ---------- */
+.settings-view { overflow: auto; overscroll-behavior: contain; background: var(--bg-page); container-type: inline-size; }
+.settings-body { display: flex; flex-direction: column; gap: 24px; max-width: 820px; margin: 0 auto; padding: 20px 24px 40px; }
+.settings-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--text-muted); font-size: var(--fs-sm); }
+.settings-bar p { min-width: 0; }
+.settings-bar .button { flex: none; }
+.settings-section { display: flex; flex-direction: column; gap: 10px; }
+.settings-section-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 12px; }
+.settings-section-head h2 { font-size: var(--fs-md); letter-spacing: -.005em; }
+.settings-section-head p, .settings-note { font-size: var(--fs-xs); color: var(--text-quiet); overflow-wrap: anywhere; }
+.settings-stack { display: flex; flex-direction: column; gap: 10px; }
+.settings-card { --tone: var(--line); display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px 16px; border: 1px solid var(--line); border-left: 4px solid var(--tone); border-radius: var(--radius-panel); background: var(--bg-surface); }
+.settings-card[data-tone="warn"] { --tone: var(--git-warn); background: var(--git-warn-tint); }
+.settings-card[data-tone="info"] { --tone: var(--git-info); background: var(--git-info-tint); }
+.settings-card[data-tone="ok"] { --tone: var(--line); }
+.settings-card-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.settings-key { font-size: var(--fs-sm); font-weight: 600; overflow-wrap: anywhere; }
+.settings-badge { display: inline-block; padding: 1px 8px; border-radius: 10px; background: var(--bg-sunken); color: var(--text-muted); font-size: 11px; font-weight: 500; }
+.settings-badge.is-ok { background: var(--git-ok-tint); color: var(--git-ok-text); }
+.settings-badge.is-warn { background: var(--git-warn-tint); color: var(--git-warn-text); }
+.settings-badge.is-info { background: var(--git-info-tint); color: var(--git-info); }
+.settings-card[data-tone="warn"] .settings-badge.is-warn { background: var(--bg-surface); }
+.settings-card[data-tone="info"] .settings-badge.is-info { background: var(--bg-surface); }
+.settings-dl { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr); gap: 4px 14px; font-size: var(--fs-sm); }
+.settings-dl dt { margin: 0; color: var(--text-quiet); font-size: var(--fs-xs); padding-top: 2px; }
+.settings-dl dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.settings-subhead { font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); }
+.settings-skills, .settings-tasks { list-style: none; margin: 0; padding: 0; }
+.settings-skills li { display: flex; flex-direction: column; gap: 1px; padding: 6px 0; }
+.settings-skills li:first-child, .settings-tasks li:first-child { padding-top: 0; }
+.settings-skills li:last-child, .settings-tasks li:last-child { padding-bottom: 0; }
+.settings-skills li + li, .settings-tasks li + li { border-top: 1px solid var(--line-soft); }
+.settings-skills strong { font-size: var(--fs-sm); font-weight: 600; overflow-wrap: anywhere; }
+.settings-skill-detail { min-width: 0; font-size: var(--fs-xs); color: var(--text-quiet); overflow-wrap: anywhere; }
+.settings-tasks li { display: flex; flex-direction: column; gap: 1px; padding: 6px 0; font-size: var(--fs-sm); }
+.settings-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.settings-field + .settings-field, .settings-field + .settings-error, .settings-error + .settings-field { margin-top: 6px; }
+.settings-field-label { font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); overflow-wrap: anywhere; }
+.settings-read { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; min-width: 0; font-size: var(--fs-sm); }
+.settings-value { min-width: 0; overflow-wrap: anywhere; }
+.settings-value.is-empty { color: var(--text-quiet); }
+.settings-edit { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.settings-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.settings-checks { display: flex; flex-direction: column; gap: 4px; }
+.settings-check { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); }
+.settings-check input { width: auto; min-height: 0; flex: none; }
+.settings-scope { display: flex; flex-direction: column; gap: 6px; }
+.settings-scope input[hidden] { display: none; }
+.settings-edit textarea { resize: vertical; line-height: 1.45; }
+.settings-warning { font-size: var(--fs-xs); color: var(--git-warn-text); overflow-wrap: anywhere; }
+.settings-saved { font-size: var(--fs-xs); color: var(--git-ok-text); overflow-wrap: anywhere; }
+.settings-card[data-tone="warn"] .settings-warning { color: var(--git-warn-text); }
+.settings-error { padding: 0; }
+@container (max-width: 520px) {
+  .settings-body { padding: 14px 14px 32px; }
+  .settings-bar { flex-wrap: wrap; }
+  .settings-dl { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .settings-dl dd { margin-bottom: 6px; }
+}
 .error-note { padding: 16px 24px; color: var(--danger); }
 .git-view { overflow: auto; overscroll-behavior: contain; background: var(--bg-page); }
 .git-cards { display: flex; flex-direction: column; gap: 16px; max-width: 760px; margin: 0 auto; padding: 20px 24px 40px; }
