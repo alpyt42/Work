@@ -56,6 +56,6 @@ jobs:
           uv run tools/machine/work.py release --notes > "$RUNNER_TEMP/notes.md"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$VERSION" -F "$RUNNER_TEMP/notes.md" "$GITHUB_SHA"
+          git tag -a --cleanup=verbatim "$VERSION" -F "$RUNNER_TEMP/notes.md" "$GITHUB_SHA" # verbatim: keep the ### headings
           git push origin "refs/tags/$VERSION"
           gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
