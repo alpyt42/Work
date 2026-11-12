@@ -32,7 +32,18 @@ done <<< "$brains"
 
 mkdir -p repos/personal repos/sandbox repos/workspaces agents
 # The artifacts folder is where "artifactsDir" of work-config.local.json says (default: artifacts/).
-mkdir -p "$(uv run tools/machine/work_config.py artifacts-dir)"
+# When it lives outside Work (a synced cloud folder), artifacts/ becomes a symlink to it, so the
+# brains' links to ../artifacts/… keep working. Its README comes from kit/artifacts/README.md.
+artifacts_dir="$(uv run tools/machine/work_config.py artifacts-dir)"
+mkdir -p "$artifacts_dir"
+[[ -e "$artifacts_dir/README.md" ]] || cp kit/artifacts/README.md "$artifacts_dir/README.md"
+if [[ "$artifacts_dir" != "$PWD/artifacts" ]]; then
+  if [[ ! -e artifacts && ! -L artifacts ]]; then
+    ln -s "$artifacts_dir" artifacts
+  elif [[ ! artifacts -ef "$artifacts_dir" ]]; then
+    echo "artifacts/ is not a link to $artifacts_dir: move its content there, then remove it and run bootstrap again" >&2
+  fi
+fi
 
 # Skills: validate the configuration, write the lock, install the third-party skills, expose everything.
 uv run tools/machine/work_config.py check

@@ -1,15 +1,21 @@
-"""Regression checks for the Claude Code SessionStart hook: short workspace state, local Git only, never fails."""
+"""Regression checks for the Claude Code SessionStart hook: short workspace state, local Git only, never fails.
+
+The setup block itself (what setup.py reports) is tested in test_setup.py; here, stub setup.py files check how the
+hook runs it: after the state lines, dropped when it fails or is too slow.
+"""
 
 import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 HOOK = Path(__file__).resolve().parents[1] / "tools/machine/hooks/claude-session-start.py"
 WORK_CONFIG = Path(__file__).resolve().parents[1] / "tools/machine/work_config.py"
 WORD_CAP = 150
+SETUP_WORD_CAP = 500
 
 
 def git(repo: Path, *args: str) -> None:
@@ -62,8 +68,15 @@ class SessionStartTest(unittest.TestCase):
         result = subprocess.run([sys.executable, str(HOOK)], input=stdin, capture_output=True, text=True, env=env, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("Traceback", result.stderr + result.stdout)
-        self.assertLessEqual(len(result.stdout.split()), WORD_CAP)
+        state, _, setup = result.stdout.partition("\nSetup")
+        self.assertLessEqual(len(state.split()), WORD_CAP)
+        self.assertLessEqual(len(setup.split()), SETUP_WORD_CAP + 10)
         return result
+
+    def write_setup(self, body: str) -> None:
+        """A stub tools/machine/setup.py whose session_block runs `body`."""
+        code = "import time\n\ndef session_block(root):\n" + "".join(f"    {line}\n" for line in body.splitlines())
+        (self.work / "tools/machine/setup.py").write_text(code, encoding="utf-8")
 
     def test_clean(self) -> None:
         out = self.run_hook().stdout
@@ -118,6 +131,40 @@ class SessionStartTest(unittest.TestCase):
     def test_missing_root(self) -> None:
         out = self.run_hook(root=self.work / "nope").stdout
         self.assertIn("brain-state.py map", out)
+
+    def test_no_setup_script_prints_nothing_about_setup(self) -> None:
+        self.assertNotIn("Setup", self.run_hook().stdout)
+
+    def test_setup_block_comes_after_the_state_lines(self) -> None:
+        self.write_setup('return "Setup incomplete: ask for `artifactsDir`."')
+        lines = self.run_hook().stdout.splitlines()
+        self.assertEqual(lines[-1], "Setup incomplete: ask for `artifactsDir`.")
+        self.assertTrue(lines[0].startswith("Workspace: default brain brain-acme"))
+        self.assertIn("brain-state.py map", lines[-2])
+
+    def test_empty_setup_block_prints_nothing(self) -> None:
+        self.write_setup('return ""')
+        out = self.run_hook().stdout
+        self.assertNotIn("Setup", out)
+        self.assertTrue(out.rstrip().endswith("for each kind of question."))
+
+    def test_failing_setup_prints_nothing_about_setup(self) -> None:
+        self.write_setup('raise RuntimeError("Setup exploded")')
+        out = self.run_hook().stdout
+        self.assertNotIn("Setup", out)
+        self.assertIn("default brain brain-acme", out)
+
+    def test_broken_setup_script_prints_nothing_about_setup(self) -> None:
+        (self.work / "tools/machine/setup.py").write_text("def session_block(root):\n    return (\n", encoding="utf-8")
+        self.assertNotIn("Setup", self.run_hook().stdout)
+
+    def test_slow_setup_is_dropped_within_the_budget(self) -> None:
+        self.write_setup('time.sleep(6)\nreturn "Setup incomplete: too late."')
+        started = time.monotonic()
+        out = self.run_hook().stdout
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertNotIn("Setup", out)
+        self.assertIn("default brain brain-acme", out)
 
 
 if __name__ == "__main__":

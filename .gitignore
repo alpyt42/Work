@@ -5,8 +5,7 @@
 !/repos/workspaces/
 /repos/workspaces/*
 !/repos/workspaces/README.md
-/artifacts/*
-!/artifacts/README.md
+/artifacts
 /agents/*
 !/agents/README.md
 # Local editor settings (Todo Tree filters on the brain owner's name)

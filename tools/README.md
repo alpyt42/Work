@@ -34,8 +34,10 @@ The tools act on the default brain, or on another brain with `BRAIN_DIR` (`--bra
 | Command | Role | Guide |
 |---|---|---|
 | `uv run tools/tasks-web/tasks-web.py [--port N] [--brain DIR]` | Local web interface for actions (Today, Actions, Board, Timeline, Docs, Tools, Sync, and one global search of the actions and the documents) on `http://127.0.0.1:8765/`; a selector at the top left switches between the brains of the workspace without a restart (`?brain=<name>`, `GET /api/brains`; `--brain` sets the default brain); the Tools view runs predefined commands (links, brains, transcripts, actions, repositories); the Sync view saves and sends the changed notes of each brain (one card per brain, a confirmation, then `git add -A`, `git commit` and `git push` of that brain only, every hook running) | [README.md](tasks-web/README.md) |
-| `./tools/tasks-web/build-dock-app.sh` | Builds the macOS "Actions Brain" app to put in the Dock (macOS) | [README.md](tasks-web/README.md) |
-| `tools/tasks-web/launcher.sh` | Launcher called by the app: starts the server if needed and opens the page | [README.md](tasks-web/README.md) |
+| `uv run tools/tasks-web/install-app.py [--dry-run] [--uninstall]` | Installs the "Actions Brain" launcher of this system: the macOS app in the artifacts folder (`--replace` moves an existing one to `archive/` first, nothing is overwritten), a Windows Start Menu shortcut (`--desktop` adds one on the Desktop) or a Linux applications menu entry; `--uninstall` removes only what it wrote | [README.md](tasks-web/README.md) |
+| `uv run --script tools/tasks-web/launch.py` | Launcher run by those entries (macOS, Windows, Linux): opens the page, starting the server on port 8765 first when needed (log and PID in `agents/`), refuses when another program holds the port | [README.md](tasks-web/README.md) |
+| `uv run tools/tasks-web/make-icon.py` | Writes the app icon into `tasks-web/static/` (SVG, PNG, ICO, ICNS) | [README.md](tasks-web/README.md) |
+| `./tools/tasks-web/build-dock-app.sh`, `tools/tasks-web/launcher.sh` | Kept for macOS: the first runs `install-app.py --platform macos`, the second (called by apps built before it) runs `launch.py` | [README.md](tasks-web/README.md) |
 
 ## Repositories (`repos/`)
 
@@ -57,6 +59,7 @@ Installation, update, Git hooks and checks of the workspace on a machine: see [m
 | `tools/machine/update.sh` | Regenerates skills and links from the configuration, records the configuration fingerprint and reports the Git state of Work and of every brain | [README.md](machine/README.md) |
 | `uv run tools/machine/work_config.py <command>` | Skill configuration (`check`, `list-brains`, `default-brain`, `list-own`, `list-third-party`, `list-catalog`, `lock`, `adopt [--brain B]`, `stamp`, `status`) | [README.md](machine/README.md) |
 | `uv run tools/machine/doctor.py` | Read-only local diagnosis of the workspace, the brains and their boundaries | [README.md](machine/README.md) |
+| `uv run tools/machine/setup.py status [--json] \| set <key> <value> \| default <key>` | Setup checklist of this machine: settings an agent asks and writes (`defaultBrain`, `artifactsDir`, `brains`, `transcripts_dir`, each brain's owner and boundary), with their default (`default`, alias `ignore`), and checks of what only the owner can do; the SessionStart hook prints what is missing | [README.md](machine/README.md) |
 | `tools/machine/check-links.sh` | Checks the configuration, the skill links and copies and the Markdown links of every brain | [README.md](machine/README.md) |
 | `tools/machine/check-no-client.sh [--staged \| --worktree]` | Scan for the client and person names of every brain and the employer name; run on the staged files by the Work pre-commit hook | [README.md](machine/README.md) |
 | `uv run tools/machine/preflight-push.py [--repo DIR] [REMOTE]` | Identity, SSH account, `brain.json` boundary and fast-forward checks before a push; run by the `pre-push` hook of Work and of every brain | [GIT-IDENTITY.md](machine/GIT-IDENTITY.md) |

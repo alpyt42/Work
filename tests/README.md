@@ -16,6 +16,8 @@ Fictitious names only in tests and fixtures (`acme`, `globex`, `initech`, `brain
 - `test_timeline.py` — timeline entries at their date, past months rolled into `journal/YYYY-MM.md` (link correction, previous-months line, English wording written while the earlier French one is still read, idempotence) and the current-state block.
 - `test_migrate_english.py` — conversion of a brain from the French format to the English structure (`migrate-english.py`): register labels, headings, front matter, header labels, tags and boilerplate lines; content untouched, idempotent.
 - `test_tasks_web.py` — local interface, API, document search and the Sync view (saving and sending on scratch brains with local bare remotes and the real hooks).
+- `test_tasks_web_install.py` — installation of the local app on macOS, Windows and Linux (`install-app.py`: the generated `.app`, Start Menu shortcut and `.desktop` entry, dry run, uninstall, the artifacts folder never overwritten) and its cross-platform launcher (`launch.py`).
+- `test_setup.py` — the setup checklist (`setup.py status`, `set`, `default`): where each answer is written, defaults, items without default, owner actions.
 - `test_machine_doctor.py` — machine diagnosis: brains, skill configuration, links and orphan folders of `.agents/skills/`, boundary of each brain.
 - `test_work_config.py` — layers of the skill configuration (defaults, brains, local), the default brain (`defaultBrain`, `default-brain`), lock, `adopt`, fingerprint.
 - `test_link_skills.py` — `link-skills.sh` and `sync-house-skills.py`: links and copies of skills from several brains, third-party skills (setting aside and re-enabling), cleanup, migration from the old organization.
