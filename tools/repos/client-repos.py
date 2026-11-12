@@ -67,7 +67,7 @@ SSH_URL = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[A-Za-z0-9._/-]+\.git$")
 
 def git(repo: Path, *args: str) -> str:
     result = subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, text=True, check=True
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8", errors="replace", check=True
     )
     return result.stdout.strip()
 
@@ -139,7 +139,8 @@ def existing_remote(target: Path) -> str:
 def effective(repo: Path, key: str) -> tuple[str, str]:
     """Effective value of a Git setting in repo and the file it comes from."""
     result = subprocess.run(
-        ["git", "-C", str(repo), "config", "--show-origin", "--get", key], capture_output=True, text=True
+        ["git", "-C", str(repo), "config", "--show-origin", "--get", key], capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
     )
     if result.returncode or "\t" not in result.stdout:
         return "", ""
@@ -193,10 +194,10 @@ def ssh_command(identity_arg: str) -> str:
     identity = identity.resolve()
     if identity.is_relative_to(WORK):
         raise ValueError("SSH keys must stay outside Work")
-    if stat.S_IMODE(identity.stat().st_mode) & 0o077:
+    if os.name != "nt" and stat.S_IMODE(identity.stat().st_mode) & 0o077:  # Windows has no such mode bits (ACLs instead)
         raise ValueError("SSH key permissions must be owner-only")
     return shlex.join([
-        "ssh", "-F", "/dev/null", "-i", str(identity),
+        "ssh", "-F", os.devnull, "-i", str(identity),
         "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=yes", "-o", "BatchMode=yes",
     ])
 
@@ -291,7 +292,7 @@ def local_git(repo: Path, *args: str) -> str:
     """Run a local Git command with a short timeout; raise ValueError with a short reason on failure."""
     try:
         result = subprocess.run(
-            ["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=GIT_TIMEOUT
+            ["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT
         )
     except subprocess.TimeoutExpired:
         raise ValueError("git timed out") from None
@@ -414,4 +415,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    for _stream in (sys.stdout, sys.stderr):  # UTF-8 even through a pipe on Windows, where the default is the ANSI code page
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors=_stream.errors)
     raise SystemExit(main())

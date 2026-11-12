@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = []
+# dependencies = ["tzdata>=2024.1; sys_platform == 'win32'"]  # zoneinfo has no time zone database of its own on Windows
 # ///
 """Create, read and edit the actions of a brain's registers (`projects/**/state/actions.md`).
 
@@ -1811,7 +1811,7 @@ def board_write(brain: Path, target: Path) -> bool:
     if target.is_file() and target.read_text(encoding="utf-8") == content:
         return False
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    target.write_text(content, encoding="utf-8", newline="\n")  # LF on Windows too
     return True
 
 
@@ -2111,4 +2111,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    for _stream in (sys.stdout, sys.stderr):  # UTF-8 even through a pipe on Windows, where the default is the ANSI code page
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors=_stream.errors)
     sys.exit(main())

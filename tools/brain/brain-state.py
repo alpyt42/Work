@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = []
+# dependencies = ["tzdata>=2024.1; sys_platform == 'win32'"]  # zoneinfo has no time zone database of its own on Windows
 # ///
 """Map the brains of the workspace and merge their skill states.
 
@@ -1891,8 +1891,9 @@ def write_atomic(path: Path, data: bytes) -> None:
 def link_check(brain: Path) -> dict:
     """tools/brain/check-links.py on ``brain`` (targets missing from artifacts/ and repos/ reported, not failing)."""
     script = Path(__file__).resolve().with_name("check-links.py")
-    result = subprocess.run([sys.executable, str(script), "--allow-missing-local"], capture_output=True, text=True, check=False,
-                            env={**os.environ, "BRAIN_DIR": str(brain), "WORK_DIR": str(WORK)})
+    result = subprocess.run([sys.executable, str(script), "--allow-missing-local"], capture_output=True, text=True, encoding="utf-8",
+                            errors="replace", check=False, env={**os.environ, "BRAIN_DIR": str(brain), "WORK_DIR": str(WORK),
+                                                                "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"})
     counts = {found.group(1): int(found.group(2)) for line in result.stdout.splitlines() if (found := LINK_COUNTS.match(line))}
     problems = [line.strip() for line in result.stdout.splitlines() if line.strip().startswith(("⛔", "⚠"))]
     return {"exit": result.returncode, "counts": counts, "problems": problems, "error": result.stderr.strip()}
@@ -2142,4 +2143,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    for _stream in (sys.stdout, sys.stderr):  # UTF-8 even through a pipe on Windows, where the default is the ANSI code page
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors=_stream.errors)
     sys.exit(main())

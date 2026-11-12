@@ -77,8 +77,8 @@ class Report:
 
 def git(repo: Path, *args: str, timeout: int = GIT_TIMEOUT) -> tuple[int, str]:
     try:
-        result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=timeout,
-                                env=ENV, stdin=subprocess.DEVNULL)
+        result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", timeout=timeout, env=ENV, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):
         return 127, ""
     return result.returncode, result.stdout.strip()
@@ -89,16 +89,22 @@ def run_detached(argv: list[str], timeout: int) -> tuple[int, str]:
 
     Returns (exit status, stdout and stderr together); 124 on timeout, 127 when the command cannot start.
     """
+    windows = os.name == "nt"
     try:
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   text=True, env=ENV, start_new_session=True)
+                                   text=True, encoding="utf-8", errors="replace", env=ENV,
+                                   start_new_session=not windows,
+                                   creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if windows else 0)
     except OSError:
         return 127, ""
     try:
         output, _ = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            if windows:  # no process groups to signal: end the whole tree
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True, check=False)
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
         except OSError:
             process.kill()
         process.communicate()

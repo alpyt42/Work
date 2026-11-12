@@ -99,7 +99,7 @@ def list_md_files() -> list[str]:
     """Files tracked by git inside a repo, otherwise every .md of the folder (skill templates excluded)."""
     try:
         out = subprocess.run(["git", "ls-files", "--cached", "--others", "--exclude-standard", "*.md"],
-                             cwd=BRAIN, capture_output=True, text=True, check=True).stdout.split()
+                             cwd=BRAIN, capture_output=True, text=True, encoding="utf-8", check=True).stdout.split()
         # a file moved or deleted but not yet committed stays in the index: skip it
         out = [f for f in out if os.path.exists(os.path.join(BRAIN, f)) and not is_skill_asset(f)]
         if out:
