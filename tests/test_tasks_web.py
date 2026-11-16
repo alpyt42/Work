@@ -5587,6 +5587,143 @@ class UpdateRoutesTest(unittest.TestCase):
         self.assertEqual(self.git(self.work, "describe", "--tags"), "v0.1.0")
         self.assertFalse(self.server.restart_requested)
 
+class TaskBoxTest(unittest.TestCase):
+    """Task lists: rendered as boxes everywhere, ticked in working notes only."""
+    CLIENT = "projects/clients/acme/missions/demo-migration"
+    NOTE = f"{CLIENT}/notes/2026-10-01-tasks.md"
+    PAGE = f"{CLIENT}/demo-migration.md"
+    INBOX = "inbox/2026-10-02-raw.md"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.brain = Path(self.temp.name) / "brain"
+        client = self.brain / self.CLIENT
+        (client / "state").mkdir(parents=True)
+        (client / "state/actions.md").write_text("# Actions\n\n## Open\n- [ ] **ACM-001** — Jane — Deliver\n", encoding="utf-8")
+        (client / "demo-migration.md").write_text("# Demo\n\n- [ ] on a page\n", encoding="utf-8")
+        (client / "notes").mkdir()
+        (client / "notes/2026-10-01-tasks.md").write_text("# Tasks\n\n- [ ] one\n- [x] two\n", encoding="utf-8")
+        (client / "notes/archive").mkdir()
+        (client / "notes/archive/2026-01-01-old.md").write_text("# Old\n\n- [ ] archived\n", encoding="utf-8")
+        (self.brain / "inbox").mkdir()
+        (self.brain / self.INBOX).write_text("# Raw\n\n- [ ] inbox box\n", encoding="utf-8")
+        self.server = tasks_web.TaskServer(("127.0.0.1", 0), tasks_web.Store(self.brain))
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+        self.temp.cleanup()
+
+    request = TasksWebTest.request
+
+    @staticmethod
+    def render(text):
+        return tasks_web.MARKDOWN.render(text, {"id": "x.md", "ids": set()})
+
+    def boxes(self, text):
+        return re.findall(r'<input type="checkbox" class="task-box" data-line="(\d+)"( checked)? disabled>', self.render(text))
+
+    def toggle(self, done, line=2, note=NOTE, version=None):
+        if version is None:
+            version = hashlib.sha256((self.brain / note).read_bytes()).hexdigest()[:16]
+        return self.request("PATCH", "/api/notes/task", {"id": note, "version": version, "line": line, "done": done})
+
+    def test_task_items_render_disabled_boxes_with_their_line(self):
+        html = self.render("- [ ] a\n- [x] b\n* [X] c\n\n1. [ ] d\n\n- top\n  - [ ] nested\n\n> - [ ] quoted\n")
+        self.assertEqual([(m[0], bool(m[1])) for m in self.boxes("- [ ] a\n- [x] b\n* [X] c\n\n1. [ ] d\n\n- top\n  - [ ] nested\n\n> - [ ] quoted\n")],
+                         [("0", False), ("1", True), ("2", True), ("4", False), ("7", False), ("9", False)])
+        self.assertEqual(html.count('class="task-item'), 6)
+        self.assertEqual(html.count("task-done"), 2)
+        self.assertNotIn("[ ]", html)
+        self.assertIn("</li>", html)
+        self.assertRegex(html, r'<input type="checkbox" class="task-box" data-line="0" disabled>a</li>')
+
+    def test_other_brackets_stay_text(self):
+        for text in ("- [/] a\n", "- [-] a\n", "- [w] a\n", "[ ] outside\n", "- not [ ] first\n", "```\n- [ ] code\n```\n", "- `[ ]` code\n", "- [ ]no space\n", "- [  ] two\n", "- \\[ ] escaped\n"):
+            self.assertNotIn("<input", self.render(text), text)
+
+    def test_empty_task_item_is_a_box(self):
+        self.assertEqual(len(self.boxes("- [ ]\n")), 1)
+
+    def test_front_matter_shifts_the_line(self):
+        text = "---\ndate: 2026-10-01\ntags: x\n---\n\n- [ ] a\n"
+        properties, body = tasks_web.split_front_matter(text)
+        offset = text[:len(text) - len(body)].count("\n")
+        html = tasks_web.MARKDOWN.render(body, {"id": "x.md", "ids": set(), "line_offset": offset})
+        self.assertIn('data-line="5"', html)
+
+    def test_reader_marks_notes_and_renders_pages_with_the_right_line(self):
+        data = self.request("GET", "/api/docs/render?id=" + quote(self.NOTE))[1]
+        self.assertTrue(data["note"])
+        self.assertIn('data-line="2"', data["html"])
+        self.assertIn('data-line="3" checked disabled', data["html"])
+        page = self.request("GET", "/api/docs/render?id=" + quote(self.PAGE))[1]
+        self.assertFalse(page["note"])
+        self.assertIn('class="task-box"', page["html"])
+
+    def test_tick_and_untick_change_one_byte(self):
+        path = self.brain / self.NOTE
+        original = path.read_bytes()
+        status, result = self.toggle(True)
+        self.assertEqual(status, 200)
+        ticked = path.read_bytes()
+        self.assertEqual(ticked, original.replace(b"- [ ] one", b"- [x] one"))
+        self.assertEqual(result["version"], hashlib.sha256(ticked).hexdigest()[:16])
+        self.assertEqual(result["undo"]["label"], 'note "Tasks" box ticked')
+        self.assertEqual(self.toggle(False, version=result["version"])[0], 200)
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_inbox_note_can_be_ticked(self):
+        self.assertEqual(self.toggle(True, note=self.INBOX)[0], 200)
+        self.assertIn(b"- [x] inbox box", (self.brain / self.INBOX).read_bytes())
+
+    def test_crlf_and_bom_are_preserved(self):
+        path = self.brain / self.NOTE
+        path.write_bytes(b"\xef\xbb\xbf- [ ] first\r\n> 1. [ ] quoted\r\n  * [x] nested\r\nlast")
+        for line, done, expected in ((0, True, b"\xef\xbb\xbf- [x] first\r\n> 1. [ ] quoted\r\n  * [x] nested\r\nlast"),
+                                     (1, True, b"\xef\xbb\xbf- [x] first\r\n> 1. [x] quoted\r\n  * [x] nested\r\nlast"),
+                                     (2, False, b"\xef\xbb\xbf- [x] first\r\n> 1. [x] quoted\r\n  * [ ] nested\r\nlast")):
+            self.assertEqual(self.toggle(done, line=line)[0], 200)
+            self.assertEqual(path.read_bytes(), expected)
+
+    def test_refusals_leave_the_file_alone(self):
+        path = self.brain / self.NOTE
+        original = path.read_bytes()
+        self.assertEqual(self.toggle(True, version="0" * 16)[0], 409)
+        self.assertEqual(self.toggle(True, line=0)[0], 400)  # a heading
+        self.assertEqual(self.toggle(True, line=99)[0], 400)
+        self.assertEqual(self.toggle(False, line=2)[0], 409)  # already unticked
+        self.assertEqual(self.toggle(True, line=3)[0], 409)  # already ticked
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(self.request("GET", "/api/undo")[1].get("label"), None)
+
+    def test_only_working_notes_are_tickable(self):
+        for doc_id in (self.PAGE, f"{self.CLIENT}/state/actions.md", f"{self.CLIENT}/notes/archive/2026-01-01-old.md"):
+            before = (self.brain / doc_id).read_bytes()
+            self.assertEqual(self.toggle(True, line=2 if doc_id == self.PAGE else 3, note=doc_id)[0], 404, doc_id)
+            self.assertEqual((self.brain / doc_id).read_bytes(), before)
+
+    def test_invalid_payloads(self):
+        version = hashlib.sha256((self.brain / self.NOTE).read_bytes()).hexdigest()[:16]
+        good = {"id": self.NOTE, "version": version, "line": 2, "done": True}
+        for change in ({"line": True}, {"line": "2"}, {"line": -1}, {"line": 1.5}, {"done": "true"}, {"done": 1}, {"id": 5}, {"version": 5}):
+            self.assertEqual(self.request("PATCH", "/api/notes/task", {**good, **change})[0], 400, change)
+        self.assertEqual(self.request("PATCH", "/api/notes/task", {k: v for k, v in good.items() if k != "done"})[0], 400)
+        self.assertEqual(self.request("PATCH", "/api/notes/task", {**good, "extra": 1})[0], 400)
+
+    def test_undo_restores_the_bytes(self):
+        path = self.brain / self.NOTE
+        original = path.read_bytes()
+        self.assertEqual(self.toggle(True)[0], 200)
+        _, state = self.request("GET", "/api/undo")
+        status, result = self.request("POST", "/api/undo", {"label": state["label"]})
+        self.assertEqual((status, result["action_id"]), (200, self.NOTE))
+        self.assertEqual(path.read_bytes(), original)
+
 
 if __name__ == "__main__":
     unittest.main()

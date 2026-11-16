@@ -4253,6 +4253,7 @@ async function undoLast() {
     detailCache.clear();
     await refresh();
     if (result.restored && isDocsView()) openDoc(result.action_id, {nav: 'root'}); // a deleted note is back: show it
+    else if (isDocsView() && docCurrent && !docEditing && docCurrent.id === result.action_id) openDoc(result.action_id, {nav: 'keep'}); // an undone edit or tick
     // An undone note or subtask leaves the action's line as it was: the open panel reads its details again.
     if (editorOpen() && editorAction?.id === result.action_id) reloadDetails();
     showToast(`Undone: ${undoText(result.undone)}`);
@@ -4673,6 +4674,7 @@ function renderDocPane() {
   ids.docPaneTitle.textContent = doc.title;
   ids.docPaneMeta.replaceChildren(element('span', '', doc.project || 'Outside projects'), ...(listed?.date ? [element('span', 'doc-item-date', formatDay(listed.date))] : []));
   ids.docPanePath.textContent = doc.id;
+  setupTaskBoxes();
 }
 function scrollDocTo(node, center) {
   const box = ids.docArticle;
@@ -4709,10 +4711,63 @@ function showDocArticle(html, terms, anchor, keepScroll) {
   ids.docArticle.replaceChildren(template.content);
   highlightDocArticle(terms);
   ids.docArticle.scrollTop = keepScroll ? scroll : 0;
+  setupTaskBoxes();
   if (keepScroll) return;
   if (anchor && scrollDocAnchor(anchor)) return;
   const first = ids.docArticle.querySelector('mark');
   if (first) scrollDocTo(first, true);
+}
+// Task-list boxes: the server renders them disabled; only a working note that is not being edited lets them be ticked.
+let taskBusy = false;
+const taskBoxesAllowed = () => Boolean(docCurrent?.note) && !docEditing;
+const taskBoxesEnabled = () => taskBoxesAllowed() && !taskBusy;
+function taskBoxText(box) {
+  const item = box.closest('li');
+  let text = '';
+  for (const node of item ? item.childNodes : []) {
+    if (node.nodeType === Node.ELEMENT_NODE && /^(UL|OL)$/.test(node.tagName)) continue;
+    text += node.textContent;
+  }
+  return text.replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+function setupTaskBoxes() {
+  const allowed = taskBoxesEnabled();
+  for (const box of ids.docArticle.querySelectorAll('input.task-box')) {
+    box.disabled = !allowed;
+    if (taskBoxesAllowed()) box.removeAttribute('title');
+    else box.title = 'This document is read-only here.';
+    const label = taskBoxText(box);
+    if (label) box.setAttribute('aria-label', label);
+  }
+}
+function setTaskBoxesDisabled(disabled) {
+  for (const box of ids.docArticle.querySelectorAll('input.task-box')) box.disabled = disabled;
+}
+async function toggleTaskBox(box) {
+  const wanted = box.checked;
+  if (!taskBoxesAllowed() || taskBusy) { box.checked = !wanted; return; }
+  const doc = docCurrent;
+  taskBusy = true;
+  setTaskBoxesDisabled(true);
+  setDocError('');
+  try {
+    const result = await request('/api/notes/task', {
+      method: 'PATCH', headers: {'Content-Type': 'application/json', 'X-Tasks-Token': token},
+      body: JSON.stringify({id: doc.id, version: doc.version, line: Number(box.dataset.line), done: wanted})
+    });
+    setUndo(result.undo);
+    showToast(wanted ? 'Box ticked' : 'Box unticked', {undo: true});
+    // Reload in place only if the person is still on that note (another document may have been opened meanwhile).
+    await Promise.all([loadNotes(), docCurrent?.id === doc.id ? openDoc(doc.id, {nav: 'keep'}) : null]);
+  } catch (error) {
+    box.checked = !wanted;
+    if (docCurrent?.id !== doc.id) return;
+    if (error.status === 409) await openDoc(doc.id, {nav: 'keep'}); // the reload clears the error line: set it after
+    setDocError(error.status === 409 ? 'The note changed on disk: it has been reloaded. Tick the box again if needed.' : error.message);
+  } finally {
+    taskBusy = false;
+    if (ids.docArticle.contains(box) || ids.docArticle.querySelector('input.task-box')) setupTaskBoxes();
+  }
 }
 // nav: 'root' (picked from the list or created), 'link' (internal link, pushes history), 'back', 'keep' (reload in place).
 async function openDoc(id, {nav = 'root', terms = [], anchor = ''} = {}) {
@@ -5381,6 +5436,10 @@ ids.docCancel.addEventListener('click', cancelDocEdit);
 ids.docSave.addEventListener('click', saveDoc);
 ids.docEditor.addEventListener('keydown', event => {
   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); saveDoc(); }
+});
+ids.docArticle.addEventListener('change', event => {
+  const box = event.target.closest?.('input.task-box');
+  if (box && ids.docArticle.contains(box)) toggleTaskBox(box);
 });
 ids.docArticle.addEventListener('click', event => {
   const link = event.target.closest('a.doc-link');

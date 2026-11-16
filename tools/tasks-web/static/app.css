@@ -913,6 +913,13 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .markdown-body table { border-collapse: collapse; font-size: var(--fs-sm); }
 .markdown-body th, .markdown-body td { padding: 5px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 .markdown-body th { font-weight: 600; border-bottom-color: var(--text-faint); }
+.markdown-body li.task-item { list-style: none; position: relative; }
+.markdown-body input.task-box { position: absolute; left: -1.4em; top: .3em; width: 1em; height: 1em; min-height: 0; margin: 0; padding: 0; border: 0; accent-color: var(--accent); cursor: default; }
+.markdown-body input.task-box:focus-visible { outline-offset: 2px; }
+.markdown-body input.task-box:not(:disabled) { cursor: pointer; }
+.markdown-body input.task-box:disabled { opacity: .75; }
+.markdown-body li.task-done { color: var(--text-muted); }
+.markdown-body li.task-done a { color: inherit; }
 .markdown-body hr { border: 0; border-top: 1px solid var(--line); margin: 1.5em 0; }
 .doc-props { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 14px; padding: 8px 12px; border-radius: var(--radius-control); background: var(--bg-page); font-size: var(--fs-xs); }
 .doc-props dt { color: var(--text-muted); }

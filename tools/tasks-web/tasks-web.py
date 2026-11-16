@@ -49,6 +49,7 @@ from zoneinfo import ZoneInfo
 
 from markdown_it import MarkdownIt
 from markdown_it.common.utils import escapeHtml
+from markdown_it.token import Token
 
 # The checkout that holds tools/ (the scripts run from here), and the Work root whose brains are served:
 # WORK_DIR when set (like the other tools), else the same checkout.
@@ -1904,6 +1905,38 @@ def _heading_ids(state) -> None:
             token.attrSet("id", HEADING_ID_PREFIX + slug + ("" if used[slug] == 1 else f"-{used[slug]}"))
 
 
+TASK_MARKER_RE = re.compile(r"^\[([ xX])\](?=[ \t]|$)")
+TASK_LINE_RE = re.compile(rb"^(?:\xef\xbb\xbf)?((?:[ \t]*>)*[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)+)\[([ xX])\](?=[ \t\r]|$)")
+
+
+def _task_items(state) -> None:
+    """Turn a leading `[ ]` / `[x]` of a list item (on the line of the item itself) into a checkbox token."""
+    tokens = state.tokens
+    for index, item in enumerate(tokens[:-2]):
+        if item.type != "list_item_open" or item.map is None or tokens[index + 1].type != "paragraph_open" or tokens[index + 2].type != "inline":
+            continue
+        inline = tokens[index + 2]
+        # The raw source must start with the marker too: an escaped `\[ ]` reaches the first text child as a plain `[ ]`.
+        if (inline.map is None or inline.map[0] != item.map[0] or not inline.children or inline.children[0].type != "text"
+                or not TASK_MARKER_RE.match(inline.content)):
+            continue
+        first = inline.children[0]
+        match = TASK_MARKER_RE.match(first.content)
+        if not match:
+            continue
+        checked = match.group(1) != " "
+        first.content = first.content[match.end():][1:]
+        box = Token("task_box", "input", 0)
+        box.meta = {"checked": checked, "line": item.map[0]}
+        inline.children.insert(0, box)
+        item.attrJoin("class", "task-item" + (" task-done" if checked else ""))
+
+
+def _render_task_box(self, tokens, idx, options, env) -> str:
+    meta = tokens[idx].meta
+    return f'<input type="checkbox" class="task-box" data-line="{int(meta["line"]) + int(env.get("line_offset", 0))}"{" checked" if meta["checked"] else ""} disabled>'
+
+
 def build_markdown() -> MarkdownIt:
     """Raw HTML in documents is escaped (never rendered), but for a bare `<u>…</u>` (underline); links and images are rewritten by the rules above."""
     markdown = MarkdownIt("commonmark", {"html": False, "linkify": False, "typographer": False}).enable(["table", "strikethrough"])
@@ -1912,6 +1945,8 @@ def build_markdown() -> MarkdownIt:
         markdown.add_render_rule(name, rule)
     markdown.inline.ruler.before("html_inline", "underline", _underline)
     markdown.core.ruler.push("heading_ids", _heading_ids)
+    markdown.core.ruler.push("task_items", _task_items)
+    markdown.add_render_rule("task_box", _render_task_box)
     return markdown
 
 
@@ -2422,6 +2457,31 @@ class Store:
             self._note_write(path, before, after, note_label(note_summary(content, path.stem)[0], "edited"), None)
         return {"id": path.relative_to(self.brain).as_posix(), "version": hashlib.sha256(after).hexdigest()[:16]}
 
+    def toggle_task(self, payload: dict) -> dict:
+        """Tick or untick one `[ ]` / `[x]` box of a working note: one byte changes, one undo step."""
+        if (set(payload) != {"id", "version", "line", "done"} or not isinstance(payload["id"], str) or not isinstance(payload["version"], str)
+                or isinstance(payload["line"], bool) or not isinstance(payload["line"], int) or payload["line"] < 0 or not isinstance(payload["done"], bool)):
+            raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid note data.")
+        path, _, _ = self._note_entry(payload["id"])
+        try:
+            before = path.read_bytes()
+        except OSError:
+            raise TaskError(HTTPStatus.NOT_FOUND, "Note not found.") from None
+        stale = TaskError(HTTPStatus.CONFLICT, "The note changed on disk. Reload it before retrying.")
+        if payload["version"] != hashlib.sha256(before).hexdigest()[:16]:
+            raise stale
+        lines = before.split(b"\n")
+        if payload["line"] >= len(lines):
+            raise TaskError(HTTPStatus.BAD_REQUEST, "No checkbox on that line.")
+        match = TASK_LINE_RE.match(lines[payload["line"]])
+        if not match:
+            raise TaskError(HTTPStatus.BAD_REQUEST, "No checkbox on that line.")
+        if (match.group(2) != b" ") == payload["done"]:
+            raise stale
+        lines[payload["line"]] = lines[payload["line"]][:match.start(2)] + (b"x" if payload["done"] else b" ") + lines[payload["line"]][match.end(2):]
+        after = b"\n".join(lines)
+        self._note_write(path, before, after, note_label(note_summary(before.decode("utf-8", "replace"), path.stem)[0], "box ticked" if payload["done"] else "box unticked"), None)
+        return {"id": path.relative_to(self.brain).as_posix(), "version": hashlib.sha256(after).hexdigest()[:16]}
 
     # --- Deleting a note ---------------------------------------------------------------------------------
 
@@ -2707,8 +2767,10 @@ class Store:
             is_note = not archived  # an archived note is read, never edited
         except TaskError:
             is_note = False
+        full = text
         properties, text = split_front_matter(text)
-        html = front_matter_html(properties) + MARKDOWN.render(text, {"id": entry.id, "ids": set(catalogue)})
+        offset = full[:len(full) - len(text)].count("\n")
+        html = front_matter_html(properties) + MARKDOWN.render(text, {"id": entry.id, "ids": set(catalogue), "line_offset": offset})
         return {"id": entry.id, "title": entry.title,
                 "project": owner[0] if owner else None, "register": owner[1] if owner else None, "html": html,
                 "note": is_note, "deletable": is_note, "version": hashlib.sha256(data).hexdigest()[:16] if is_note else None}
@@ -3192,6 +3254,8 @@ class Handler(BaseHTTPRequestHandler):
                     status, result = HTTPStatus.CREATED, store.create_note(payload)
                 elif kind == "note_update":
                     result = store.update_note(payload)
+                elif kind == "note_task":
+                    result = store.toggle_task(payload)
                 elif kind == "note_delete":
                     result = store.delete_note_file(payload)
                 elif kind == "undo":
@@ -3211,7 +3275,7 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeDecodeError):
             self._json(HTTPStatus.BAD_REQUEST, {"error": "Invalid JSON."})
         except OSError:
-            self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "The note could not be deleted." if kind == "note_delete" else "The file could not be saved." if kind in {"note_create", "note_update"} else "The register could not be saved."})
+            self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "The note could not be deleted." if kind == "note_delete" else "The file could not be saved." if kind in {"note_create", "note_update", "note_task"} else "The register could not be saved."})
 
     def do_POST(self) -> None:
         path = urlsplit(self.path).path
@@ -3365,7 +3429,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PATCH(self) -> None:
         path = urlsplit(self.path).path
-        self._write_request("note_update" if path == "/api/notes" else "change_subtask" if SUBTASK_ROUTE.fullmatch(path) else "update")
+        self._write_request("note_update" if path == "/api/notes" else "note_task" if path == "/api/notes/task" else "change_subtask" if SUBTASK_ROUTE.fullmatch(path) else "update")
 
     def do_DELETE(self) -> None:
         path = urlsplit(self.path).path
