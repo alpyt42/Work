@@ -106,6 +106,7 @@ function openEditor(action = null, preset = null, {focus = 'auto'} = {}) {
   setEditorBusy(false);
   ids.editorError.hidden = true;
   ids.editor.hidden = false;
+  ids.app.classList.add('has-panel');  // the list makes room for the panel, or the panel covers the view (app.css)
   ids.editor.setAttribute('aria-label', action ? `Action ${action.id}` : 'New action');
   sizeTitleField();
   editorInitial = editorSignature();
@@ -128,6 +129,7 @@ function closeEditor({force = false, refocus = true} = {}) {
   if (!force && editorDirty() && !confirm('Discard the unsaved changes to this action?')) return false;
   const wasEditing = editorAction?.id;
   ids.editor.hidden = true;
+  ids.app.classList.remove('has-panel');
   editorHistoryRequest += 1;
   editorAction = null;
   noteState = null;

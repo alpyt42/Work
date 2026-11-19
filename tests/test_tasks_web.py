@@ -4397,6 +4397,15 @@ class BrainSwipeTest(unittest.TestCase):
         self.assertEqual(out[4]["actions"], ["previous"])
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_new_swipe_inside_the_momentum_switches_again_but_one_swipe_never_switches_twice(self):
+        momentum = [[max(1, 18 - i), 0, 16] for i in range(25)]  # the fingers lifted: the events fade
+        again = [[20, 1, 16]] * 5 + momentum + [[3, 0, 16], [8, 0, 16], [15, 0, 16]] + [[25, 0, 16]] * 6
+        faster = [[20, 0, 16]] * 5 + [[30, 0, 16], [40, 0, 16], [50, 0, 16], [60, 0, 16]] * 3  # one swipe that speeds up
+        out = self.run_cases([again, faster])
+        self.assertEqual(out[0]["actions"], ["next", "next"])
+        self.assertEqual(out[1]["actions"], ["next"])
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_a_swipe_left_halfway_is_withdrawn(self):
         out = self.run_cases([[[20, 0, 16]] * 4, [[20, 0, 16]] * 10])
         self.assertEqual((out[0]["actions"], out[0]["settled"]), ([], "cancel"))
@@ -4408,7 +4417,13 @@ class BrainSwipeTest(unittest.TestCase):
         self.assertIn('<div id="brainSwipe" class="brain-swipe" aria-hidden="true" hidden>', page)
         script, styles = app_script(), (self.STATIC / "app.css").read_text(encoding="utf-8")
         self.assertIn("document.addEventListener('wheel', onBrainWheel, {passive: false});", script)
-        self.assertIn("if (brain) switchBrain(brain.name);", script)  # the guards of the selector (writes, unsaved edits) still apply
+        self.assertIn("if (brain) turnToBrain(brain.name, action.direction);", script)
+        self.assertIn("const switched = switchBrain(name);", script)  # the guards of the selector (writes, unsaved edits) still apply
+        # The selector turns the workspace too; without motion the brain just changes; a page in the background never stays halfway.
+        self.assertIn("turnToBrain(name, brains.findIndex(brain => brain.name === name) >= from ? 1 : -1);", script)
+        self.assertIn("if (reducedMotion.matches) {", script)
+        self.assertIn("await Promise.race([ended, new Promise(resolve => setTimeout(resolve, timing.duration + 250))]);", script)
+        self.assertIn(".sidebar.is-turning { overflow: hidden; }", styles)
         self.assertIn("html, body { overscroll-behavior-x: none; }", styles)
         with tempfile.TemporaryDirectory() as folder:
             brain = Path(folder) / "brain"
@@ -5126,6 +5141,16 @@ class ActionViewsPageTest(unittest.TestCase):
         touch = self.styles[self.styles.index("@media (pointer: coarse), (max-width: 700px) {"):]
         self.assertIn(".entry-more { width: 36px; height: 36px; }", touch[:touch.index("\n}\n")])
 
+    def test_nothing_shows_under_an_open_action(self):
+        # The panel marks the page while it is open; the list then makes room beside it, or the panel covers the whole view.
+        self.assertIn("ids.app.classList.add('has-panel');", self.function("openEditor"))
+        self.assertIn("ids.app.classList.remove('has-panel');", self.function("closeEditor"))
+        self.assertIn(".app.has-panel .main { margin-right: var(--panel-w); }", self.styles)
+        narrow = self.styles[self.styles.index("@media (max-width: 1243px) {"):self.styles.index(".panel-form {")]
+        self.assertIn(".app.has-panel:not(.sidebar-collapsed) .panel { left: var(--sidebar-w); width: auto; }", narrow)
+        self.assertIn(".app.has-panel.sidebar-collapsed .panel { left: 0; width: auto; }", narrow)
+        self.assertIn(".app.has-panel .panel, .app.has-panel:not(.sidebar-collapsed) .panel { left: 0; width: auto; }", narrow)
+
     def test_touch_targets_are_36_px_without_changing_the_desktop(self):
         start = self.styles.index("@media (pointer: coarse), (max-width: 700px) {")
         touch = self.styles[start:self.styles.index("\n}\n", start)]
@@ -5140,7 +5165,7 @@ class ActionViewsPageTest(unittest.TestCase):
         desktop = self.styles[:start]
         self.assertIn("height: 34px; padding: 0 12px;", desktop[desktop.index("\n.chip {"):desktop.index("\n.chip-key")])
         self.assertRegex(desktop, r"\n\.status-button \{\s*display: grid; place-items: center; width: 24px; height: 24px;")
-        self.assertIn("--row-h: 52px;", desktop)
+        self.assertIn("--row-h: 46px;", desktop)
 
 
 class SettingsViewTest(unittest.TestCase):

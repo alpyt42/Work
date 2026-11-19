@@ -13,9 +13,9 @@
   color-scheme: light dark;
   --font: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --fs-xs: 12px; --fs-sm: 14px; --fs-md: 16px; --fs-lg: 24px; --fs-brain: 16px;
+  --fs-xs: 12px; --fs-sm: 13px; --fs-md: 15px; --fs-lg: 20px; --fs-brain: 15px;
   --radius-control: 4px; --radius-panel: 4px;
-  --sidebar-w: 264px; --panel-w: 420px; --row-h: 52px;
+  --sidebar-w: 264px; --panel-w: 420px; --row-h: 46px;
   --page-x: 32px; /* the side margin of the views */
 
   --bg-page: #F5F6F8; --bg-surface: #FFFFFF; --bg-sunken: #EEF0F3; --bg-hover: #F5F7FA;
@@ -121,7 +121,7 @@ svg { flex: none; }
 
 /* ---------- Controls ---------- */
 .button {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 36px; padding: 0 16px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 14px;
   border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--bg-surface); color: var(--text);
   font-size: var(--fs-sm); font-weight: 500; white-space: nowrap;
 }
@@ -147,7 +147,7 @@ svg { flex: none; }
 }
 .link-button:hover { color: var(--text); text-decoration-color: currentColor; }
 input, select, textarea {
-  width: 100%; min-height: 36px; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-control);
+  width: 100%; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-control);
   background: var(--bg-surface); color: var(--text); font-size: var(--fs-sm);
 }
 input::placeholder, textarea::placeholder { color: var(--text-quiet); }
@@ -219,8 +219,8 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .sidebar-scroll > .nav { flex: none; }
 .nav { display: flex; flex-direction: column; gap: 2px; }
 .nav-item {
-  display: flex; align-items: center; gap: 12px; width: 100%; height: 44px; padding: 0 12px;
-  border: 0; border-radius: var(--radius-control); background: transparent; color: var(--text); text-align: left; font-size: 16px;
+  display: flex; align-items: center; gap: 12px; width: 100%; height: 38px; padding: 0 12px;
+  border: 0; border-radius: var(--radius-control); background: transparent; color: var(--text); text-align: left; font-size: 14px;
 }
 .nav-item:hover { background: var(--bg-sunken); }
 .nav-icon { color: var(--text-muted); }
@@ -236,7 +236,7 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .projects > .sidebar-heading { flex: none; margin-top: 14px; }
 .projects > .project-nav { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 12px; }
 .project-item {
-  display: flex; align-items: center; gap: 8px; width: 100%; height: 34px; padding: 0 12px;
+  display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 12px;
   border: 0; border-radius: var(--radius-control); background: transparent; color: var(--text); text-align: left; font-size: var(--fs-sm);
 }
 .project-item:hover { background: var(--bg-sunken); }
@@ -315,12 +315,12 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 /* Under 900 px the toggle also names the brain, with its accent marker: the brain stays visible without the sidebar. */
 .brain-mini { display: none; }
 .view-heading { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
-.view-heading h1 { font-size: 28px; font-weight: 500; line-height: 1.2; letter-spacing: -.01em; white-space: nowrap; }
+.view-heading h1 { font-size: 24px; font-weight: 500; line-height: 1.2; letter-spacing: -.01em; white-space: nowrap; }
 .result-count, .view-status { font-size: var(--fs-xs); color: var(--text-quiet); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .view-status.git-status-error { color: var(--danger); }
 .view-actions { flex: none; display: flex; align-items: center; gap: 8px; }
 .search-field { position: relative; display: flex; align-items: center; width: 290px; }
-.search-field input { height: 36px; padding: 0 32px 0 34px; background: var(--bg-surface); border-color: var(--line-strong); }
+.search-field input { height: 34px; padding: 0 32px 0 34px; background: var(--bg-surface); border-color: var(--line-strong); }
 .search-field input:hover { border-color: var(--text-faint); }
 .search-field input:focus-visible { background: var(--bg-surface); }
 .search-field input::-webkit-search-cancel-button { margin-right: 18px; }
@@ -413,7 +413,7 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .row.is-selected { background: var(--accent-soft); }
 .row:has(.row-title:focus-visible) { box-shadow: inset 0 0 0 2px var(--accent); }
 .row .status-button { grid-area: status; }
-.row-id { grid-area: id; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+.row-id { grid-area: id; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
 .row.is-selected .row-id { color: var(--text-muted); }
 .row-title {
   grid-area: title; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 10px 0; border: 0; background: none; color: var(--text); text-align: left;
@@ -421,7 +421,7 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 }
 .row-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .row-title:focus-visible { outline: none; }
-.row-project, .row-owner { min-width: 0; color: var(--text-muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-project, .row-owner { min-width: 0; color: var(--text-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row-project { grid-area: project; }
 .row-owner { grid-area: owner; }
 .row-owner.is-other { color: var(--text); }
@@ -447,7 +447,7 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 /* Sections (Aujourd'hui) */
 .section { padding-top: 18px; }
 .section-head { display: flex; align-items: baseline; gap: 8px; padding: 0 24px 14px; }
-.section-head h2 { font-size: 18px; font-weight: 500; }
+.section-head h2 { font-size: 16px; font-weight: 500; }
 .section-count { font-size: var(--fs-xs); color: var(--text-quiet); font-variant-numeric: tabular-nums; }
 .section-note { font-size: var(--fs-xs); color: var(--text-quiet); }
 .section .rows { border-top: 1px solid var(--line-soft); }
@@ -488,8 +488,8 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .fold-progress { width: 40px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
 .fold-progress > span { display: block; height: 100%; width: calc(var(--p, 0) * 100%); background: var(--text-faint); }
 .fold-add { flex: none; opacity: 0; }
-.project-head { position: sticky; top: 0; z-index: 3; background: var(--bg-surface); min-height: 56px; }
-.project-head .fold-label { font-size: 16px; font-weight: 500; }
+.project-head { position: sticky; top: 0; z-index: 3; background: var(--bg-surface); min-height: 48px; }
+.project-head .fold-label { font-size: 15px; font-weight: 500; }
 .group-head { padding-left: 28px; }
 .group-head .fold-label { color: var(--text-muted); font-weight: 500; font-size: var(--fs-xs); }
 .group-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--grp, var(--text-faint)); }
@@ -788,6 +788,20 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .panel {
   position: fixed; top: 3px; right: 0; bottom: 0; z-index: 40; width: min(var(--panel-w), 100vw);
   display: flex; flex-direction: column; background: var(--bg-surface); border-left: 1px solid var(--line); box-shadow: var(--shadow-pop);
+}
+/* Nothing shows under an open action: beside the list when both fit (the list narrows to what is left, at least 560 px), over
+   the whole view otherwise (the sidebar, when open, stays beside it). 1244 px = 264 (sidebar) + 560 + 420; 980 px = 560 + 420. */
+.app.has-panel .main { margin-right: var(--panel-w); }
+@media (max-width: 1243px) {
+  .app.has-panel:not(.sidebar-collapsed) .main { margin-right: 0; }
+  .app.has-panel:not(.sidebar-collapsed) .panel { left: var(--sidebar-w); width: auto; }
+}
+@media (max-width: 979px) {
+  .app.has-panel .main { margin-right: 0; }
+  .app.has-panel.sidebar-collapsed .panel { left: 0; width: auto; }
+}
+@media (max-width: 900px) {  /* the sidebar is a drawer: the view takes the whole width */
+  .app.has-panel .panel, .app.has-panel:not(.sidebar-collapsed) .panel { left: 0; width: auto; }
 }
 .panel-form { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
 .panel-head { flex: none; display: flex; align-items: flex-start; gap: 8px; padding: 14px 14px 10px 20px; border-bottom: 1px solid var(--line-soft); }
@@ -1214,6 +1228,9 @@ mark { background: var(--mark-bg); color: var(--mark-text); border-radius: 2px; 
 /* ---------- Swipe between brains ---------- */
 /* A sideways swipe never leaves the page through the browser's back gesture: it scrolls what can scroll, or switches brain. */
 html, body { overscroll-behavior-x: none; }
+/* While the workspace turns to another brain, the sidebar clips what swings out of it (its brain menu is closed then). */
+.sidebar.is-turning { overflow: hidden; }
+.sidebar.is-turning .brain-switch, .sidebar.is-turning .sidebar-scroll { will-change: transform, opacity; backface-visibility: hidden; }
 /* The cue of a two-finger swipe: it slides in from the side the swipe leads to, with that brain's name and colour. */
 .brain-swipe {
   --swipe: 0; position: fixed; top: 50%; z-index: 75; display: flex; align-items: center; gap: 10px; padding: 10px 18px;
@@ -1271,6 +1288,9 @@ html, body { overscroll-behavior-x: none; }
   .popover:not([hidden]), .menu:not([hidden]), .brain-menu:not([hidden]) { animation: fade-in 120ms ease-out; }
   .toast:not([hidden]) { animation: fade-in 120ms ease-out; }
   .app.drawer-open .sidebar { transition: transform 160ms cubic-bezier(.2, .7, .3, 1); }
+  /* While the workspace turns to another brain, its colour fades in (only then: never on load). */
+  .brain-turning body::before, .brain-turning .brain-marker, .brain-turning .nav-item, .brain-turning .project-item,
+  .brain-turning .button-primary, .brain-turning .update-button { transition: background-color .3s ease, color .3s ease, border-color .3s ease; }
   @keyframes panel-in { from { transform: translateX(24px); opacity: .4; } }
   @keyframes fade-in { from { opacity: 0; } }
 }
@@ -1287,7 +1307,7 @@ html, body { overscroll-behavior-x: none; }
 }
 @container main (max-width: 880px) {
   #newNoteButton .button-label { display: none; }
-  #newNoteButton { width: 36px; padding: 0; }
+  #newNoteButton { width: 34px; padding: 0; }
 }
 @container main (max-width: 820px) {
   .row, .row.with-project { grid-template-columns: 20px 60px minmax(0, 1fr) minmax(0, 96px) 92px 16px var(--actions-w); grid-template-areas: "status id title owner due prio actions"; }
