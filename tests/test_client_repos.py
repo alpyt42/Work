@@ -34,9 +34,9 @@ class ClientReposTest(unittest.TestCase):
         self.gitconfig = self.root / "gitconfig"
         self.gitconfig.write_text(
             "[user]\n  useConfigOnly = true\n"
-            f'[includeIf "gitdir:{self.work}/repos/acme/"]\n  path = {self.root}/gitconfig-acme\n'
+            f'[includeIf "gitdir:{self.work.as_posix()}/repos/acme/"]\n  path = {self.root.as_posix()}/gitconfig-acme\n'
             f'[includeIf "hasconfig:remote.*.url:git@git.example.test:by-url/**"]\n'
-            f"  path = {self.root}/gitconfig-by-url\n",
+            f"  path = {self.root.as_posix()}/gitconfig-by-url\n",
             encoding="utf-8",
         )
         self.env = {

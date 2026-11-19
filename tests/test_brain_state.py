@@ -38,7 +38,7 @@ class BrainStateTest(unittest.TestCase):
         (data / "transcripts.json").write_text(json.dumps(transcripts), encoding="utf-8")
 
     def run_tool(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run([sys.executable, str(TOOL), *args], env=self.env, capture_output=True, text=True)
+        return subprocess.run([sys.executable, str(TOOL), *args], env=self.env, capture_output=True, text=True, encoding="utf-8")
 
     def test_lists_brains_default_first(self) -> None:
         result = self.run_tool("brains")
@@ -235,7 +235,7 @@ class BrainMapTest(unittest.TestCase):
         self.project("brain-abacus/projects/internal/notes", actions=(("NOT", " ", ""),))
 
     def run_map(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run([sys.executable, str(TOOL), "map", *args], env=self.env, capture_output=True, text=True)
+        return subprocess.run([sys.executable, str(TOOL), "map", *args], env=self.env, capture_output=True, text=True, encoding="utf-8")
 
     def data(self, *args: str) -> dict:
         result = self.run_map("--json", *args)
@@ -470,7 +470,7 @@ class BrainContextTest(unittest.TestCase):
     make_acme, make_abacus = BrainMapTest.make_acme, BrainMapTest.make_abacus
 
     def run_tool(self, *args: str, code: int = 0) -> subprocess.CompletedProcess:
-        result = subprocess.run([sys.executable, str(TOOL), *args], env=self.env, capture_output=True, text=True, check=False)
+        result = subprocess.run([sys.executable, str(TOOL), *args], env=self.env, capture_output=True, text=True, encoding="utf-8", check=False)
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
         return result
 
@@ -590,7 +590,7 @@ class BrainContextTest(unittest.TestCase):
         for line in self.lines("brief", "rollout")[-4:] + self.lines("brief", "notes")[-2:]:
             script, *args = line.split("uv run ")[1].split()
             result = subprocess.run([sys.executable, str(TOOL.parent / Path(script).name), *args], cwd=self.work, env=self.env,
-                                    capture_output=True, text=True, check=False)
+                                    capture_output=True, text=True, encoding="utf-8", check=False)
             self.assertEqual((result.returncode, bool(result.stdout.strip())), (0, True), line + result.stdout + result.stderr)
 
     def test_brief_prefers_the_current_state_section_and_caps_its_words(self) -> None:
@@ -1118,7 +1118,7 @@ class BrainContextTest(unittest.TestCase):
         for name, tool in (("actions", "action.py"), ("decisions", "decision.py")):
             command = commands[name].split()
             self.assertEqual(command[:3], ["uv", "run", f"tools/brain/{tool}"])
-            result = subprocess.run([sys.executable, str(TOOL.with_name(tool)), *command[3:]], env=self.env, capture_output=True, text=True, check=False)
+            result = subprocess.run([sys.executable, str(TOOL.with_name(tool)), *command[3:]], env=self.env, capture_output=True, text=True, encoding="utf-8", check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("GLB-091" if name == "actions" else "Old choice", result.stdout)
         # a live project is not archived: no flag in its commands
@@ -1624,7 +1624,7 @@ class BrainArchiveTest(unittest.TestCase):
                      page="# legacy-tool\n\n[setup](../../internal/setup/setup.md)\n")
 
     def run_tool(self, *args: str, code: int = 0) -> subprocess.CompletedProcess:
-        result = subprocess.run([sys.executable, str(TOOL), *args], env=self.env, capture_output=True, text=True, check=False)
+        result = subprocess.run([sys.executable, str(TOOL), *args], env=self.env, capture_output=True, text=True, encoding="utf-8", check=False)
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
         return result
 

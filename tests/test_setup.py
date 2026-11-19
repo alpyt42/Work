@@ -35,6 +35,7 @@ class SetupTestCase(unittest.TestCase):
             **os.environ,
             "WORK_DIR": str(self.work),
             "HOME": str(self.home),
+            "USERPROFILE": str(self.home),  # Windows expands ~ from USERPROFILE
             "GIT_CONFIG_GLOBAL": str(self.home / "gitconfig"),
             "GIT_CONFIG_NOSYSTEM": "1",
             "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",

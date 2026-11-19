@@ -52,7 +52,7 @@ class TasksBoardTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def run_board(self, *args: str) -> str:
-        result = subprocess.run([sys.executable, str(TOOL), "board", *args], env=self.env, cwd=self.work, capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(TOOL), "board", *args], env=self.env, cwd=self.work, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result.stdout
 
@@ -132,7 +132,7 @@ class TasksBoardTest(unittest.TestCase):
     def test_watch_rewrites_the_board_when_a_register_changes(self) -> None:
         board = self.work / "agents/tasks-board.md"
         process = subprocess.Popen([sys.executable, str(TOOL), "board", "--write", "--watch"], env=self.env, cwd=self.work,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
         try:
             self.wait_for(lambda: board.is_file() and "TST-001" in board.read_text(encoding="utf-8"))
             register = self.brain / "projects/clients/acme/missions/m/state/actions.md"
@@ -152,13 +152,13 @@ class TasksBoardTest(unittest.TestCase):
         self.fail("condition not met in time")
 
     def test_watch_needs_write(self) -> None:
-        result = subprocess.run([sys.executable, str(TOOL), "board", "--watch"], env=self.env, cwd=self.work, capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(TOOL), "board", "--watch"], env=self.env, cwd=self.work, capture_output=True, text=True, encoding="utf-8")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--watch needs --write", result.stderr)
 
     def test_owner_is_required(self) -> None:
         (self.brain / ".data/doctor.json").unlink()
-        result = subprocess.run([sys.executable, str(TOOL), "board"], env=self.env, cwd=self.work, capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(TOOL), "board"], env=self.env, cwd=self.work, capture_output=True, text=True, encoding="utf-8")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unknown owner", result.stderr)
 

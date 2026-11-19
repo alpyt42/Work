@@ -53,7 +53,7 @@ class WorkConfigTestCase(unittest.TestCase):
             self.write_json(f"{name}/.data/work-config.json", conf)
 
     def run_tool(self, *args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run([sys.executable, str(TOOL), *args], env=self.env, capture_output=True, text=True)
+        return subprocess.run([sys.executable, str(TOOL), *args], env=self.env, capture_output=True, text=True, encoding="utf-8")
 
     def ok(self, *args: str) -> str:
         result = self.run_tool(*args)
@@ -266,7 +266,7 @@ class ExampleFilesTest(WorkConfigTestCase):
         self.write_json("work-config.local.json", template)
         self.ok("check")
         self.assertEqual(self.ok("default-brain"), "brain-acme\n")
-        self.assertEqual(self.ok("artifacts-dir"), f"{self.root}/artifacts\n")
+        self.assertEqual(self.ok("artifacts-dir"), f"{self.root / 'artifacts'}\n")
 
     def test_the_public_defaults_carry_no_machine_key(self) -> None:
         example = json.loads((self.REPO / "work-config.example.json").read_text(encoding="utf-8"))
@@ -282,24 +282,24 @@ class ArtifactsDirTest(WorkConfigTestCase):
         self.write_json("work-config.local.json", {"version": 1, "artifactsDir": value})
 
     def test_default_is_artifacts_at_the_work_root(self) -> None:
-        self.assertEqual(self.ok("artifacts-dir"), f"{self.root}/artifacts\n")
+        self.assertEqual(self.ok("artifacts-dir"), f"{self.root / 'artifacts'}\n")
         self.write_json("work-config.local.json", {"version": 1})
-        self.assertEqual(self.ok("artifacts-dir"), f"{self.root}/artifacts\n")
+        self.assertEqual(self.ok("artifacts-dir"), f"{self.root / 'artifacts'}\n")
 
     def test_relative_path_is_relative_to_the_work_root(self) -> None:
         self.local("../globex-sync/artifacts")
-        self.assertEqual(self.ok("artifacts-dir"), f"{self.root.parent}/globex-sync/artifacts\n")
+        self.assertEqual(self.ok("artifacts-dir"), f"{self.root.parent / 'globex-sync/artifacts'}\n")
         self.local("files/acme")
-        self.assertEqual(self.ok("artifacts-dir"), f"{self.root}/files/acme\n")
+        self.assertEqual(self.ok("artifacts-dir"), f"{self.root / 'files/acme'}\n")
 
     def test_absolute_path_is_kept(self) -> None:
         self.local(str(self.root.parent / "acme-sync"))
-        self.assertEqual(self.ok("artifacts-dir"), f"{self.root.parent}/acme-sync\n")
+        self.assertEqual(self.ok("artifacts-dir"), f"{self.root.parent / 'acme-sync'}\n")
 
     def test_tilde_is_expanded(self) -> None:
-        self.env["HOME"] = str(self.root)
+        self.env["HOME"] = self.env["USERPROFILE"] = str(self.root)  # Windows expands ~ from USERPROFILE
         self.local("~/globex-cloud/artifacts")
-        self.assertEqual(self.ok("artifacts-dir"), f"{self.root}/globex-cloud/artifacts\n")
+        self.assertEqual(self.ok("artifacts-dir"), f"{self.root / 'globex-cloud/artifacts'}\n")
 
     def test_setting_is_only_accepted_in_the_local_layer(self) -> None:
         self.write_json("work-config.example.json", {"version": 1, "artifactsDir": "artifacts", "skills": {}})
@@ -328,7 +328,7 @@ class ArtifactsDirTest(WorkConfigTestCase):
         (self.root / "globex-artifacts").unlink()
         (self.root / "globex-artifacts").mkdir()
         self.assertIn("Work configuration OK", self.ok("check"))
-        self.assertEqual(self.ok("artifacts-dir"), f"{self.root}/globex-artifacts\n")
+        self.assertEqual(self.ok("artifacts-dir"), f"{self.root / 'globex-artifacts'}\n")
 
     def test_check_option_reports_the_location_and_the_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as outside_name:
