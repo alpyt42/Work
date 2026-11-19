@@ -4397,6 +4397,15 @@ class BrainSwipeTest(unittest.TestCase):
         self.assertEqual(out[4]["actions"], ["previous"])
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_new_swipe_inside_the_momentum_switches_again_but_one_swipe_never_switches_twice(self):
+        momentum = [[max(1, 18 - i), 0, 16] for i in range(25)]  # the fingers lifted: the events fade
+        again = [[20, 1, 16]] * 5 + momentum + [[3, 0, 16], [8, 0, 16], [15, 0, 16]] + [[25, 0, 16]] * 6
+        faster = [[20, 0, 16]] * 5 + [[30, 0, 16], [40, 0, 16], [50, 0, 16], [60, 0, 16]] * 3  # one swipe that speeds up
+        out = self.run_cases([again, faster])
+        self.assertEqual(out[0]["actions"], ["next", "next"])
+        self.assertEqual(out[1]["actions"], ["next"])
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_a_swipe_left_halfway_is_withdrawn(self):
         out = self.run_cases([[[20, 0, 16]] * 4, [[20, 0, 16]] * 10])
         self.assertEqual((out[0]["actions"], out[0]["settled"]), ([], "cancel"))
@@ -4408,7 +4417,13 @@ class BrainSwipeTest(unittest.TestCase):
         self.assertIn('<div id="brainSwipe" class="brain-swipe" aria-hidden="true" hidden>', page)
         script, styles = app_script(), (self.STATIC / "app.css").read_text(encoding="utf-8")
         self.assertIn("document.addEventListener('wheel', onBrainWheel, {passive: false});", script)
-        self.assertIn("if (brain) switchBrain(brain.name);", script)  # the guards of the selector (writes, unsaved edits) still apply
+        self.assertIn("if (brain) turnToBrain(brain.name, action.direction);", script)
+        self.assertIn("const switched = switchBrain(name);", script)  # the guards of the selector (writes, unsaved edits) still apply
+        # The selector turns the workspace too; without motion the brain just changes; a page in the background never stays halfway.
+        self.assertIn("turnToBrain(name, brains.findIndex(brain => brain.name === name) >= from ? 1 : -1);", script)
+        self.assertIn("if (reducedMotion.matches) {", script)
+        self.assertIn("await Promise.race([ended, new Promise(resolve => setTimeout(resolve, timing.duration + 250))]);", script)
+        self.assertIn(".sidebar.is-turning { overflow: hidden; }", styles)
         self.assertIn("html, body { overscroll-behavior-x: none; }", styles)
         with tempfile.TemporaryDirectory() as folder:
             brain = Path(folder) / "brain"

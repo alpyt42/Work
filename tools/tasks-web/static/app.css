@@ -1214,6 +1214,9 @@ mark { background: var(--mark-bg); color: var(--mark-text); border-radius: 2px; 
 /* ---------- Swipe between brains ---------- */
 /* A sideways swipe never leaves the page through the browser's back gesture: it scrolls what can scroll, or switches brain. */
 html, body { overscroll-behavior-x: none; }
+/* While the workspace turns to another brain, the sidebar clips what swings out of it (its brain menu is closed then). */
+.sidebar.is-turning { overflow: hidden; }
+.sidebar.is-turning .brain-switch, .sidebar.is-turning .sidebar-scroll { will-change: transform, opacity; backface-visibility: hidden; }
 /* The cue of a two-finger swipe: it slides in from the side the swipe leads to, with that brain's name and colour. */
 .brain-swipe {
   --swipe: 0; position: fixed; top: 50%; z-index: 75; display: flex; align-items: center; gap: 10px; padding: 10px 18px;
@@ -1271,6 +1274,9 @@ html, body { overscroll-behavior-x: none; }
   .popover:not([hidden]), .menu:not([hidden]), .brain-menu:not([hidden]) { animation: fade-in 120ms ease-out; }
   .toast:not([hidden]) { animation: fade-in 120ms ease-out; }
   .app.drawer-open .sidebar { transition: transform 160ms cubic-bezier(.2, .7, .3, 1); }
+  /* While the workspace turns to another brain, its colour fades in (only then: never on load). */
+  .brain-turning body::before, .brain-turning .brain-marker, .brain-turning .nav-item, .brain-turning .project-item,
+  .brain-turning .button-primary, .brain-turning .update-button { transition: background-color .3s ease, color .3s ease, border-color .3s ease; }
   @keyframes panel-in { from { transform: translateX(24px); opacity: .4; } }
   @keyframes fade-in { from { opacity: 0; } }
 }

@@ -136,7 +136,9 @@ function closeBrainMenu(refocus = true) {
 }
 function chooseBrain(name) {
   closeBrainMenu();
-  if (name) switchBrain(name);
+  if (!name || name === currentBrain) return;
+  const from = brains.findIndex(brain => brain.name === currentBrain);
+  turnToBrain(name, brains.findIndex(brain => brain.name === name) >= from ? 1 : -1);
 }
 function adoptBrain(name) {
   currentBrain = name;
@@ -272,10 +274,92 @@ async function loadBrains({initial = false} = {}) {
   return false;
 }
 
+// ---------- Turning to another brain ----------
+// A change of brain turns the workspace like a cube: the brain's name and its sidebar (views, projects) swing away on their edge
+// toward the side the change goes to, then the next brain's swing in from the other side while the views slide in after them. A
+// swipe leans the sidebar with the fingers first, and a swipe given up swings it back. The switch itself is `switchBrain`, so a
+// write in progress or an unsaved edit still holds it back (the sidebar then swings back). Without motion (the system setting),
+// the brain just changes.
+const TURN_OUT = {duration: 170, easing: 'cubic-bezier(.4, 0, 1, 1)'};
+const TURN_IN = {duration: 300, easing: 'cubic-bezier(.2, .8, .2, 1)'};
+const TURN_REST = {transform: 'perspective(900px) translateX(0) rotateY(0deg)', transformOrigin: '50% 50%', opacity: 1};
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+let turning = false;
+let turnLean = null;  // how far a swipe in progress leaned the sidebar: {direction, amount}
+function turnParts() { return [ids.brainSwitch, ids.sidebar.querySelector('.sidebar-scroll')]; }
+// The sidebar `amount` of the way out (0 to 1) toward the next brain (direction 1: it leaves to the left) or the previous one.
+function turnOut(direction, amount) {
+  return {transform: `perspective(900px) translateX(${-direction * amount * 55}%) rotateY(${direction * amount * 70}deg)`,
+          transformOrigin: direction > 0 ? '0% 50%' : '100% 50%', opacity: 1 - amount * .85};
+}
+// The next brain's sidebar, `amount` of the way before it is in place, coming from the other side.
+function turnIn(direction, amount) {
+  return {transform: `perspective(900px) translateX(${direction * amount * 55}%) rotateY(${-direction * amount * 70}deg)`,
+          transformOrigin: direction > 0 ? '100% 50%' : '0% 50%', opacity: 1 - amount};
+}
+function setTurnPose(pose) {
+  for (const part of turnParts()) {
+    part.style.transform = pose ? pose.transform : '';
+    part.style.transformOrigin = pose ? pose.transformOrigin : '';
+    part.style.opacity = pose ? String(pose.opacity) : '';
+  }
+}
+// Each step ends with its animations, or after a grace delay when they cannot run (a page in the background does not animate):
+// the turn never stays stuck halfway.
+async function playTurn(from, to, timing) {
+  const animations = turnParts().map(part => part.animate([from, to], {...timing, fill: 'forwards'}));
+  const ended = Promise.all(animations.map(animation => animation.finished.catch(() => null)));
+  await Promise.race([ended, new Promise(resolve => setTimeout(resolve, timing.duration + 250))]);
+  return animations;
+}
+function leanTurn(direction, amount) {
+  if (turning || reducedMotion.matches) return;
+  ids.sidebar.classList.add('is-turning');
+  turnLean = {direction, amount: Math.min(amount, 1) * .45};
+  setTurnPose(turnOut(direction, turnLean.amount));
+}
+async function turnBack() {
+  if (!turnLean || turning) return;
+  const from = turnOut(turnLean.direction, turnLean.amount);
+  turnLean = null;
+  turning = true;
+  setTurnPose(null);
+  (await playTurn(from, TURN_REST, TURN_IN)).forEach(animation => animation.cancel());
+  ids.sidebar.classList.remove('is-turning');
+  turning = false;
+}
+async function turnToBrain(name, direction) {
+  if (turning) return false;
+  if (reducedMotion.matches) {
+    turnLean = null;
+    setTurnPose(null);
+    return switchBrain(name);
+  }
+  turning = true;
+  ids.sidebar.classList.add('is-turning');
+  document.documentElement.classList.add('brain-turning');
+  const from = turnLean ? turnOut(turnLean.direction, turnLean.amount) : TURN_REST;
+  turnLean = null;
+  setTurnPose(null);
+  const out = await playTurn(from, turnOut(direction, 1), TURN_OUT);
+  const switched = switchBrain(name);
+  out.forEach(animation => animation.cancel());  // in the same task as the next animations: no frame shows the sidebar at rest
+  let back;
+  if (switched) {
+    ids.mainContent.querySelector('.views')?.animate([{transform: `translateX(${direction * 32}px)`, opacity: 0}, {transform: 'none', opacity: 1}], TURN_IN);
+    back = await playTurn(turnIn(direction, 1), TURN_REST, TURN_IN);
+  } else back = await playTurn(turnOut(direction, 1), TURN_REST, TURN_IN);
+  back.forEach(animation => animation.cancel());
+  ids.sidebar.classList.remove('is-turning');
+  document.documentElement.classList.remove('brain-turning');
+  turning = false;
+  return switched;
+}
+
 // ---------- Swipe between brains ----------
-// Two fingers sideways on a trackpad move to the previous or the next brain, in the order of the selector (the logic is
-// BrainSwipe, in brain-swipe.js). A cue slides in from the side the swipe leads to, with that brain's name and colour; the switch
-// is `switchBrain`, so a write in progress or an unsaved edit still holds it back.
+// A sideways scroll moves to the previous or the next brain, in the order of the selector (the logic is BrainSwipe, in
+// brain-swipe.js): it leans the sidebar, a cue slides in from the side it leads to with that brain's name and colour, and far
+// enough it turns the workspace to that brain.
 let brainSwipe = BrainSwipe.idle();
 let brainSwipeTimer = 0;
 function brainNeighbour(direction) {
@@ -283,7 +367,9 @@ function brainNeighbour(direction) {
   return index < 0 ? null : brains[index + direction] || null;
 }
 // Whether something under the pointer can still scroll sideways that way (-1 left, 1 right): then the swipe scrolls it instead.
+// Nothing in the sidebar scrolls sideways: over it a swipe always turns the brain.
 function scrollsSideways(target, direction) {
+  if (target instanceof Element && target.closest('.sidebar')) return false;
   for (let node = target instanceof Element ? target : null; node && node !== document.body; node = node.parentElement) {
     if (node.scrollWidth <= node.clientWidth + 1) continue;
     const overflow = getComputedStyle(node).overflowX;
@@ -306,8 +392,7 @@ function showBrainSwipe(direction, amount) {
 }
 function hideBrainSwipe() { ids.brainSwipe.hidden = true; }
 function onBrainWheel(event) {
-  const fresh = event.timeStamp - brainSwipe.at > BrainSwipe.GAP;
-  const deciding = fresh || brainSwipe.phase === 'deciding';
+  const deciding = brainSwipe.phase !== 'tracking';  // a new gesture may start (after a pause, or inside a momentum)
   const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? innerWidth : 1;  // lines or pages from some mice
   const result = BrainSwipe.step(brainSwipe, {
     dx: event.deltaX * scale, dy: event.deltaY * scale, time: event.timeStamp,
@@ -321,15 +406,21 @@ function onBrainWheel(event) {
   if (result.prevent) event.preventDefault();
   clearTimeout(brainSwipeTimer);
   brainSwipeTimer = setTimeout(() => {
-    brainSwipe = BrainSwipe.settle(brainSwipe).state;
+    const end = BrainSwipe.settle(brainSwipe);
+    brainSwipe = end.state;
     hideBrainSwipe();
+    if (end.action?.type === 'cancel') turnBack();
   }, BrainSwipe.GAP);
   const action = result.action;
-  if (action?.type === 'progress') showBrainSwipe(action.direction, action.amount);
+  if (action?.type === 'progress' && !turning) {
+    showBrainSwipe(action.direction, action.amount);
+    leanTurn(action.direction, action.amount);
+  }
   if (action?.type === 'switch') {
     hideBrainSwipe();
     const brain = brainNeighbour(action.direction);
-    if (brain) switchBrain(brain.name);
+    if (brain) turnToBrain(brain.name, action.direction);
+    else turnBack();  // past the last brain: the sidebar swings back
   }
 }
 // Not passive: a swipe that switches brain must also keep the browser from going back or forward in its history.
