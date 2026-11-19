@@ -8,6 +8,8 @@
     useConfigOnly = true
 
 # --- Author (and key, when needed) by folder. The last matching rule wins.
+# On Windows, where paths are case-insensitive, write each rule as "gitdir/i:…" (same pattern), so that
+# C:/Users/… and c:/users/… both match; keep the "/" separators and the "~/".
 [includeIf "gitdir:~/Work/.git"]                 # this repository only
     path = ~/.gitconfig-personal
 [includeIf "gitdir:~/Work/repos/personal/"]
