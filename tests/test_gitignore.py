@@ -37,6 +37,11 @@ class RootIgnoreRulesTest(unittest.TestCase):
             self.assertTrue(ignored(self.repo, private), private)
         self.assertFalse(ignored(self.repo, "tools/.env.example"))
 
+    def test_priorities_exports_are_ignored(self) -> None:
+        for private in ("priorities/brain-acme.md", "priorities/brain-globex.md"):
+            self.assertTrue(ignored(self.repo, private), private)
+        self.assertFalse(ignored(self.repo, "tools/tasks-web/priorities.md"))
+
     def test_other_files_of_tools_are_still_tracked(self) -> None:
         for public in ("tools/README.md", "tools/machine/.hidden-but-versioned", "tools/brain/check-links.py"):
             self.assertFalse(ignored(self.repo, public), public)

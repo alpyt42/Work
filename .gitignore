@@ -8,6 +8,8 @@
 /artifacts
 /agents/*
 !/agents/README.md
+# Ranked lists a brain's priorities skill writes for the Priorities view of tasks-web (one file per brain)
+/priorities/
 # Local editor settings (Todo Tree filters on the brain owner's name)
 /.vscode/
 

@@ -5,7 +5,7 @@ Tests of the scripts in `tools/`, with no remote service or private data, on tem
 Fictitious names only in tests and fixtures (`acme`, `globex`, `initech`, `brain-acme`…): see the rule in [`AGENTS.md`](../AGENTS.md), « Keep repository boundaries ».
 
 - `test_check_links.py` — brain link check (including links to another brain and the ignored templates of `skills/<name>/assets/`) and `check-links.sh` on several brains.
-- `test_gitignore.py` — ignore rules of the root: hidden local files of `tools/` are never tracked.
+- `test_gitignore.py` — ignore rules of the root: hidden local files of `tools/` and the `priorities/` exports are never tracked.
 - `test_claude_bash_guard.py` — the Claude Code hook: direct `python` refused, nothing deleted or moved out of `artifacts/` (except into `artifacts/archive/`), no Git hook bypass.
 - `test_preflight_push.py` — checks before a push (identity origin, `GIT_SSH*`, `brain.json` boundary, SSH account with a stub, fast-forward) and the `pre-push` hook through real pushes to a local bare remote.
 - `test_client_repos.py` — catalog and cloning of client repositories.

@@ -4,7 +4,7 @@ const token = document.querySelector('meta[name="csrf-token"]').content;
 const ids = Object.fromEntries([
   'app', 'sidebar', 'scrim', 'sidebarToggle', 'brainMini', 'sidebarClose', 'mainContent',
   'brainSwitch', 'brainStatic', 'brainStaticName', 'brainButton', 'brainName', 'brainMenu',
-  'todayButton', 'listButton', 'boardButton', 'timelineButton', 'docsButton', 'archivesButton', 'toolsButton', 'gitButton', 'settingsButton',
+  'prioButton', 'prioCount', 'prioView', 'todayButton', 'listButton', 'boardButton', 'timelineButton', 'docsButton', 'archivesButton', 'toolsButton', 'gitButton', 'settingsButton',
   'archiveScopeButton', 'archivesView', 'archiveStatus', 'archiveList', 'archivePane', 'archiveBack', 'archivePaneTitle', 'archivePaneMeta', 'archiveUnarchive',
   'archivePaneEmpty', 'archiveBody', 'archiveDialog', 'archiveHeading', 'archiveText', 'archiveDialogList', 'archiveDialogError', 'archiveCancel', 'archiveConfirm',
   'todayCount', 'openCount', 'gitCount', 'projectNav', 'lastSync',
@@ -41,10 +41,10 @@ function readUIState() {
 }
 const savedUI = readUIState();
 // `search` is the results page of the header field: no button, no digit, never restored (it has no query to show).
-const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git', 'settings'];
+const VIEWS = ['priorities', 'today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git', 'settings'];
 const ACTION_VIEWS = ['today', 'list', 'board', 'timeline'];
-const VIEW_TITLES = {today: 'Today', list: 'Actions', board: 'Board', timeline: 'Timeline', docs: 'Docs', search: 'Search', archives: 'Archives', tools: 'Tools', git: 'Sync', settings: 'Settings'};
-const NAV_BUTTONS = {today: 'todayButton', list: 'listButton', board: 'boardButton', timeline: 'timelineButton', docs: 'docsButton', archives: 'archivesButton', tools: 'toolsButton', git: 'gitButton', settings: 'settingsButton'};
+const VIEW_TITLES = {priorities: 'Priorities', today: 'Today', list: 'Actions', board: 'Board', timeline: 'Timeline', docs: 'Docs', search: 'Search', archives: 'Archives', tools: 'Tools', git: 'Sync', settings: 'Settings'};
+const NAV_BUTTONS = {priorities: 'prioButton', today: 'todayButton', list: 'listButton', board: 'boardButton', timeline: 'timelineButton', docs: 'docsButton', archives: 'archivesButton', tools: 'toolsButton', git: 'gitButton', settings: 'settingsButton'};
 // The Docs view was called Notes: a view saved under the old name opens it.
 let view = VIEWS.includes(savedUI.view) && savedUI.view !== 'search' ? savedUI.view : savedUI.view === 'notes' ? 'docs' : 'today';
 let searchReturn = 'today'; // the view the results page goes back to
@@ -1888,7 +1888,8 @@ function renderFilterChips() {
 }
 function render() {
   closePopover(false);
-  if (view === 'tools') countTools();
+  if (view === 'priorities') renderPriorities();
+  else if (view === 'tools') countTools();
   else if (view === 'git') renderGit();
   else if (view === 'settings') renderSettings();
   else if (view === 'archives') renderArchives();
@@ -1907,6 +1908,7 @@ function setView(next, persist = true) {
   if (!VIEWS.includes(next)) next = 'today';
   view = next;
   closePopover(false);
+  ids.prioView.hidden = next !== 'priorities';
   ids.todayView.hidden = next !== 'today';
   ids.listView.hidden = next !== 'list';
   ids.boardView.hidden = next !== 'board';
@@ -1935,6 +1937,7 @@ function setView(next, persist = true) {
   ids.gitStatus.hidden = next !== 'git';
   ids.resultCount.textContent = '';
   render();
+  if (next === 'priorities') loadPriorities();
   if (next === 'tools' && !tools.length) loadTools();
   if (next === 'git') loadGit();
   if (next === 'settings' && !settingsData) loadSettings();
@@ -2739,6 +2742,7 @@ function resetBrainState() {
   timelineSpot = '';
   timelineBase = [];
   ids.timelineTraySearch.value = '';
+  resetPriorities();
   closePopover(false);
   closeEditor({force: true, refocus: false});
   // The Git cards are the same for every brain (only their order follows the current one): kept, drawn again by the render below.
@@ -2835,6 +2839,143 @@ async function loadBrains({initial = false} = {}) {
   renderBrainSwitch();
   return false;
 }
+
+// ---------- Priorities ----------
+// The file `priorities/<brain>.md` written by the /priorities skill, parsed by GET /api/priorities (see "Priorities file" in the README).
+let prioData = null; // the last answer for this brain: {exists, sections, version, stale, ...}
+let prioRequest = 0;
+let prioError = '';
+const PRIO_ID = /\b[A-Z]{2,5}-\d{3}\b/g;
+function resetPriorities() {
+  prioRequest += 1;
+  prioData = null;
+  prioError = '';
+  ids.prioCount.textContent = '';
+  ids.prioButton.title = 'Priorities (0)';
+  ids.prioView.replaceChildren();
+}
+async function loadPriorities() {
+  const requestId = ++prioRequest;
+  try {
+    const data = await request('/api/priorities');
+    if (requestId !== prioRequest) return;
+    const unchanged = prioData && !prioError && data.exists === prioData.exists && data.version === prioData.version && data.stale === prioData.stale && data.today === prioData.today;
+    prioData = data;
+    prioError = '';
+    const now = data.exists ? (data.sections.find(section => section.key === 'now')?.count || 0) : 0;
+    ids.prioCount.textContent = now ? String(now) : '';
+    ids.prioButton.title = `Priorities (0)${now ? `: ${now} to do now` : ''}`;
+    if (view === 'priorities' && !unchanged) renderPriorities();
+  } catch (error) {
+    if (requestId !== prioRequest || error.stale) return;
+    prioError = error.message;
+    if (view === 'priorities') renderPriorities();
+  }
+}
+// The action IDs of a rendered section become buttons when the action is in the brain's snapshot; the others stay text.
+function linkActionIds(root) {
+  const known = new Map(snapshot.actions.map(action => [action.id, action]));
+  if (!known.size) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!node.parentElement.closest('a, button') && node.nodeValue.match(PRIO_ID)?.some(id => known.has(id))) nodes.push(node);
+  }
+  for (const node of nodes) {
+    const text = node.nodeValue;
+    const parts = [];
+    let last = 0;
+    for (const match of text.matchAll(PRIO_ID)) {
+      if (!known.has(match[0])) continue;
+      if (match.index > last) parts.push(document.createTextNode(text.slice(last, match.index)));
+      const button = element('button', 'prio-id', match[0]);
+      button.type = 'button';
+      button.dataset.actionId = match[0];
+      button.title = `Open ${match[0]}`;
+      parts.push(button);
+      last = match.index + match[0].length;
+    }
+    if (last < text.length) parts.push(document.createTextNode(text.slice(last)));
+    node.replaceWith(...parts);
+  }
+}
+function prioHeader(data) {
+  const head = element('header', 'prio-head');
+  const line = element('div', 'prio-title-line');
+  line.append(element('h2', 'prio-title', data.title || 'Priorities'));
+  if (data.stale) {
+    const badge = element('span', 'prio-badge', "Not today's");
+    badge.title = data.generated ? `Generated on ${data.generated}` : 'No valid generation date';
+    line.append(badge);
+  }
+  head.append(line);
+  const generated = data.generated ? new Date(data.generated) : null;
+  const facts = [];
+  if (generated && !Number.isNaN(generated.getTime())) facts.push(`Generated: ${relativeTime(generated)} (${TIME_FORMAT.format(generated)}, ${DAY_YEAR_FORMAT.format(generated)})`);
+  else facts.push('Generation date unknown');
+  if (data.horizon) facts.push(`Horizon ${data.horizon.replace('..', ' to ')}`);
+  if (data.next_meeting) facts.push(`Next meeting: ${data.next_meeting}`);
+  head.append(element('p', 'prio-facts', facts.join(' · ')));
+  if (data.stale) head.append(element('p', 'prio-hint', 'Run /priorities in Claude Code to refresh it.'));
+  return head;
+}
+function prioBody(section) {
+  const body = element('div', 'prio-body');
+  const template = document.createElement('template');
+  template.innerHTML = section.html; // rendered by the server's safe Markdown renderer (raw HTML is escaped there)
+  body.append(template.content);
+  linkActionIds(body);
+  return body;
+}
+function renderPriorities() {
+  const scroll = ids.prioView.scrollTop;
+  ids.resultCount.textContent = '';
+  if (prioError && !prioData) {
+    ids.prioView.replaceChildren(element('p', 'error-banner', prioError));
+    return;
+  }
+  if (!prioData) {
+    ids.prioView.replaceChildren(element('p', 'empty-inline', 'Loading…'));
+    return;
+  }
+  if (!prioData.exists) {
+    const box = element('div', 'empty-state');
+    box.append(element('h2', '', 'No priorities for this brain yet.'), element('p', '', 'Run /priorities in Claude Code.'));
+    ids.prioView.replaceChildren(box);
+    return;
+  }
+  const nodes = [];
+  if (prioError) nodes.push(element('p', 'error-banner', prioError));
+  nodes.push(prioHeader(prioData));
+  const total = prioData.sections.reduce((sum, section) => sum + (section.key === 'warnings' ? 0 : section.count), 0);
+  ids.resultCount.textContent = total ? plural(total, 'item') : '';
+  for (const section of prioData.sections.filter(item => item.key === 'warnings')) {
+    const notice = element('section', 'prio-notice');
+    notice.setAttribute('role', 'note');
+    notice.setAttribute('aria-label', section.title);
+    notice.append(element('h3', 'prio-notice-title', section.title), prioBody(section));
+    nodes.push(notice);
+  }
+  const cards = prioData.sections.filter(item => item.key !== 'warnings');
+  if (!cards.length) nodes.push(element('p', 'empty-inline', 'Nothing to do in this horizon.'));
+  cards.forEach((section, index) => {
+    const card = element('section', `prio-card prio-${section.key}`);
+    const title = element('h3', 'prio-card-title');
+    title.id = `prio-section-${index}`;
+    title.append(element('span', '', section.title), element('span', 'section-count', String(section.count)));
+    card.setAttribute('aria-labelledby', title.id);
+    card.append(title, prioBody(section));
+    nodes.push(card);
+  });
+  ids.prioView.replaceChildren(...nodes);
+  ids.prioView.scrollTop = scroll;
+}
+ids.prioView.addEventListener('click', event => {
+  const button = event.target instanceof Element ? event.target.closest('.prio-id') : null;
+  const action = button && snapshot.actions.find(item => item.id === button.dataset.actionId);
+  if (action) openEditor(action);
+});
+window.addEventListener('focus', () => { if (view === 'priorities') loadPriorities(); });
 
 // ---------- Archives ----------
 // The archived clients, missions and internal projects (moved whole into an `archive/` folder by `brain-state.py archive`): out of every
@@ -4288,6 +4429,7 @@ function showError(message) {
   ids.errorBanner.hidden = false;
 }
 async function refresh() {
+  loadPriorities(); // the file is written by /priorities, outside the page: read again with the rest
   loadGit({quiet: view !== 'git'}); // the number next to Git follows the writes made from the page
   if (isDocsView()) refreshDocsView();
   if (view === 'archives' || archivesData) loadArchives(); // an archive or an unarchive changes both lists
@@ -5180,13 +5322,13 @@ document.addEventListener('keydown', event => {
   if (key === 'Escape') { handleEscape(event); return; }
   if (event.metaKey || event.ctrlKey || typing) return;
   if (document.querySelector('dialog[open]') || popoverState || brainMenuOpen() || !ids.moreMenu.hidden) return;
-  const digit = /^[1-5]$/.test(key) ? key : /^Digit[1-5]$/.test(event.code) && !event.altKey ? event.code.slice(5) : null;
+  const digit = /^[0-5]$/.test(key) ? key : /^Digit[0-5]$/.test(event.code) && !event.altKey ? event.code.slice(5) : null;
   const inRows = ACTION_VIEWS.includes(view);
   const onBody = event.target === document.body || event.target === ids.mainContent || event.target === ids.editorTitle;
   if (key === '/') { event.preventDefault(); focusSearch(); }
   else if (key === '?') { event.preventDefault(); ids.shortcutsDialog.showModal(); }
   else if (key === '[') { event.preventDefault(); toggleSidebar(); }
-  else if (digit && !event.altKey) { event.preventDefault(); setView(['today', 'list', 'board', 'timeline', 'docs'][Number(digit) - 1]); }
+  else if (digit && !event.altKey) { event.preventDefault(); setView(['priorities', 'today', 'list', 'board', 'timeline', 'docs'][Number(digit)]); }
   else if (key === 'n' && !event.altKey) { event.preventDefault(); openEditor(); }
   else if (inRows && (key === 'j' || key === 'ArrowDown') && !event.altKey) {
     if (key === 'ArrowDown' && !onBody && !activeRoot().contains(event.target)) return;
