@@ -4272,6 +4272,19 @@ class MarkdownToolbarTest(unittest.TestCase):
             self.assertTrue(response.headers["Content-Type"].startswith("text/javascript"))
             self.assertIn("const MarkdownEdit", response.read().decode("utf-8"))
 
+    def test_the_fonts_of_the_stylesheet_are_served_and_nothing_else_is(self):
+        styles = (self.STATIC / "app.css").read_text(encoding="utf-8")
+        fonts = re.findall(r'url\("/(fonts/[a-z0-9-]+\.woff2)"\)', styles)
+        self.assertEqual(len(fonts), 4)
+        for font in fonts:
+            with urlopen(f"{self.base}/{font}", timeout=3) as response:
+                self.assertEqual(response.headers["Content-Type"], "font/woff2")
+                self.assertEqual(response.read(), (self.STATIC / font).read_bytes())
+        for path in ("/icon.png", "/licenses/IBM-Plex-Sans-OFL-1.1.txt", "/fonts/", "/app/", "/index.html", "/fonts/../app.css"):
+            with self.subTest(path=path), self.assertRaises(HTTPError) as caught:
+                urlopen(f"{self.base}{path}", timeout=3)
+            self.assertEqual(caught.exception.code, 404)
+
     def test_every_button_has_a_label_an_icon_a_tool_and_the_shortcuts_stay_clear_of_the_app(self):
         table = self.script[self.script.index("const MD_TOOLS = ["):self.script.index("const MD_ARROWS")]
         tools = re.findall(r"\{id: '(\w+)', label: '([^']+)', icon: ICONS\.(\w+)(?:, key: '(\w)')?(, shift: true)?", table)
@@ -4282,7 +4295,7 @@ class MarkdownToolbarTest(unittest.TestCase):
         self.assertEqual(len(tools), 11)
         for _id, label, icon, _key, _shift in tools:
             self.assertTrue(label)
-            self.assertRegex(icons, rf"\n  {icon}: '<")
+            self.assertRegex(icons, rf"\n  {icon}: (?:'<|ms\(')")  # stroked markup, or a filled Material Symbol
         shortcuts = {(key, bool(shift)) for _id, _label, _icon, key, shift in tools if key}
         self.assertEqual(shortcuts, {("b", False), ("i", False), ("u", False), ("x", True), ("k", False)})
         # The app's own shortcuts with a modifier (⌘ Z, ⌘ Enter) differ from them; its single keys are ignored while typing.
@@ -5040,9 +5053,9 @@ class ActionViewsPageTest(unittest.TestCase):
                 self.assertRegex(touch, rf"\n  {re.escape(selector)} \{{[^}}]*\bheight: 36px;")
         # Outside that block the dense sizes are the ones of the desktop.
         desktop = self.styles[:start]
-        self.assertIn("height: 26px; padding: 0 8px;", desktop[desktop.index("\n.chip {"):desktop.index("\n.chip-key")])
+        self.assertIn("height: 34px; padding: 0 12px;", desktop[desktop.index("\n.chip {"):desktop.index("\n.chip-key")])
         self.assertRegex(desktop, r"\n\.status-button \{\s*display: grid; place-items: center; width: 24px; height: 24px;")
-        self.assertIn("--row-h: 40px;", desktop)
+        self.assertIn("--row-h: 52px;", desktop)
 
 
 class SettingsViewTest(unittest.TestCase):

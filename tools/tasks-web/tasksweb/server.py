@@ -21,17 +21,17 @@ from .git_sync import GIT_LOCK, GIT_VERSION_RE, git_changes, git_overview, git_s
 from .priorities import read_priorities
 from .store import Store
 
-ASSET_TYPES = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8"}
+ASSET_TYPES = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".woff2": "font/woff2"}
 
 
 def static_assets() -> dict[str, tuple[str, str]]:
     """What is served outside /api: URL path -> (file below static/, MIME type), read again on every request.
 
-    The page at "/", then each stylesheet and script of static/ and of static/app/ (the page's script, cut into files) at its own
-    path. Nothing else: no icon, no folder, no path built from the URL.
+    The page at "/", then each stylesheet and script of static/ and of static/app/ (the page's script, cut into files), and each
+    font of static/fonts/, at its own path. Nothing else: no icon, no licence file, no folder, no path built from the URL.
     """
     found = {"/": ("index.html", "text/html; charset=utf-8")}
-    for pattern in ("*.css", "*.js", "app/*.js"):
+    for pattern in ("*.css", "*.js", "app/*.js", "fonts/*.woff2"):
         for file in ASSETS.glob(pattern):
             if file.is_file() and not file.name.startswith("."):
                 relative = file.relative_to(ASSETS).as_posix()
