@@ -357,9 +357,9 @@ async function turnToBrain(name, direction) {
 }
 
 // ---------- Swipe between brains ----------
-// A sideways scroll moves to the previous or the next brain, in the order of the selector (the logic is BrainSwipe, in
-// brain-swipe.js): it leans the sidebar, a cue slides in from the side it leads to with that brain's name and colour, and far
-// enough it turns the workspace to that brain.
+// A sideways scroll over the sidebar moves to the previous or the next brain, in the order of the selector (the logic is
+// BrainSwipe, in brain-swipe.js): it leans the sidebar, a cue slides in from the side it leads to with that brain's name and
+// colour, and far enough it turns the workspace to that brain. Over the views it never changes brain.
 let brainSwipe = BrainSwipe.idle();
 let brainSwipeTimer = 0;
 function brainNeighbour(direction) {
@@ -392,18 +392,21 @@ function showBrainSwipe(direction, amount) {
 }
 function hideBrainSwipe() { ids.brainSwipe.hidden = true; }
 function onBrainWheel(event) {
+  const overSidebar = event.target instanceof Element && Boolean(event.target.closest('.sidebar'));
   const deciding = brainSwipe.phase !== 'tracking';  // a new gesture may start (after a pause, or inside a momentum)
   const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? innerWidth : 1;  // lines or pages from some mice
   const result = BrainSwipe.step(brainSwipe, {
     dx: event.deltaX * scale, dy: event.deltaY * scale, time: event.timeStamp,
-    // A pinch (ctrl), another modifier, a text field, a dialog or the open selector: never a swipe (Shift is how a mouse scrolls
-    // sideways, so it counts). One brain: nowhere to go.
-    ignore: brains.length < 2 || event.ctrlKey || event.altKey || event.metaKey || isTyping(event.target)
+    // Never a swipe: away from the sidebar, a pinch (ctrl), another modifier, a text field, a dialog or the open selector (Shift is
+    // how a mouse scrolls sideways, so it counts). One brain: nowhere to go.
+    ignore: !overSidebar || brains.length < 2 || event.ctrlKey || event.altKey || event.metaKey || isTyping(event.target)
       || Boolean(document.querySelector('dialog[open]')) || brainMenuOpen(),
     scrollsLeft: deciding && scrollsSideways(event.target, -1), scrollsRight: deciding && scrollsSideways(event.target, 1),
   });
   brainSwipe = result.state;
-  if (result.prevent) event.preventDefault();
+  // Over the views, a sideways scroll that nothing can follow does nothing, rather than the browser's back-and-forward swipe.
+  const nowhere = !overSidebar && Math.abs(event.deltaX) > Math.abs(event.deltaY) && !scrollsSideways(event.target, Math.sign(event.deltaX));
+  if (result.prevent || nowhere) event.preventDefault();
   clearTimeout(brainSwipeTimer);
   brainSwipeTimer = setTimeout(() => {
     const end = BrainSwipe.settle(brainSwipe);

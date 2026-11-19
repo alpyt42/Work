@@ -4418,6 +4418,10 @@ class BrainSwipeTest(unittest.TestCase):
         script, styles = app_script(), (self.STATIC / "app.css").read_text(encoding="utf-8")
         self.assertIn("document.addEventListener('wheel', onBrainWheel, {passive: false});", script)
         self.assertIn("if (brain) turnToBrain(brain.name, action.direction);", script)
+        # Only a swipe over the sidebar changes brain; over the views a sideways scroll that nothing can follow does nothing.
+        self.assertIn("const overSidebar = event.target instanceof Element && Boolean(event.target.closest('.sidebar'));", script)
+        self.assertIn("ignore: !overSidebar || brains.length < 2", script)
+        self.assertIn("if (result.prevent || nowhere) event.preventDefault();", script)
         self.assertIn("const switched = switchBrain(name);", script)  # the guards of the selector (writes, unsaved edits) still apply
         # The selector turns the workspace too; without motion the brain just changes; a page in the background never stays halfway.
         self.assertIn("turnToBrain(name, brains.findIndex(brain => brain.name === name) >= from ? 1 : -1);", script)
