@@ -53,12 +53,18 @@ from pathlib import Path
 WORK = Path(os.environ.get("WORK_DIR", Path(__file__).resolve().parents[2])).resolve()
 
 
-def default_brain_dir() -> Path:
-    """The default brain of WORK (rule of tools/machine/work_config.py); `WORK/brain` when there is none."""
+def load_work_config():
+    """tools/machine/work_config.py, loaded afresh at each call: it reads WORK_DIR as it loads."""
     spec = importlib.util.spec_from_file_location("work_config", Path(__file__).resolve().parents[1] / "machine/work_config.py")
     assert spec and spec.loader
     work_config = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(work_config)
+    return work_config
+
+
+def default_brain_dir() -> Path:
+    """The default brain of WORK (rule of tools/machine/work_config.py); `WORK/brain` when there is none."""
+    work_config = load_work_config()
     try:
         return work_config.default_brain(WORK) or WORK / "brain"
     except work_config.ConfigError as error:
@@ -1067,4 +1073,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    load_work_config().utf8_stdio()
     sys.exit(main())

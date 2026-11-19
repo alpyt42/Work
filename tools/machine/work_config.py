@@ -72,6 +72,18 @@ class ConfigError(ValueError):
     """A Work configuration is invalid."""
 
 
+def utf8_stdio() -> None:
+    """Make stdout and stderr write UTF-8 with LF line endings, even through a pipe on Windows.
+
+    Windows otherwise writes the ANSI code page, which cannot encode many characters the tools print, and CRLF,
+    whose \\r bash `$(…)` keeps in every value it reads. macOS and Linux already write both: nothing changes there.
+    Call it from a script's `__main__` block, never at import: the tests capture these streams.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):  # None under pythonw, a plain object when replaced
+            stream.reconfigure(encoding="utf-8", errors=stream.errors, newline="\n")
+
+
 def is_generated_copy(path: Path) -> bool:
     """A skill folder that sync-house-skills.py installed, now or under the previous layout."""
     if (path / GENERATED_MARKER).is_file():
@@ -470,9 +482,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    # UTF-8 even through a pipe on Windows, where the default is the ANSI code page, and LF line endings:
-    # the shell scripts read this output with $(…), which would keep the \r of CRLF in every name.
-    for _stream in (sys.stdout, sys.stderr):
-        if hasattr(_stream, "reconfigure"):
-            _stream.reconfigure(encoding="utf-8", errors=_stream.errors, newline="\n")
+    utf8_stdio()  # the shell scripts read this output with $(…)
     raise SystemExit(main())

@@ -110,12 +110,18 @@ from zoneinfo import ZoneInfo
 WORK = Path(os.environ.get("WORK_DIR", Path(__file__).resolve().parents[2])).resolve()
 
 
-def default_brain_dir() -> Path:
-    """The default brain of WORK (rule of tools/machine/work_config.py); `WORK/brain` when there is none."""
+def load_work_config():
+    """tools/machine/work_config.py, loaded afresh at each call: it reads WORK_DIR as it loads."""
     spec = importlib.util.spec_from_file_location("work_config", Path(__file__).resolve().parents[1] / "machine/work_config.py")
     assert spec and spec.loader
     work_config = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(work_config)
+    return work_config
+
+
+def default_brain_dir() -> Path:
+    """The default brain of WORK (rule of tools/machine/work_config.py); `WORK/brain` when there is none."""
+    work_config = load_work_config()
     try:
         return work_config.default_brain(WORK) or WORK / "brain"
     except work_config.ConfigError as error:
@@ -2111,7 +2117,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    for _stream in (sys.stdout, sys.stderr):  # UTF-8 even through a pipe on Windows, where the default is the ANSI code page
-        if hasattr(_stream, "reconfigure"):
-            _stream.reconfigure(encoding="utf-8", errors=_stream.errors)
+    load_work_config().utf8_stdio()
     sys.exit(main())
