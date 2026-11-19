@@ -4345,6 +4345,85 @@ class MarkdownToolbarTest(unittest.TestCase):
         self.assertEqual(len(tools), 11)
 
 
+class BrainSwipeTest(unittest.TestCase):
+    """The two-finger swipe between brains: the logic of brain-swipe.js (run under node) and its wiring in the page."""
+    STATIC = TOOL.parent / "static"
+    SCRIPT = """
+      const swipe = require(process.argv[1]);
+      const cases = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+      process.stdout.write(JSON.stringify(cases.map(events => {
+        let state = swipe.idle(), time = 1000;
+        const actions = [], prevents = [];
+        for (const [dx, dy, gap, flags = {}] of events) {
+          time += gap;
+          const out = swipe.step(state, {dx, dy, time, ignore: false, scrollsLeft: false, scrollsRight: false, ...flags});
+          state = out.state;
+          prevents.push(out.prevent);
+          if (out.action && out.action.type === 'switch') actions.push(out.action.direction > 0 ? 'next' : 'previous');
+        }
+        const end = swipe.settle(state).action;
+        return {actions, prevents, settled: end ? end.type : null};
+      })));
+    """
+
+    def run_cases(self, cases):
+        done = subprocess.run(["node", "-e", self.SCRIPT, str(self.STATIC / "brain-swipe.js")], input=json.dumps(cases),
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_sideways_swipe_switches_once_its_way_and_swallows_its_momentum(self):
+        right = [[20, 1, 16]] * 10 + [[6, 0, 16]] * 20  # 200 px, then the momentum
+        left = [[-20, -1, 16]] * 10
+        two = [[20, 0, 16]] * 10 + [[20, 0, 400]] + [[20, 0, 16]] * 9  # a pause longer than a gesture: a second swipe
+        out = self.run_cases([right, left, two])
+        self.assertEqual(out[0]["actions"], ["next"])
+        self.assertTrue(all(out[0]["prevents"][1:]))  # the browser never goes back or forward meanwhile
+        self.assertEqual(out[1]["actions"], ["previous"])
+        self.assertEqual(out[2]["actions"], ["next", "next"])
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_scrolling_zooming_and_what_can_scroll_sideways_never_switch(self):
+        vertical = [[2, 20, 16]] * 15
+        diagonal = [[15, 14, 16]] * 15
+        pinch = [[20, 0, 16, {"ignore": True}]] + [[20, 0, 16]] * 14
+        board = [[20, 0, 16, {"scrollsRight": True}]] + [[20, 0, 16]] * 14  # the Board scrolls first, even once it reaches its end
+        board_left = [[-20, 0, 16, {"scrollsRight": True}]] * 10  # what scrolls only the other way does not hold a swipe back
+        out = self.run_cases([vertical, diagonal, pinch, board, board_left])
+        for case in out[:4]:
+            self.assertEqual(case["actions"], [])
+            self.assertFalse(any(case["prevents"]))
+        self.assertEqual(out[4]["actions"], ["previous"])
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_swipe_left_halfway_is_withdrawn(self):
+        out = self.run_cases([[[20, 0, 16]] * 4, [[20, 0, 16]] * 10])
+        self.assertEqual((out[0]["actions"], out[0]["settled"]), ([], "cancel"))
+        self.assertEqual((out[1]["actions"], out[1]["settled"]), (["next"], None))
+
+    def test_the_page_loads_the_logic_first_and_listens_without_passive_mode(self):
+        page = (self.STATIC / "index.html").read_text(encoding="utf-8")
+        self.assertLess(page.index('src="/brain-swipe.js"'), page.index('src="/app/core.js"'))
+        self.assertIn('<div id="brainSwipe" class="brain-swipe" aria-hidden="true" hidden>', page)
+        script, styles = app_script(), (self.STATIC / "app.css").read_text(encoding="utf-8")
+        self.assertIn("document.addEventListener('wheel', onBrainWheel, {passive: false});", script)
+        self.assertIn("if (brain) switchBrain(brain.name);", script)  # the guards of the selector (writes, unsaved edits) still apply
+        self.assertIn("html, body { overscroll-behavior-x: none; }", styles)
+        with tempfile.TemporaryDirectory() as folder:
+            brain = Path(folder) / "brain"
+            (brain / "projects").mkdir(parents=True)
+            server = tasks_web.TaskServer(("127.0.0.1", 0), tasks_web.Store(brain), work=Path(folder))
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with urlopen(f"http://127.0.0.1:{server.server_port}/brain-swipe.js", timeout=3) as response:
+                    self.assertTrue(response.headers["Content-Type"].startswith("text/javascript"))
+                    self.assertIn("const BrainSwipe", response.read().decode("utf-8"))
+            finally:
+                server.shutdown(), server.server_close(), thread.join(timeout=2)
+
+
 def node_json(script, payload=None):
     """Run `script` under node (the module path is `process.argv[1]`, the payload is JSON on stdin) and return its JSON output."""
     done = subprocess.run(["node", "-e", script, str(TOOL.parent / "static/timeline-view.js")], input=json.dumps(payload), capture_output=True, text=True, timeout=30)

@@ -271,3 +271,66 @@ async function loadBrains({initial = false} = {}) {
   renderBrainSwitch();
   return false;
 }
+
+// ---------- Swipe between brains ----------
+// Two fingers sideways on a trackpad move to the previous or the next brain, in the order of the selector (the logic is
+// BrainSwipe, in brain-swipe.js). A cue slides in from the side the swipe leads to, with that brain's name and colour; the switch
+// is `switchBrain`, so a write in progress or an unsaved edit still holds it back.
+let brainSwipe = BrainSwipe.idle();
+let brainSwipeTimer = 0;
+function brainNeighbour(direction) {
+  const index = brains.findIndex(brain => brain.name === currentBrain);
+  return index < 0 ? null : brains[index + direction] || null;
+}
+// Whether something under the pointer can still scroll sideways that way (-1 left, 1 right): then the swipe scrolls it instead.
+function scrollsSideways(target, direction) {
+  for (let node = target instanceof Element ? target : null; node && node !== document.body; node = node.parentElement) {
+    if (node.scrollWidth <= node.clientWidth + 1) continue;
+    const overflow = getComputedStyle(node).overflowX;
+    if (overflow !== 'auto' && overflow !== 'scroll') continue;
+    if (direction < 0 ? node.scrollLeft > 0 : node.scrollLeft + node.clientWidth < node.scrollWidth - 1) return true;
+  }
+  return false;
+}
+function showBrainSwipe(direction, amount) {
+  const brain = brainNeighbour(direction);
+  const cue = ids.brainSwipe;
+  cue.hidden = false;
+  cue.dataset.side = direction > 0 ? 'right' : 'left';
+  cue.style.left = direction > 0 ? '' : `${Math.round(ids.mainContent.getBoundingClientRect().left) + 16}px`;
+  cue.classList.toggle('is-end', !brain);
+  if (brain) cue.dataset.accent = accentFor(brain.name);
+  else delete cue.dataset.accent;
+  ids.brainSwipeName.textContent = brain ? brainLabel(brain.name) : 'No other brain';
+  cue.style.setProperty('--swipe', String(Math.min(amount, 1)));
+}
+function hideBrainSwipe() { ids.brainSwipe.hidden = true; }
+function onBrainWheel(event) {
+  const fresh = event.timeStamp - brainSwipe.at > BrainSwipe.GAP;
+  const deciding = fresh || brainSwipe.phase === 'deciding';
+  const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? innerWidth : 1;  // lines or pages from some mice
+  const result = BrainSwipe.step(brainSwipe, {
+    dx: event.deltaX * scale, dy: event.deltaY * scale, time: event.timeStamp,
+    // A pinch (ctrl), another modifier, a text field, a dialog or the open selector: never a swipe (Shift is how a mouse scrolls
+    // sideways, so it counts). One brain: nowhere to go.
+    ignore: brains.length < 2 || event.ctrlKey || event.altKey || event.metaKey || isTyping(event.target)
+      || Boolean(document.querySelector('dialog[open]')) || brainMenuOpen(),
+    scrollsLeft: deciding && scrollsSideways(event.target, -1), scrollsRight: deciding && scrollsSideways(event.target, 1),
+  });
+  brainSwipe = result.state;
+  if (result.prevent) event.preventDefault();
+  clearTimeout(brainSwipeTimer);
+  brainSwipeTimer = setTimeout(() => {
+    brainSwipe = BrainSwipe.settle(brainSwipe).state;
+    hideBrainSwipe();
+  }, BrainSwipe.GAP);
+  const action = result.action;
+  if (action?.type === 'progress') showBrainSwipe(action.direction, action.amount);
+  if (action?.type === 'switch') {
+    hideBrainSwipe();
+    const brain = brainNeighbour(action.direction);
+    if (brain) switchBrain(brain.name);
+  }
+}
+// Not passive: a swipe that switches brain must also keep the browser from going back or forward in its history.
+document.addEventListener('wheel', onBrainWheel, {passive: false});

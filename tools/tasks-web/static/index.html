@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/app.css">
   <script src="/md-edit.js" defer></script>
   <script src="/timeline-view.js" defer></script>
+  <script src="/brain-swipe.js" defer></script>
   <script src="/app/core.js" defer></script>
   <script src="/app/filters.js" defer></script>
   <script src="/app/actions.js" defer></script>
@@ -445,6 +446,7 @@
       <p class="dialog-intro">Single-key shortcuts do not apply while you type. On Windows and Linux, <kbd>Ctrl</kbd> replaces <kbd>⌘</kbd>.</p>
     </form>
   </dialog>
+  <div id="brainSwipe" class="brain-swipe" aria-hidden="true" hidden><span class="brain-swipe-mark"></span><span id="brainSwipeName" class="brain-swipe-name"></span></div>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden><span id="toastText" class="toast-text"></span><button id="toastAction" class="toast-action" type="button" hidden>Undo</button></div>
 </body>
 </html>
