@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#F6F7F9" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#141920" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#F7F8FA" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#15181D" media="(prefers-color-scheme: dark)">
   <meta name="csrf-token" content="__CSRF_TOKEN__">
   <title>Actions</title>
   <link rel="stylesheet" href="/app.css">
@@ -35,7 +35,7 @@
     <aside id="sidebar" class="sidebar" aria-label="Navigation">
       <div class="sidebar-top">
         <div id="brainSwitch" class="brain-switch">
-          <span class="brain-marker" aria-hidden="true"></span>
+          <span class="brain-logo" aria-hidden="true"></span>
           <div id="brainStatic" class="brain-static"><span id="brainStaticName" class="brain-name">Brain</span></div>
           <button id="brainButton" class="brain-button" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="brainMenu" hidden>
             <span class="brain-text"><span class="sr-only">Brain: </span><span id="brainName" class="brain-name"></span></span>
@@ -50,27 +50,27 @@
       <div class="sidebar-scroll">
         <nav class="nav" aria-label="Views">
           <button id="prioButton" class="nav-item" type="button" data-view="priorities" title="Priorities (0)">
-            <svg class="nav-icon" viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M200-120v-680h343l19 86h238v370H544l-19-85H260v309h-60Z"/></svg>
+            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M2 0h1v1h-1zM1 1h1v1h-1zM3 1h7v1h-7zM1 2h1v1h-1zM10 2h1v1h-1zM1 3h1v1h-1zM10 3h1v1h-1zM1 4h1v1h-1zM9 4h1v1h-1zM1 5h1v1h-1zM10 5h1v1h-1zM1 6h1v1h-1zM10 6h1v1h-1zM1 7h1v1h-1zM3 7h7v1h-7zM1 8h1v1h-1zM3 8h1v1h-1zM1 9h1v1h-1zM3 9h1v1h-1zM1 10h1v1h-1zM3 10h1v1h-1zM2 11h1v1h-1z"/><path class="s1" d="M2 1h1v1h-1z"/><path class="s3" d="M2 2h1v1h-1zM2 3h1v1h-1zM2 4h1v1h-1zM2 5h1v1h-1zM2 6h1v1h-1zM2 7h1v1h-1zM2 8h1v1h-1zM2 9h1v1h-1z"/><path class="c1" d="M3 2h1v1h-1z"/><path class="c2" d="M4 2h6v1h-6zM9 5h1v1h-1z"/><path class="c3" d="M3 3h6v1h-6zM3 4h6v1h-6zM3 5h6v1h-6z"/><path class="c4" d="M9 3h1v1h-1zM3 6h7v1h-7z"/><path class="s4" d="M2 10h1v1h-1z"/></svg>
             <span class="nav-label">Priorities</span><span id="prioCount" class="nav-count"></span>
           </button>
           <button id="todayButton" class="nav-item" type="button" data-view="today" title="Today (1)">
-            <svg class="nav-icon" viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M284-338.18q-28-28.19-28-69Q256-448 284.18-476q28.19-28 69-28Q394-504 422-475.82q28 28.19 28 69Q450-366 421.82-338q-28.19 28-69 28Q312-310 284-338.18ZM180-80q-24 0-42-18t-18-42v-620q0-24 18-42t42-18h65v-60h65v60h340v-60h65v60h65q24 0 42 18t18 42v620q0 24-18 42t-42 18H180Zm0-60h600v-430H180v430Z"/></svg>
+            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M3 0h1v1h-1zM8 0h1v1h-1zM1 1h2v1h-2zM4 1h4v1h-4zM9 1h2v1h-2zM0 2h1v1h-1zM11 2h1v1h-1zM0 3h1v1h-1zM11 3h1v1h-1zM1 4h10v1h-10zM0 5h1v1h-1zM11 5h1v1h-1zM0 6h1v1h-1zM11 6h1v1h-1zM0 7h1v1h-1zM11 7h1v1h-1zM0 8h1v1h-1zM11 8h1v1h-1zM0 9h1v1h-1zM11 9h1v1h-1zM0 10h1v1h-1zM11 10h1v1h-1zM1 11h10v1h-10z"/><path class="s3" d="M3 1h1v1h-1zM8 1h1v1h-1zM6 6h1v1h-1zM8 6h1v1h-1zM3 8h1v1h-1zM5 8h1v1h-1zM7 8h1v1h-1z"/><path class="c1" d="M1 2h1v1h-1z"/><path class="c2" d="M2 2h9v1h-9zM3 6h2v1h-2z"/><path class="c4" d="M1 3h10v1h-10zM3 7h2v1h-2z"/><path class="w" d="M1 5h10v1h-10zM1 6h2v1h-2zM5 6h1v1h-1zM7 6h1v1h-1zM9 6h2v1h-2zM1 7h2v1h-2zM6 7h1v1h-1zM8 7h3v1h-3zM1 8h2v1h-2zM4 8h1v1h-1zM6 8h1v1h-1zM8 8h3v1h-3zM1 9h10v1h-10z"/><path class="pa" d="M5 7h1v1h-1zM7 7h1v1h-1zM1 10h10v1h-10z"/></svg>
             <span class="nav-label">Today</span><span id="todayCount" class="nav-count"></span>
           </button>
           <button id="listButton" class="nav-item" type="button" data-view="list" title="Actions (2)">
-            <svg class="nav-icon" viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M180-120q-25 0-42.5-17.5T120-180v-600q0-25 17.5-42.5T180-840h205q5-35 32-57.5t63-22.5q36 0 63 22.5t32 57.5h205q25 0 42.5 17.5T840-780v600q0 25-17.5 42.5T780-120H180Zm100-160h273v-60H280v60Zm0-170h400v-60H280v60Zm0-170h400v-60H280v60Zm224.5-187.5Q515-818 515-832t-10.5-24.5Q494-867 480-867t-24.5 10.5Q445-846 445-832t10.5 24.5Q466-797 480-797t24.5-10.5Z"/></svg>
+            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M1 0h10v1h-10zM0 1h1v1h-1zM11 1h1v1h-1zM0 2h1v1h-1zM11 2h1v1h-1zM0 3h1v1h-1zM11 3h1v1h-1zM0 4h1v1h-1zM11 4h1v1h-1zM0 5h1v1h-1zM11 5h1v1h-1zM0 6h1v1h-1zM11 6h1v1h-1zM0 7h1v1h-1zM11 7h1v1h-1zM0 8h1v1h-1zM11 8h1v1h-1zM0 9h1v1h-1zM11 9h1v1h-1zM0 10h1v1h-1zM11 10h1v1h-1zM1 11h10v1h-10z"/><path class="w" d="M1 1h10v1h-10zM1 2h1v1h-1zM4 2h1v1h-1zM10 2h1v1h-1zM1 3h1v1h-1zM4 3h7v1h-7zM1 4h4v1h-4zM10 4h1v1h-1zM1 5h1v1h-1zM4 5h1v1h-1zM10 5h1v1h-1zM1 6h1v1h-1zM4 6h7v1h-7zM1 7h4v1h-4zM10 7h1v1h-1zM1 8h1v1h-1zM4 8h1v1h-1zM10 8h1v1h-1zM1 9h1v1h-1zM4 9h7v1h-7zM2 10h2v1h-2z"/><path class="c2" d="M2 2h2v1h-2zM2 5h2v1h-2z"/><path class="s3" d="M5 2h5v1h-5zM5 5h5v1h-5zM5 8h5v1h-5z"/><path class="c4" d="M2 3h2v1h-2zM2 6h2v1h-2z"/><path class="pa" d="M5 4h5v1h-5zM5 7h5v1h-5zM1 10h1v1h-1zM4 10h7v1h-7z"/><path class="s2" d="M2 8h2v1h-2z"/><path class="s4" d="M2 9h2v1h-2z"/></svg>
             <span class="nav-label">Actions</span><span id="openCount" class="nav-count"></span>
           </button>
           <button id="boardButton" class="nav-item" type="button" data-view="board" title="Board (3)">
-            <svg class="nav-icon" viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M180-120q-24 0-42-18t-18-42v-600q0-24 18-42t42-18h600q24 0 42 18t18 42v600q0 24-18 42t-42 18H180Zm99-157h60v-406h-60v406Zm342-80h60v-326h-60v326ZM450-477h60v-206h-60v206Z"/></svg>
+            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M1 0h10v1h-10zM0 1h1v1h-1zM11 1h1v1h-1zM0 2h1v1h-1zM11 2h1v1h-1zM0 3h1v1h-1zM11 3h1v1h-1zM0 4h1v1h-1zM11 4h1v1h-1zM0 5h1v1h-1zM11 5h1v1h-1zM0 6h1v1h-1zM11 6h1v1h-1zM0 7h1v1h-1zM11 7h1v1h-1zM0 8h1v1h-1zM11 8h1v1h-1zM0 9h1v1h-1zM11 9h1v1h-1zM0 10h1v1h-1zM11 10h1v1h-1zM1 11h10v1h-10z"/><path class="w" d="M1 1h10v1h-10zM1 2h1v1h-1zM4 2h1v1h-1zM7 2h1v1h-1zM10 2h1v1h-1zM1 3h1v1h-1zM4 3h1v1h-1zM7 3h1v1h-1zM10 3h1v1h-1zM1 4h10v1h-10zM1 5h1v1h-1zM4 5h1v1h-1zM7 5h4v1h-4zM1 6h1v1h-1zM4 6h1v1h-1zM7 6h4v1h-4zM1 7h10v1h-10zM1 8h1v1h-1zM4 8h7v1h-7zM1 9h1v1h-1zM4 9h7v1h-7zM2 10h2v1h-2z"/><path class="c2" d="M2 2h2v1h-2zM5 2h2v1h-2zM8 2h2v1h-2zM2 5h2v1h-2zM5 5h2v1h-2zM2 8h2v1h-2z"/><path class="c4" d="M2 3h2v1h-2zM5 3h2v1h-2zM8 3h2v1h-2zM2 6h2v1h-2zM5 6h2v1h-2zM2 9h2v1h-2z"/><path class="pa" d="M1 10h1v1h-1zM4 10h7v1h-7z"/></svg>
             <span class="nav-label">Board</span>
           </button>
           <button id="timelineButton" class="nav-item" type="button" data-view="timeline" title="Timeline (4)">
-            <svg class="nav-icon" viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M250-279h220v-60H250v60Zm120-171h220v-60H370v60Zm120-171h220v-60H490v60ZM180-120q-24 0-42-18t-18-42v-600q0-24 18-42t42-18h600q24 0 42 18t18 42v600q0 24-18 42t-42 18H180Z"/></svg>
+            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M1 1h5v1h-5zM0 2h1v1h-1zM6 2h1v1h-1zM0 3h1v1h-1zM6 3h1v1h-1zM1 4h8v1h-8zM2 5h1v1h-1zM9 5h1v1h-1zM2 6h1v1h-1zM9 6h1v1h-1zM3 7h8v1h-8zM5 8h1v1h-1zM11 8h1v1h-1zM5 9h1v1h-1zM11 9h1v1h-1zM6 10h5v1h-5z"/><path class="c1" d="M1 2h1v1h-1zM3 5h1v1h-1zM6 8h1v1h-1z"/><path class="c2" d="M2 2h4v1h-4zM4 5h5v1h-5zM7 8h4v1h-4z"/><path class="c4" d="M1 3h5v1h-5zM3 6h6v1h-6zM6 9h5v1h-5z"/></svg>
             <span class="nav-label">Timeline</span>
           </button>
           <button id="docsButton" class="nav-item" type="button" data-view="docs" title="Docs (5)">
-            <svg class="nav-icon" viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M319-250h322v-60H319v60Zm0-170h322v-60H319v60ZM220-80q-24 0-42-18t-18-42v-680q0-24 18-42t42-18h361l219 219v521q0 24-18 42t-42 18H220Zm331-554h189L551-820v186Z"/></svg>
+            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M2 0h6v1h-6zM1 1h1v1h-1zM8 1h2v1h-2zM1 2h1v1h-1zM10 2h1v1h-1zM1 3h1v1h-1zM10 3h1v1h-1zM1 4h1v1h-1zM10 4h1v1h-1zM1 5h1v1h-1zM10 5h1v1h-1zM1 6h1v1h-1zM10 6h1v1h-1zM1 7h1v1h-1zM10 7h1v1h-1zM1 8h1v1h-1zM10 8h1v1h-1zM1 9h1v1h-1zM10 9h1v1h-1zM1 10h1v1h-1zM10 10h1v1h-1zM2 11h8v1h-8z"/><path class="w" d="M2 1h5v1h-5zM2 2h6v1h-6zM2 3h8v1h-8zM2 4h1v1h-1zM9 4h1v1h-1zM2 5h1v1h-1zM9 5h1v1h-1zM2 6h8v1h-8zM2 7h1v1h-1zM9 7h1v1h-1zM2 8h8v1h-8zM2 9h1v1h-1zM7 9h3v1h-3zM3 10h4v1h-4z"/><path class="s2" d="M7 1h1v1h-1zM8 2h2v1h-2z"/><path class="pa" d="M3 4h6v1h-6zM2 10h1v1h-1zM7 10h3v1h-3z"/><path class="c3" d="M3 5h6v1h-6zM3 7h6v1h-6zM3 9h4v1h-4z"/></svg>
             <span class="nav-label">Docs</span>
           </button>
         </nav>
@@ -81,24 +81,24 @@
       </div>
       <div class="sidebar-footer">
         <button id="updateButton" class="update-button" type="button" hidden>
-          <svg class="nav-icon" viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M280-160v-60h400v60H280Zm170-170v-356L329-565l-42-42 193-193 193 193-42 42-121-121v356h-60Z"/></svg>
+          <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M5 0h2v1h-2zM4 1h1v1h-1zM7 1h1v1h-1zM3 2h1v1h-1zM8 2h1v1h-1zM2 3h1v1h-1zM9 3h1v1h-1zM1 4h1v1h-1zM10 4h1v1h-1zM2 5h3v1h-3zM7 5h3v1h-3zM4 6h1v1h-1zM7 6h1v1h-1zM4 7h1v1h-1zM7 7h1v1h-1zM2 8h8v1h-8zM1 9h1v1h-1zM10 9h1v1h-1zM2 10h8v1h-8z"/><path class="c1" d="M5 1h1v1h-1z"/><path class="c2" d="M6 1h1v1h-1zM4 2h1v1h-1zM7 2h1v1h-1zM3 3h1v1h-1zM8 3h1v1h-1zM2 4h1v1h-1zM9 4h1v1h-1z"/><path class="c3" d="M5 2h2v1h-2zM4 3h4v1h-4zM5 4h2v1h-2zM5 5h2v1h-2zM5 6h2v1h-2z"/><path class="c4" d="M3 4h2v1h-2zM7 4h2v1h-2zM5 7h2v1h-2z"/><path class="s1" d="M2 9h1v1h-1z"/><path class="s2" d="M3 9h7v1h-7z"/></svg>
           <span id="updateButtonLabel">Update</span>
         </button>
         <div class="footer-nav">
           <button id="archivesButton" class="nav-item nav-compact" type="button" data-view="archives" title="The archived clients, missions and projects, read-only; unarchive one to work on it again.">
-            <svg class="nav-icon" viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M180-80q-24.75 0-42.37-17.63Q120-115.25 120-140v-483q-17-6-28.5-21.39T80-680v-140q0-24.75 17.63-42.38Q115.25-880 140-880h680q24.75 0 42.38 17.62Q880-844.75 880-820v140q0 20.22-11.5 35.61T840-623v483q0 24.75-17.62 42.37Q804.75-80 780-80H180Zm-40-600h680v-140H140v140Zm220 260h240v-60H360v60Z"/></svg>
+            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M1 1h10v1h-10zM0 2h1v1h-1zM11 2h1v1h-1zM0 3h1v1h-1zM11 3h1v1h-1zM1 4h10v1h-10zM1 5h1v1h-1zM10 5h1v1h-1zM1 6h1v1h-1zM10 6h1v1h-1zM1 7h1v1h-1zM5 7h2v1h-2zM10 7h1v1h-1zM1 8h1v1h-1zM10 8h1v1h-1zM1 9h1v1h-1zM10 9h1v1h-1zM2 10h8v1h-8z"/><path class="c1" d="M1 2h1v1h-1zM2 5h1v1h-1z"/><path class="c2" d="M2 2h9v1h-9zM3 5h7v1h-7zM5 8h2v1h-2z"/><path class="c4" d="M1 3h10v1h-10zM5 6h2v1h-2zM2 9h8v1h-8z"/><path class="c3" d="M2 6h3v1h-3zM7 6h3v1h-3zM2 7h3v1h-3zM7 7h3v1h-3zM2 8h3v1h-3zM7 8h3v1h-3z"/></svg>
             <span class="nav-label">Archives</span>
           </button>
           <button id="toolsButton" class="nav-item nav-compact" type="button" data-view="tools" title="Workspace commands: nothing is sent to an external service, and those that change the brain ask for confirmation.">
-            <svg class="nav-icon" viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M705-128 447-388q-23 8-46 13t-47 5q-97 0-165-67.5T121-602q0-31 8-60.5t23-55.5l145 145 92-86-149-149q26-15 55-23.5t59-8.5q99 0 168.5 69.5T592-602q0 24-5 47t-13 46l259 258q11 11 11 26.5T833-198l-76 70q-11 11-26 11t-26-11Z"/></svg>
+            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M1 1h10v1h-10zM0 2h1v1h-1zM11 2h1v1h-1zM0 3h1v1h-1zM11 3h1v1h-1zM0 4h1v1h-1zM11 4h1v1h-1zM0 5h1v1h-1zM11 5h1v1h-1zM0 6h1v1h-1zM11 6h1v1h-1zM0 7h1v1h-1zM11 7h1v1h-1zM0 8h1v1h-1zM11 8h1v1h-1zM0 9h1v1h-1zM11 9h1v1h-1zM1 10h10v1h-10z"/><path class="s1" d="M1 2h1v1h-1z"/><path class="s2" d="M2 2h9v1h-9z"/><path class="s4" d="M1 3h1v1h-1zM3 3h1v1h-1zM5 3h1v1h-1zM7 3h4v1h-4z"/><path class="c3" d="M2 3h1v1h-1zM4 3h1v1h-1zM6 3h1v1h-1zM2 5h1v1h-1zM3 6h1v1h-1zM2 7h1v1h-1z"/><path class="k1" d="M1 4h1v1h-1z"/><path class="k2" d="M2 4h9v1h-9zM2 6h1v1h-1zM3 7h1v1h-1zM2 8h1v1h-1zM5 8h3v1h-3z"/><path class="k3" d="M1 5h1v1h-1zM4 5h7v1h-7zM1 6h1v1h-1zM4 6h1v1h-1zM8 6h3v1h-3zM1 7h1v1h-1zM4 7h1v1h-1zM8 7h3v1h-3zM1 8h1v1h-1zM3 8h2v1h-2zM8 8h3v1h-3z"/><path class="k4" d="M3 5h1v1h-1zM5 6h3v1h-3zM1 9h10v1h-10z"/><path class="w" d="M5 7h3v1h-3z"/></svg>
             <span class="nav-label">Tools</span>
           </button>
           <button id="gitButton" class="nav-item nav-compact" type="button" data-view="git" title="Save the changes of each brain and send them to its online copy. Nothing is saved or sent until you click.">
-            <svg class="nav-icon" viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M167-160v-60h130l-15-12q-64-51-93-111t-29-134q0-106 62.5-190.5T387-784v62q-75 29-121 96.5T220-477q0 63 23.5 109.5T307-287l30 21v-124h60v230H167Zm407-15v-63q76-29 121-96.5T740-483q0-48-23.5-97.5T655-668l-29-26v124h-61v-230h230v60H665l15 14q60 56 90 120t30 123q0 106-62 191T574-175Z"/></svg>
+            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M3 0h1v1h-1zM2 1h1v1h-1zM4 1h1v1h-1zM8 1h1v1h-1zM1 2h1v1h-1zM5 2h1v1h-1zM7 2h1v1h-1zM9 2h1v1h-1zM0 3h1v1h-1zM6 3h2v1h-2zM9 3h1v1h-1zM1 4h2v1h-2zM4 4h2v1h-2zM7 4h1v1h-1zM9 4h1v1h-1zM2 5h1v1h-1zM4 5h1v1h-1zM7 5h1v1h-1zM9 5h1v1h-1zM2 6h1v1h-1zM4 6h1v1h-1zM6 6h2v1h-2zM9 6h2v1h-2zM2 7h1v1h-1zM4 7h2v1h-2zM11 7h1v1h-1zM2 8h1v1h-1zM4 8h1v1h-1zM6 8h1v1h-1zM10 8h1v1h-1zM2 9h1v1h-1zM4 9h1v1h-1zM7 9h1v1h-1zM9 9h1v1h-1zM3 10h1v1h-1zM8 10h1v1h-1z"/><path class="c1" d="M3 1h1v1h-1zM8 2h1v1h-1z"/><path class="c2" d="M2 2h1v1h-1zM4 2h1v1h-1zM1 3h1v1h-1zM5 3h1v1h-1zM6 7h2v1h-2zM9 7h2v1h-2z"/><path class="c3" d="M3 2h1v1h-1zM3 3h1v1h-1zM8 3h1v1h-1zM3 4h1v1h-1zM8 4h1v1h-1zM3 5h1v1h-1zM8 5h1v1h-1zM3 6h1v1h-1zM8 6h1v1h-1zM3 7h1v1h-1zM8 7h1v1h-1zM3 8h1v1h-1zM8 8h1v1h-1z"/><path class="c4" d="M2 3h1v1h-1zM4 3h1v1h-1zM7 8h1v1h-1zM9 8h1v1h-1zM3 9h1v1h-1zM8 9h1v1h-1z"/></svg>
             <span class="nav-label">Sync</span><span id="gitCount" class="nav-count"></span>
           </button>
           <button id="settingsButton" class="nav-item nav-compact" type="button" data-view="settings" title="See what is left to set up in your workspace, and change your settings.">
-            <svg class="nav-icon" viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="m388-80-20-126q-19-7-40-19t-37-25l-118 54-93-164 108-79q-2-9-2.5-20.5T185-480q0-9 .5-20.5T188-521L80-600l93-164 118 54q16-13 37-25t40-18l20-127h184l20 126q19 7 40.5 18.5T669-710l118-54 93 164-108 77q2 10 2.5 21.5t.5 21.5q0 10-.5 21t-2.5 21l108 78-93 164-118-54q-16 13-36.5 25.5T592-206L572-80H388Zm92-270q54 0 92-38t38-92q0-54-38-92t-92-38q-54 0-92 38t-38 92q0 54 38 92t92 38Z"/></svg>
+            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M5 0h2v1h-2zM2 1h3v1h-3zM7 1h3v1h-3zM1 2h1v1h-1zM4 2h1v1h-1zM7 2h1v1h-1zM10 2h1v1h-1zM1 3h1v1h-1zM10 3h1v1h-1zM1 4h2v1h-2zM5 4h2v1h-2zM9 4h2v1h-2zM0 5h1v1h-1zM4 5h1v1h-1zM7 5h1v1h-1zM11 5h1v1h-1zM0 6h1v1h-1zM4 6h1v1h-1zM7 6h1v1h-1zM11 6h1v1h-1zM1 7h2v1h-2zM5 7h2v1h-2zM9 7h2v1h-2zM1 8h1v1h-1zM10 8h1v1h-1zM1 9h1v1h-1zM4 9h1v1h-1zM7 9h1v1h-1zM10 9h1v1h-1zM2 10h3v1h-3zM7 10h3v1h-3zM5 11h2v1h-2z"/><path class="c1" d="M5 1h1v1h-1z"/><path class="c2" d="M6 1h1v1h-1zM2 2h2v1h-2zM8 2h2v1h-2zM4 3h1v1h-1zM7 3h1v1h-1zM1 5h2v1h-2zM9 5h2v1h-2zM4 7h1v1h-1zM7 7h1v1h-1zM2 8h1v1h-1zM5 8h2v1h-2zM9 8h1v1h-1z"/><path class="c3" d="M5 2h2v1h-2zM3 3h1v1h-1zM8 3h1v1h-1zM3 4h1v1h-1zM8 4h1v1h-1zM3 5h1v1h-1zM8 5h1v1h-1zM3 6h1v1h-1zM8 6h1v1h-1zM3 7h1v1h-1zM8 7h1v1h-1zM3 8h1v1h-1zM8 8h1v1h-1zM5 9h2v1h-2z"/><path class="c4" d="M2 3h1v1h-1zM5 3h2v1h-2zM9 3h1v1h-1zM4 4h1v1h-1zM7 4h1v1h-1zM1 6h2v1h-2zM9 6h2v1h-2zM4 8h1v1h-1zM7 8h1v1h-1zM2 9h2v1h-2zM8 9h2v1h-2zM5 10h2v1h-2z"/></svg>
             <span class="nav-label">Settings</span>
           </button>
         </div>
@@ -106,7 +106,7 @@
           <span id="lastSync" class="last-sync" aria-live="polite">Loading…</span>
           <div class="more">
             <button id="moreButton" class="icon-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="moreMenu" aria-label="More options" title="More options">
-              <svg viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M207.86-432Q188-432 174-446.14t-14-34Q160-500 174.14-514t34-14Q228-528 242-513.86t14 34Q256-460 241.86-446t-34 14Zm272 0Q460-432 446-446.14t-14-34Q432-500 446.14-514t34-14Q500-528 514-513.86t14 34Q528-460 513.86-446t-34 14Zm272 0Q732-432 718-446.14t-14-34Q704-500 718.14-514t34-14Q772-528 786-513.86t14 34Q800-460 785.86-446t-34 14Z"/></svg>
+              <svg class="px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M1 4h2v1h-2zM5 4h2v1h-2zM9 4h2v1h-2zM0 5h1v1h-1zM3 5h2v1h-2zM7 5h2v1h-2zM11 5h1v1h-1zM0 6h1v1h-1zM3 6h2v1h-2zM7 6h2v1h-2zM11 6h1v1h-1zM1 7h2v1h-2zM5 7h2v1h-2zM9 7h2v1h-2z"/><path class="s2" d="M1 5h2v1h-2zM5 5h2v1h-2zM9 5h2v1h-2z"/><path class="s4" d="M1 6h2v1h-2zM5 6h2v1h-2zM9 6h2v1h-2z"/></svg>
             </button>
             <div id="moreMenu" class="menu more-menu" role="menu" aria-labelledby="moreButton" hidden>
               <button id="refreshButton" class="menu-item" type="button" role="menuitem">Refresh</button>
