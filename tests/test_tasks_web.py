@@ -33,6 +33,20 @@ TOOL = Path(__file__).resolve().parents[1] / "tools/tasks-web/tasks-web.py"
 spec = importlib.util.spec_from_file_location("tasks_web", TOOL)
 tasks_web = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tasks_web)
+# The modules where the names some tests patch are looked up (tasks-web.py put its package tasksweb/ on sys.path).
+from tasksweb import brains as web_brains, docs as web_docs, git_sync as web_git, server as web_server, tools as web_tools, update as web_update  # noqa: E402
+STATIC = TOOL.parent / "static"
+
+
+def app_scripts():
+    """The files of the page's script, static/app/*.js, in the order index.html loads them."""
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    return [STATIC / name for name in re.findall(r'<script src="/(app/[a-z0-9-]+\.js)" defer></script>', page)]
+
+
+def app_script():
+    """The page's script: its files joined in load order."""
+    return "\n".join(path.read_text(encoding="utf-8") for path in app_scripts())
 
 
 RICH_REGISTER = "# Actions\n\n## Open\n- [ ] **EXM-001** — Jane — Préparer la livraison 📅 2026-10-15\n    - Source: note initiale\n    - 12/10: une note\n        - sous-détail\n\n## Done\n- [x] **EXM-009** — Jane — Ancienne clôture sans date\n"
@@ -200,7 +214,7 @@ class TasksWebTest(unittest.TestCase):
         self.assertEqual(status, 403)
         status, _ = self.request("POST", "/api/tools/run", {"id": "links"}, origin=False)
         self.assertEqual(status, 403)
-        with patch.object(tasks_web, "run_tool", return_value={"id": "links", "ok": True, "output": "OK", "truncated": False}) as runner:
+        with patch.object(web_server, "run_tool", return_value={"id": "links", "ok": True, "output": "OK", "truncated": False}) as runner:
             status, result = self.request("POST", "/api/tools/run", {"id": "links"})
         self.assertEqual(status, 200)
         self.assertEqual(result["output"], "OK")
@@ -2165,7 +2179,7 @@ class GitViewTest(unittest.TestCase):
             return real(command, **kwargs)
 
         before = self.snapshot(self.acme)
-        with patch.object(tasks_web.subprocess, "run", side_effect=spy), patch.object(tasks_web, "run_git_write", side_effect=AssertionError("no write")):
+        with patch.object(tasks_web.subprocess, "run", side_effect=spy), patch.object(web_git, "run_git_write", side_effect=AssertionError("no write")):
             self.card()
             self.request("GET", f"/api/git/changes?brain=brain-acme&path={self.NOTES}/2026-10-01-kickoff.md")
         self.assertTrue(calls)
@@ -2371,7 +2385,7 @@ class GitViewTest(unittest.TestCase):
         hook.chmod(0o755)
         self.write(self.acme, f"{self.NOTES}/2026-10-04-risks.md", "# Risks\n")
         before = self.snapshot(self.acme)
-        with patch.object(tasks_web, "GIT_COMMIT_TIMEOUT", 1):
+        with patch.object(web_git, "GIT_COMMIT_TIMEOUT", 1):
             status, result = self.save()
         self.assertEqual(status, 200, result)
         self.assertEqual(result["message"], "Not saved: the checks did not finish in time. Nothing was changed.")
@@ -2536,11 +2550,17 @@ class GitViewTest(unittest.TestCase):
         script.write_text(f"#!/bin/sh\ntouch {started}\nsleep 60 &\nwait\n", encoding="utf-8")
         script.chmod(0o755)
         self.git(self.acme, "config", "--local", "alias.slow", f"!{script}")
-        begin = datetime.now()
-        code, _ = tasks_web.run_git_write(self.acme, ["slow"], 1)
+        # The limit must leave Git and the shell time to start the alias: one second is enough on a quiet machine, not
+        # always on a busy one, so a longer limit is tried only when the alias had not started.
+        for limit in (1, 3, 10):
+            started.unlink(missing_ok=True)
+            begin = datetime.now()
+            code, _ = tasks_web.run_git_write(self.acme, ["slow"], limit)
+            if started.exists():
+                break
         self.assertEqual(code, 124)
         self.assertTrue(started.exists())
-        self.assertLess((datetime.now() - begin).total_seconds(), 15)
+        self.assertLess((datetime.now() - begin).total_seconds(), limit + 14)
 
     # --- who may ask
 
@@ -2714,13 +2734,15 @@ class GitViewPageTest(unittest.TestCase):
         self.addCleanup(lambda: (server.shutdown(), server.server_close(), thread.join(timeout=2)))
         with urlopen(f"http://127.0.0.1:{server.server_port}/", timeout=3) as response:
             self.page = response.read().decode("utf-8")
-        self.script = (self.STATIC / "app.js").read_text(encoding="utf-8")
+        self.script = app_script()
         self.styles = (self.STATIC / "app.css").read_text(encoding="utf-8")
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_the_script_parses(self):
-        done = subprocess.run(["node", "--check", str(self.STATIC / "app.js")], capture_output=True, text=True, timeout=30)
-        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertTrue(app_scripts())
+        for path in app_scripts():
+            done = subprocess.run(["node", "--check", str(path)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(done.returncode, 0, done.stderr)
 
     def test_the_page_has_cards_and_two_dialogs_and_nothing_of_the_old_view(self):
         view = self.page[self.page.index('<div id="gitView"'):self.page.index("</main>")]
@@ -3204,7 +3226,7 @@ class NoteDeletePageTest(unittest.TestCase):
         self.addCleanup(lambda: (server.shutdown(), server.server_close(), thread.join(timeout=2)))
         with urlopen(f"http://127.0.0.1:{server.server_port}/", timeout=3) as response:
             self.page = response.read().decode("utf-8")
-        self.script = (self.STATIC / "app.js").read_text(encoding="utf-8")
+        self.script = app_script()
         self.styles = (self.STATIC / "app.css").read_text(encoding="utf-8")
 
     def test_the_delete_button_sits_next_to_edit_and_only_shows_for_a_deletable_note(self):
@@ -3465,7 +3487,7 @@ class DocsTest(unittest.TestCase):
                 built.append(doc_id)
                 super().__init__(doc_id, *args)
 
-        with patch.object(tasks_web, "DocEntry", Counting):
+        with patch.object(web_docs, "DocEntry", Counting):
             self.assertEqual(self.ids("nouveaumot"), [])
             total = len(built)
             self.assertGreater(total, 5)
@@ -3784,7 +3806,7 @@ class BrainSwitchTest(unittest.TestCase):
         self.assertEqual([path.name for path in tasks_web.discover_brains(self.root)], expected)
         self.assertEqual([path.name for path in load_script("tools/brain/brain-state.py", self.root).discover()], expected)
         self.assertEqual([path.name for path in load_script("tools/machine/work_config.py", self.root).discover_brains()], expected)
-        with patch.object(tasks_web, "WORK", self.root):
+        with patch.object(web_brains, "WORK", self.root):
             self.assertEqual(tasks_web.default_brain_dir(), self.root / "brain-perso")
         # A setting that cannot be applied leaves the brains by name instead of breaking the page.
         config.write_text('{"version": 1, "defaultBrain": "brain-nope"}', encoding="utf-8")
@@ -3798,7 +3820,7 @@ class BrainSwitchTest(unittest.TestCase):
         self.assertEqual([path.name for path in tasks_web.discover_brains(self.root)], ["brain-initech", "brain-acme", "brain-perso"])
 
     def test_default_brain_of_the_server_without_brain_option(self):
-        with patch.object(tasks_web, "WORK", self.root):
+        with patch.object(web_brains, "WORK", self.root):
             self.assertEqual(tasks_web.default_brain_dir(), self.root / "brain")
             (self.root / "brain").rename(self.root / "brain-initech")
             self.assertEqual(tasks_web.default_brain_dir(), self.root / "brain")  # several brains, no default: today's fallback
@@ -3846,7 +3868,7 @@ class BrainSwitchTest(unittest.TestCase):
             self.assertEqual((path, status), (path, 400))
             self.assertEqual(data, {"error": "Unknown brain."})
         before = {key: register.read_bytes() for key, register in self.registers.items()}
-        with patch.object(tasks_web, "run_tool") as runner:
+        with patch.object(web_server, "run_tool") as runner:
             for method, path, payload in (
                 ("POST", "/api/actions?brain=brain-inconnu", {"register": f"{self.DEFAULT_PROJECT}/state/actions.md", "action": {}}),
                 ("POST", "/api/actions/ALP-001/notes?brain=brain-inconnu", {"details_version": "x", "note": "n"}),
@@ -3963,7 +3985,7 @@ class BrainSwitchTest(unittest.TestCase):
 
     def test_tool_runs_receive_the_selected_brain(self):
         result = {"id": "links", "ok": True, "output": "OK", "truncated": False}
-        with patch.object(tasks_web, "run_tool", return_value=result) as runner:
+        with patch.object(web_server, "run_tool", return_value=result) as runner:
             self.assertEqual(self.request("POST", "/api/tools/run?brain=brain-perso", {"id": "links"})[0], 200)
             runner.assert_called_once_with("links", self.other.resolve())
             runner.reset_mock()
@@ -4087,7 +4109,7 @@ class BrainSwitchTest(unittest.TestCase):
         os.chdir(cwd or self.root)
         output, errors = io.StringIO(), io.StringIO()
         try:
-            with patch.object(tasks_web, "WORK", self.root), patch.object(tasks_web, "TaskServer", Server), \
+            with patch.object(tasks_web, "WORK", self.root), patch.object(web_brains, "WORK", self.root), patch.object(tasks_web, "TaskServer", Server), \
                     patch.object(sys, "argv", ["tasks-web.py", *argv]), redirect_stdout(output), redirect_stderr(errors):
                 try:
                     tasks_web.main()
@@ -4153,7 +4175,7 @@ class BrainSwitchTest(unittest.TestCase):
         with urlopen(self.base + "/", timeout=3) as response:
             page = response.read().decode("utf-8")
         static = TOOL.parent / "static"
-        script, styles = (static / "app.js").read_text(encoding="utf-8"), (static / "app.css").read_text(encoding="utf-8")
+        script, styles = app_script(), (static / "app.css").read_text(encoding="utf-8")
         for text in (page, script, styles):
             self.assertNotIn("brainScope", text)
             self.assertNotIn("brainStaticScope", text)
@@ -4232,7 +4254,7 @@ class MarkdownToolbarTest(unittest.TestCase):
         self.base = f"http://127.0.0.1:{self.server.server_port}"
         with urlopen(self.base + "/", timeout=3) as response:
             self.page = response.read().decode("utf-8")
-        self.script = (self.STATIC / "app.js").read_text(encoding="utf-8")
+        self.script = app_script()
 
     def test_both_note_editors_have_the_toolbar_right_above_their_text(self):
         self.assertEqual(sorted(re.findall(r'<div id="(\w+)" class="md-toolbar"', self.page)), sorted(self.EDITORS))
@@ -4250,11 +4272,24 @@ class MarkdownToolbarTest(unittest.TestCase):
         self.assertNotIn("noteInput", "".join(re.findall(r"mountMarkdownToolbar\([^)]*\)", self.script)))
 
     def test_the_text_edits_are_served_before_the_app(self):
-        self.assertLess(self.page.index('src="/md-edit.js"'), self.page.index('src="/app.js"'))
+        self.assertLess(self.page.index('src="/md-edit.js"'), self.page.index('src="/app/core.js"'))
         with urlopen(self.base + "/md-edit.js", timeout=3) as response:
             self.assertEqual(response.status, 200)
             self.assertTrue(response.headers["Content-Type"].startswith("text/javascript"))
             self.assertIn("const MarkdownEdit", response.read().decode("utf-8"))
+
+    def test_the_fonts_of_the_stylesheet_are_served_and_nothing_else_is(self):
+        styles = (self.STATIC / "app.css").read_text(encoding="utf-8")
+        fonts = re.findall(r'url\("/(fonts/[a-z0-9-]+\.woff2)"\)', styles)
+        self.assertEqual(len(fonts), 4)
+        for font in fonts:
+            with urlopen(f"{self.base}/{font}", timeout=3) as response:
+                self.assertEqual(response.headers["Content-Type"], "font/woff2")
+                self.assertEqual(response.read(), (self.STATIC / font).read_bytes())
+        for path in ("/icon.png", "/licenses/IBM-Plex-Sans-OFL-1.1.txt", "/fonts/", "/app/", "/index.html", "/fonts/../app.css"):
+            with self.subTest(path=path), self.assertRaises(HTTPError) as caught:
+                urlopen(f"{self.base}{path}", timeout=3)
+            self.assertEqual(caught.exception.code, 404)
 
     def test_every_button_has_a_label_an_icon_a_tool_and_the_shortcuts_stay_clear_of_the_app(self):
         table = self.script[self.script.index("const MD_TOOLS = ["):self.script.index("const MD_ARROWS")]
@@ -4266,7 +4301,7 @@ class MarkdownToolbarTest(unittest.TestCase):
         self.assertEqual(len(tools), 11)
         for _id, label, icon, _key, _shift in tools:
             self.assertTrue(label)
-            self.assertRegex(icons, rf"\n  {icon}: '<")
+            self.assertRegex(icons, rf"\n  {icon}: (?:'<|ms\(')")  # stroked markup, or a filled Material Symbol
         shortcuts = {(key, bool(shift)) for _id, _label, _icon, key, shift in tools if key}
         self.assertEqual(shortcuts, {("b", False), ("i", False), ("u", False), ("x", True), ("k", False)})
         # The app's own shortcuts with a modifier (⌘ Z, ⌘ Enter) differ from them; its single keys are ignored while typing.
@@ -4340,7 +4375,7 @@ class TimelineViewTest(unittest.TestCase):
         self.base = f"http://127.0.0.1:{server.server_port}"
         with urlopen(self.base + "/", timeout=3) as response:
             self.page = response.read().decode("utf-8")
-        self.script = (self.STATIC / "app.js").read_text(encoding="utf-8")
+        self.script = app_script()
         self.styles = (self.STATIC / "app.css").read_text(encoding="utf-8")
 
     def test_timeline_is_a_sidebar_view_right_after_the_board(self):
@@ -4417,8 +4452,8 @@ class TimelineViewTest(unittest.TestCase):
         self.assertIn("(view === 'list' || view === 'board')", self.script)
 
     def test_timeline_scripts_are_served_before_the_app(self):
-        self.assertLess(self.page.index('src="/timeline-view.js"'), self.page.index('src="/app.js"'))
-        self.assertLess(self.page.index('src="/md-edit.js"'), self.page.index('src="/app.js"'))
+        self.assertLess(self.page.index('src="/timeline-view.js"'), self.page.index('src="/app/core.js"'))
+        self.assertLess(self.page.index('src="/md-edit.js"'), self.page.index('src="/app/core.js"'))
         with urlopen(self.base + "/timeline-view.js", timeout=3) as response:
             self.assertEqual(response.status, 200)
             self.assertTrue(response.headers["Content-Type"].startswith("text/javascript"))
@@ -4885,11 +4920,11 @@ class ActionViewsPageTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.page = (cls.STATIC / "index.html").read_text(encoding="utf-8")
-        cls.script = (cls.STATIC / "app.js").read_text(encoding="utf-8")
+        cls.script = app_script()
         cls.styles = (cls.STATIC / "app.css").read_text(encoding="utf-8")
 
     def function(self, name):
-        """The source of a top-level function of app.js."""
+        """The source of a top-level function of the page's script."""
         start = re.search(rf"\n(?:async )?function {name}\(", self.script).start()
         return self.script[start:self.script.index("\n}\n", start)]
 
@@ -5024,9 +5059,9 @@ class ActionViewsPageTest(unittest.TestCase):
                 self.assertRegex(touch, rf"\n  {re.escape(selector)} \{{[^}}]*\bheight: 36px;")
         # Outside that block the dense sizes are the ones of the desktop.
         desktop = self.styles[:start]
-        self.assertIn("height: 26px; padding: 0 8px;", desktop[desktop.index("\n.chip {"):desktop.index("\n.chip-key")])
+        self.assertIn("height: 34px; padding: 0 12px;", desktop[desktop.index("\n.chip {"):desktop.index("\n.chip-key")])
         self.assertRegex(desktop, r"\n\.status-button \{\s*display: grid; place-items: center; width: 24px; height: 24px;")
-        self.assertIn("--row-h: 40px;", desktop)
+        self.assertIn("--row-h: 52px;", desktop)
 
 
 class SettingsViewTest(unittest.TestCase):
@@ -5034,7 +5069,7 @@ class SettingsViewTest(unittest.TestCase):
     SECRET_ENV = "ACME_TOKEN=sk-fictitious-secret-123"
     SECRET_URL = "https://git.acme.example/private/acme-secret-repo.git"
     TECHNICAL = ("uv run", "setup.py", "work.py", "update.sh", ".json")
-    SCRIPT = (Path(TOOL).parent / "static/app.js").read_text(encoding="utf-8")
+    SCRIPT = app_script()
 
     def write_json(self, relative, value):
         path = self.work / relative
@@ -5330,7 +5365,7 @@ class PortabilityTest(unittest.TestCase):
             script.write_text('#!/bin/sh\nprintf "héllo %s %s\\n" "$1" "$BRAIN_DIR"\n', encoding="utf-8")
             script.chmod(0o755)
             tools = {"hello": ("Memory", "Hello", "Says hello.", "machine/hello.sh", (tasks_web.BRAIN_ARG,))}
-            with patch.object(tasks_web, "TOOLS_ROOT", Path(folder)), patch.dict(tasks_web.TOOLS, tools, clear=True):
+            with patch.object(web_tools, "TOOLS_ROOT", Path(folder)), patch.dict(tasks_web.TOOLS, tools, clear=True):
                 catalog = tasks_web.tool_catalog()
                 result = tasks_web.run_tool("hello", Path(folder) / "brain-acme")
         self.assertEqual(catalog[0]["command"], "tools/machine/hello.sh <brain>")
@@ -5427,7 +5462,7 @@ class UpdateRoutesTest(unittest.TestCase):
         self.publish("v0.2.0")
 
     def test_get_before_any_check_is_empty_and_makes_no_network_call(self):
-        with patch.object(tasks_web, "run_update") as runner:
+        with patch.object(web_update, "run_update") as runner:
             self.assertEqual(self.request("GET", "/api/update"), (200, {"state": None}))
         runner.assert_not_called()
 
@@ -5451,7 +5486,7 @@ class UpdateRoutesTest(unittest.TestCase):
     def test_checks_are_throttled_to_one_per_hour_unless_forced(self):
         calls = []
         real = tasks_web.run_update
-        with patch.object(tasks_web, "run_update", side_effect=lambda *args: calls.append(args) or real(*args)):
+        with patch.object(web_update, "run_update", side_effect=lambda *args: calls.append(args) or real(*args)):
             self.assertFalse(self.request("POST", "/api/update/check", {})[1]["cached"])
             self.release_two()  # published after the first check: a cached answer cannot know it
             status, cached = self.request("POST", "/api/update/check", {})
@@ -5462,7 +5497,7 @@ class UpdateRoutesTest(unittest.TestCase):
             self.assertEqual(len(calls), 2)
         state = tasks_web.UpdateState()
         clock = iter([0.0, 3599.0, 3601.0, 3601.0])
-        with patch.object(tasks_web, "run_update", return_value={"state": "up-to-date"}) as runner:
+        with patch.object(web_update, "run_update", return_value={"state": "up-to-date"}) as runner:
             state.check(self.work, False, clock=lambda: next(clock))
             state.check(self.work, False, clock=lambda: next(clock))
             self.assertEqual(runner.call_count, 1)
@@ -5478,7 +5513,7 @@ class UpdateRoutesTest(unittest.TestCase):
         self.assertEqual((tasks_web.update_notes_html({"notes": None}), tasks_web.update_notes_html({})), ("", ""))
 
     def test_a_failed_check_is_not_cached(self):
-        with patch.object(tasks_web, "run_update", return_value={"state": "error", "error": "fetch failed"}) as runner:
+        with patch.object(web_update, "run_update", return_value={"state": "error", "error": "fetch failed"}) as runner:
             self.assertEqual(self.request("POST", "/api/update/check", {})[1]["state"], "error")
             self.assertEqual(self.request("POST", "/api/update/check", {})[1]["state"], "error")
         self.assertEqual(runner.call_count, 2)
