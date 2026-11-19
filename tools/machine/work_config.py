@@ -470,7 +470,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    for _stream in (sys.stdout, sys.stderr):  # UTF-8 even through a pipe on Windows, where the default is the ANSI code page
+    # UTF-8 even through a pipe on Windows, where the default is the ANSI code page, and LF line endings:
+    # the shell scripts read this output with $(…), which would keep the \r of CRLF in every name.
+    for _stream in (sys.stdout, sys.stderr):
         if hasattr(_stream, "reconfigure"):
-            _stream.reconfigure(encoding="utf-8", errors=_stream.errors)
+            _stream.reconfigure(encoding="utf-8", errors=_stream.errors, newline="\n")
     raise SystemExit(main())

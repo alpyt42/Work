@@ -215,4 +215,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    for _stream in (sys.stdout, sys.stderr):  # UTF-8 even through a pipe on Windows, where the default is the ANSI code page
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors=_stream.errors, newline="\n")
     sys.exit(main())

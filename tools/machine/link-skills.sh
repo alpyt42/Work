@@ -4,7 +4,19 @@
 # third-party skills of the work configuration (installed in .agents/skills by npx).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Git Bash on Windows: make ln -s create a real symbolic link (Developer Mode) or fail, never a silent copy.
+# Other systems ignore MSYS.
+export MSYS="${MSYS:+$MSYS }winsymlinks:nativestrict"
 mkdir -p "$ROOT/.agents/skills" "$ROOT/.agents/skills-disabled" "$ROOT/.claude/skills"
+
+# Whether <link> is a link to <target> (relative to the link's folder): the same text, or a link to the
+# same folder by another path, such as the absolute junction the skills installer makes on Windows.
+points_to() {
+  local link="$1" target="$2"
+  [[ -L "$link" ]] || return 1
+  [[ "$(readlink "$link")" == "$target" ]] && return 0
+  [[ -e "$link" && "$link" -ef "$(dirname "$link")/$target" ]]
+}
 
 ensure_link() {
   local link="$1" target="$2"
@@ -16,7 +28,7 @@ ensure_link() {
     esac
   fi
   if [[ -e "$link" || -L "$link" ]]; then
-    [[ -L "$link" && "$(readlink "$link")" == "$target" && -f "$link/SKILL.md" ]] || {
+    points_to "$link" "$target" && [[ -f "$link/SKILL.md" ]] || {
       echo "Conflicting skill path: $link" >&2
       exit 1
     }
@@ -28,7 +40,7 @@ ensure_link() {
 remove_managed_link() {
   local link="$1" target="$2"
   if [[ -e "$link" || -L "$link" ]]; then
-    [[ -L "$link" && "$(readlink "$link")" == "$target" ]] || {
+    points_to "$link" "$target" || {
       echo "Unmanaged skill path: $link" >&2
       exit 1
     }

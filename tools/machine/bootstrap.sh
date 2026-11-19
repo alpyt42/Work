@@ -3,6 +3,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+# Git Bash on Windows: make ln -s create a real symbolic link (Developer Mode) or fail, never a silent copy.
+# Other systems ignore MSYS.
+export MSYS="${MSYS:+$MSYS }winsymlinks:nativestrict"
 
 command -v git >/dev/null || { echo "git is required" >&2; exit 1; }
 command -v uv >/dev/null || { echo "uv is required for workspace checks" >&2; exit 1; }
