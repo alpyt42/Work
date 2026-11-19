@@ -302,3 +302,20 @@ The **Settings** view (sidebar footer, next to Sync) is written for business use
 The `projects/**/state/actions.md` files of the chosen brain are the only source of truth. The browser reads their state on opening and with **Refresh**; it stores no copy of the tasks. Writes go through a server bound to `127.0.0.1`, with a check of the origin and of the line's version to report concurrent modifications. Nothing leaves this computer, except what you ask for with **Save and send** (after a confirmation) or **Send** in the Sync view: the saved notes of one brain, pushed to its own online copy, with its Git hooks and identity checks. IDs are assigned from the existing prefix and the highest number of the project; a register with no established prefix must first be configured according to the brain's conventions.
 
 The `tasks.md` page of a brain provides the same views in Obsidian, thanks to the Tasks, Meta Bind and Templater plugins (settings to make once per machine: `kit/obsidian/README.md`). Both interfaces use the same registers; no additional synchronization is needed.
+
+## Code layout
+
+`tasks-web.py` is the entry point: its PEP 723 header (the dependencies `uv run` installs), the arguments, `main()` and the restart after an update. It puts its own folder on `sys.path` and imports the code from the package `tasksweb/`, so `launch.py`, `install-app.py` and `launcher.sh` start it as before. Each module imports only modules listed above it, so there is no import cycle:
+
+| Module | Holds |
+| --- | --- |
+| `common.py` | Paths (`WORK`, `TOOLS_ROOT`, `ASSETS`), the sibling tools it reuses (`action.py`, `brain-state.py` as a command, `work_config.py`, `launch.py`, `preflight-push.py`, `check-links.py`), shared constants and locks, `TaskError`, the input checks |
+| `tools.py` | The Tools view: the catalogue of predefined commands and `run_tool` |
+| `markdown.py` | Folding (case and accents), heading anchors, the Markdown renderer and its link rules, task boxes, front matter |
+| `brains.py` | The brains of Work: discovery, the default brain, labels, client names, trust boundaries |
+| `settings.py`, `update.py`, `git_sync.py` | The Settings, Update and Sync views |
+| `docs.py` | `DocEntry`, search terms and snippets, and `DocsMixin`: the catalogue, search and rendering of a brain's documents |
+| `priorities.py` | `read_priorities`: the Priorities file of a brain |
+| `notes.py`, `archives.py` | `NotesMixin` and `ArchivesMixin`: the notes and the archived projects of a brain |
+| `store.py` | `Store`: the actions of one brain and the undo stack, with `NotesMixin`, `DocsMixin` and `ArchivesMixin` |
+| `server.py` | `Handler` (the routes), `TaskServer` (one server for every brain of Work) and the static files it serves |
