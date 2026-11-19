@@ -35,6 +35,18 @@ tasks_web = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tasks_web)
 # The modules where the names some tests patch are looked up (tasks-web.py put its package tasksweb/ on sys.path).
 from tasksweb import brains as web_brains, docs as web_docs, git_sync as web_git, server as web_server, tools as web_tools, update as web_update  # noqa: E402
+STATIC = TOOL.parent / "static"
+
+
+def app_scripts():
+    """The files of the page's script, static/app/*.js, in the order index.html loads them."""
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    return [STATIC / name for name in re.findall(r'<script src="/(app/[a-z0-9-]+\.js)" defer></script>', page)]
+
+
+def app_script():
+    """The page's script: its files joined in load order."""
+    return "\n".join(path.read_text(encoding="utf-8") for path in app_scripts())
 
 
 RICH_REGISTER = "# Actions\n\n## Open\n- [ ] **EXM-001** — Jane — Préparer la livraison 📅 2026-10-15\n    - Source: note initiale\n    - 12/10: une note\n        - sous-détail\n\n## Done\n- [x] **EXM-009** — Jane — Ancienne clôture sans date\n"
@@ -2716,13 +2728,15 @@ class GitViewPageTest(unittest.TestCase):
         self.addCleanup(lambda: (server.shutdown(), server.server_close(), thread.join(timeout=2)))
         with urlopen(f"http://127.0.0.1:{server.server_port}/", timeout=3) as response:
             self.page = response.read().decode("utf-8")
-        self.script = (self.STATIC / "app.js").read_text(encoding="utf-8")
+        self.script = app_script()
         self.styles = (self.STATIC / "app.css").read_text(encoding="utf-8")
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_the_script_parses(self):
-        done = subprocess.run(["node", "--check", str(self.STATIC / "app.js")], capture_output=True, text=True, timeout=30)
-        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertTrue(app_scripts())
+        for path in app_scripts():
+            done = subprocess.run(["node", "--check", str(path)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(done.returncode, 0, done.stderr)
 
     def test_the_page_has_cards_and_two_dialogs_and_nothing_of_the_old_view(self):
         view = self.page[self.page.index('<div id="gitView"'):self.page.index("</main>")]
@@ -3206,7 +3220,7 @@ class NoteDeletePageTest(unittest.TestCase):
         self.addCleanup(lambda: (server.shutdown(), server.server_close(), thread.join(timeout=2)))
         with urlopen(f"http://127.0.0.1:{server.server_port}/", timeout=3) as response:
             self.page = response.read().decode("utf-8")
-        self.script = (self.STATIC / "app.js").read_text(encoding="utf-8")
+        self.script = app_script()
         self.styles = (self.STATIC / "app.css").read_text(encoding="utf-8")
 
     def test_the_delete_button_sits_next_to_edit_and_only_shows_for_a_deletable_note(self):
@@ -4155,7 +4169,7 @@ class BrainSwitchTest(unittest.TestCase):
         with urlopen(self.base + "/", timeout=3) as response:
             page = response.read().decode("utf-8")
         static = TOOL.parent / "static"
-        script, styles = (static / "app.js").read_text(encoding="utf-8"), (static / "app.css").read_text(encoding="utf-8")
+        script, styles = app_script(), (static / "app.css").read_text(encoding="utf-8")
         for text in (page, script, styles):
             self.assertNotIn("brainScope", text)
             self.assertNotIn("brainStaticScope", text)
@@ -4234,7 +4248,7 @@ class MarkdownToolbarTest(unittest.TestCase):
         self.base = f"http://127.0.0.1:{self.server.server_port}"
         with urlopen(self.base + "/", timeout=3) as response:
             self.page = response.read().decode("utf-8")
-        self.script = (self.STATIC / "app.js").read_text(encoding="utf-8")
+        self.script = app_script()
 
     def test_both_note_editors_have_the_toolbar_right_above_their_text(self):
         self.assertEqual(sorted(re.findall(r'<div id="(\w+)" class="md-toolbar"', self.page)), sorted(self.EDITORS))
@@ -4252,7 +4266,7 @@ class MarkdownToolbarTest(unittest.TestCase):
         self.assertNotIn("noteInput", "".join(re.findall(r"mountMarkdownToolbar\([^)]*\)", self.script)))
 
     def test_the_text_edits_are_served_before_the_app(self):
-        self.assertLess(self.page.index('src="/md-edit.js"'), self.page.index('src="/app.js"'))
+        self.assertLess(self.page.index('src="/md-edit.js"'), self.page.index('src="/app/core.js"'))
         with urlopen(self.base + "/md-edit.js", timeout=3) as response:
             self.assertEqual(response.status, 200)
             self.assertTrue(response.headers["Content-Type"].startswith("text/javascript"))
@@ -4342,7 +4356,7 @@ class TimelineViewTest(unittest.TestCase):
         self.base = f"http://127.0.0.1:{server.server_port}"
         with urlopen(self.base + "/", timeout=3) as response:
             self.page = response.read().decode("utf-8")
-        self.script = (self.STATIC / "app.js").read_text(encoding="utf-8")
+        self.script = app_script()
         self.styles = (self.STATIC / "app.css").read_text(encoding="utf-8")
 
     def test_timeline_is_a_sidebar_view_right_after_the_board(self):
@@ -4419,8 +4433,8 @@ class TimelineViewTest(unittest.TestCase):
         self.assertIn("(view === 'list' || view === 'board')", self.script)
 
     def test_timeline_scripts_are_served_before_the_app(self):
-        self.assertLess(self.page.index('src="/timeline-view.js"'), self.page.index('src="/app.js"'))
-        self.assertLess(self.page.index('src="/md-edit.js"'), self.page.index('src="/app.js"'))
+        self.assertLess(self.page.index('src="/timeline-view.js"'), self.page.index('src="/app/core.js"'))
+        self.assertLess(self.page.index('src="/md-edit.js"'), self.page.index('src="/app/core.js"'))
         with urlopen(self.base + "/timeline-view.js", timeout=3) as response:
             self.assertEqual(response.status, 200)
             self.assertTrue(response.headers["Content-Type"].startswith("text/javascript"))
@@ -4887,11 +4901,11 @@ class ActionViewsPageTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.page = (cls.STATIC / "index.html").read_text(encoding="utf-8")
-        cls.script = (cls.STATIC / "app.js").read_text(encoding="utf-8")
+        cls.script = app_script()
         cls.styles = (cls.STATIC / "app.css").read_text(encoding="utf-8")
 
     def function(self, name):
-        """The source of a top-level function of app.js."""
+        """The source of a top-level function of the page's script."""
         start = re.search(rf"\n(?:async )?function {name}\(", self.script).start()
         return self.script[start:self.script.index("\n}\n", start)]
 
@@ -5036,7 +5050,7 @@ class SettingsViewTest(unittest.TestCase):
     SECRET_ENV = "ACME_TOKEN=sk-fictitious-secret-123"
     SECRET_URL = "https://git.acme.example/private/acme-secret-repo.git"
     TECHNICAL = ("uv run", "setup.py", "work.py", "update.sh", ".json")
-    SCRIPT = (Path(TOOL).parent / "static/app.js").read_text(encoding="utf-8")
+    SCRIPT = app_script()
 
     def write_json(self, relative, value):
         path = self.work / relative

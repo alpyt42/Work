@@ -21,6 +21,24 @@ from .git_sync import GIT_LOCK, GIT_VERSION_RE, git_changes, git_overview, git_s
 from .priorities import read_priorities
 from .store import Store
 
+ASSET_TYPES = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8"}
+
+
+def static_assets() -> dict[str, tuple[str, str]]:
+    """What is served outside /api: URL path -> (file below static/, MIME type), read again on every request.
+
+    The page at "/", then each stylesheet and script of static/ and of static/app/ (the page's script, cut into files) at its own
+    path. Nothing else: no icon, no folder, no path built from the URL.
+    """
+    found = {"/": ("index.html", "text/html; charset=utf-8")}
+    for pattern in ("*.css", "*.js", "app/*.js"):
+        for file in ASSETS.glob(pattern):
+            if file.is_file() and not file.name.startswith("."):
+                relative = file.relative_to(ASSETS).as_posix()
+                found["/" + relative] = (relative, ASSET_TYPES[file.suffix])
+    return found
+
+
 class Handler(BaseHTTPRequestHandler):
     server: TaskServer
 
@@ -116,7 +134,7 @@ class Handler(BaseHTTPRequestHandler):
             with WRITE_LOCK:
                 self._json(HTTPStatus.OK, store.undo_state())
             return
-        assets = {"/": ("index.html", "text/html; charset=utf-8"), "/app.css": ("app.css", "text/css; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"), "/md-edit.js": ("md-edit.js", "text/javascript; charset=utf-8"), "/timeline-view.js": ("timeline-view.js", "text/javascript; charset=utf-8")}
+        assets = static_assets()
         if path not in assets:
             self._json(HTTPStatus.NOT_FOUND, {"error": "Page not found."})
             return
