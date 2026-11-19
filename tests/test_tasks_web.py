@@ -5165,7 +5165,7 @@ class ActionViewsPageTest(unittest.TestCase):
         desktop = self.styles[:start]
         self.assertIn("height: 34px; padding: 0 12px;", desktop[desktop.index("\n.chip {"):desktop.index("\n.chip-key")])
         self.assertRegex(desktop, r"\n\.status-button \{\s*display: grid; place-items: center; width: 24px; height: 24px;")
-        self.assertIn("--row-h: 52px;", desktop)
+        self.assertIn("--row-h: 46px;", desktop)
 
 
 class SettingsViewTest(unittest.TestCase):
