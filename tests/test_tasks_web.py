@@ -2550,11 +2550,17 @@ class GitViewTest(unittest.TestCase):
         script.write_text(f"#!/bin/sh\ntouch {started}\nsleep 60 &\nwait\n", encoding="utf-8")
         script.chmod(0o755)
         self.git(self.acme, "config", "--local", "alias.slow", f"!{script}")
-        begin = datetime.now()
-        code, _ = tasks_web.run_git_write(self.acme, ["slow"], 1)
+        # The limit must leave Git and the shell time to start the alias: one second is enough on a quiet machine, not
+        # always on a busy one, so a longer limit is tried only when the alias had not started.
+        for limit in (1, 3, 10):
+            started.unlink(missing_ok=True)
+            begin = datetime.now()
+            code, _ = tasks_web.run_git_write(self.acme, ["slow"], limit)
+            if started.exists():
+                break
         self.assertEqual(code, 124)
         self.assertTrue(started.exists())
-        self.assertLess((datetime.now() - begin).total_seconds(), 15)
+        self.assertLess((datetime.now() - begin).total_seconds(), limit + 14)
 
     # --- who may ask
 
