@@ -789,6 +789,20 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
   position: fixed; top: 3px; right: 0; bottom: 0; z-index: 40; width: min(var(--panel-w), 100vw);
   display: flex; flex-direction: column; background: var(--bg-surface); border-left: 1px solid var(--line); box-shadow: var(--shadow-pop);
 }
+/* Nothing shows under an open action: beside the list when both fit (the list narrows to what is left, at least 560 px), over
+   the whole view otherwise (the sidebar, when open, stays beside it). 1244 px = 264 (sidebar) + 560 + 420; 980 px = 560 + 420. */
+.app.has-panel .main { margin-right: var(--panel-w); }
+@media (max-width: 1243px) {
+  .app.has-panel:not(.sidebar-collapsed) .main { margin-right: 0; }
+  .app.has-panel:not(.sidebar-collapsed) .panel { left: var(--sidebar-w); width: auto; }
+}
+@media (max-width: 979px) {
+  .app.has-panel .main { margin-right: 0; }
+  .app.has-panel.sidebar-collapsed .panel { left: 0; width: auto; }
+}
+@media (max-width: 900px) {  /* the sidebar is a drawer: the view takes the whole width */
+  .app.has-panel .panel, .app.has-panel:not(.sidebar-collapsed) .panel { left: 0; width: auto; }
+}
 .panel-form { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
 .panel-head { flex: none; display: flex; align-items: flex-start; gap: 8px; padding: 14px 14px 10px 20px; border-bottom: 1px solid var(--line-soft); }
 .panel-heading { flex: 1 1 auto; min-width: 0; }

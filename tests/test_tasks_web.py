@@ -5141,6 +5141,16 @@ class ActionViewsPageTest(unittest.TestCase):
         touch = self.styles[self.styles.index("@media (pointer: coarse), (max-width: 700px) {"):]
         self.assertIn(".entry-more { width: 36px; height: 36px; }", touch[:touch.index("\n}\n")])
 
+    def test_nothing_shows_under_an_open_action(self):
+        # The panel marks the page while it is open; the list then makes room beside it, or the panel covers the whole view.
+        self.assertIn("ids.app.classList.add('has-panel');", self.function("openEditor"))
+        self.assertIn("ids.app.classList.remove('has-panel');", self.function("closeEditor"))
+        self.assertIn(".app.has-panel .main { margin-right: var(--panel-w); }", self.styles)
+        narrow = self.styles[self.styles.index("@media (max-width: 1243px) {"):self.styles.index(".panel-form {")]
+        self.assertIn(".app.has-panel:not(.sidebar-collapsed) .panel { left: var(--sidebar-w); width: auto; }", narrow)
+        self.assertIn(".app.has-panel.sidebar-collapsed .panel { left: 0; width: auto; }", narrow)
+        self.assertIn(".app.has-panel .panel, .app.has-panel:not(.sidebar-collapsed) .panel { left: 0; width: auto; }", narrow)
+
     def test_touch_targets_are_36_px_without_changing_the_desktop(self):
         start = self.styles.index("@media (pointer: coarse), (max-width: 700px) {")
         touch = self.styles[start:self.styles.index("\n}\n", start)]
