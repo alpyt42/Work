@@ -1341,3 +1341,34 @@ mark { background: var(--mark-bg); color: var(--mark-text); border-radius: 2px; 
   .tl-card-main { min-height: 36px; padding-right: 42px; }
   .tl-card-date { top: 0; right: 0; width: 36px; height: 36px; }
 }
+
+/* ---------- Priorities ---------- */
+.prio-view { padding: 0 20px 32px; }
+.prio-head { padding: 18px 0 10px; }
+.prio-title-line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.prio-title { font-size: var(--fs-lg); }
+.prio-badge { padding: 2px 8px; border-radius: 999px; background: var(--git-warn-tint); color: var(--git-warn-text); border: 1px solid var(--git-warn); font-size: var(--fs-xs); font-weight: 600; }
+.prio-facts { margin: 6px 0 0; color: var(--text-muted); font-size: var(--fs-sm); }
+.prio-hint { margin: 4px 0 0; color: var(--git-warn-text); font-size: var(--fs-sm); }
+.prio-notice { margin: 8px 0 14px; padding: 10px 14px; border: 1px solid var(--git-warn); border-left-width: 4px; border-radius: var(--radius-panel); background: var(--git-warn-tint); color: var(--git-warn-text); }
+.prio-notice-title { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+.prio-card { --tone: var(--line); margin: 0 0 14px; padding: 12px 16px 6px; border: 1px solid var(--line); border-left: 4px solid var(--tone); border-radius: var(--radius-panel); background: var(--bg-surface); }
+.prio-now { --tone: var(--accent); background: var(--accent-soft); }
+.prio-conflicts { --tone: var(--git-warn); background: var(--git-warn-tint); }
+.prio-card-title { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; font-size: var(--fs-md); }
+.prio-now .prio-card-title { color: var(--accent-strong); }
+.prio-body { font-size: var(--fs-sm); line-height: 1.55; overflow-wrap: anywhere; }
+.prio-body > * { max-width: 90ch; }
+.prio-body p { margin: 0 0 .6em; }
+.prio-body ul, .prio-body ol { margin: 0 0 .6em; padding-left: 1.3em; }
+.prio-body li + li { margin-top: .35em; }
+.prio-body li > ul, .prio-body li > ol { margin: .25em 0 0; color: var(--text-muted); }
+.prio-body a { text-decoration-color: var(--text-muted); }
+.prio-body .doc-link-off { color: var(--text-muted); }
+.prio-body code { font-family: var(--mono); font-size: .92em; }
+.prio-id { display: inline; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg-sunken); color: var(--accent-strong); font: inherit; font-family: var(--mono); font-size: .9em; cursor: pointer; }
+.prio-id:hover { background: var(--bg-hover); border-color: var(--accent); }
+@media (max-width: 700px) {
+  .prio-view { padding: 0 14px 28px; }
+  .prio-card { padding: 10px 12px 4px; }
+}

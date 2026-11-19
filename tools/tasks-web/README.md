@@ -44,7 +44,7 @@ Writes `actions-brain.desktop` in `${XDG_DATA_HOME:-~/.local/share}/applications
 
 The page takes exactly the height of the window, with no page scrolling: each zone (rows, board columns, the timeline frieze, lists and documents, tools catalog and output, the Sync cards, detail panel) scrolls separately. It works from 375 px wide up to wide screens.
 
-- **Sidebar** (248 px). At the top, the brain selector (see "Several brains"). Then the navigation: **Today** (number of overdue or due-today actions), **Actions** (number of open actions), **Board**, **Timeline**, **Docs**. Then **Projects**: the brain's registers, grouped by client (the client, then its missions) or by folder (`projects/internal/` becomes "Internal"), each with its number of open actions; a click filters the current view (a client filters all its missions), **All projects** removes the filter. At the bottom: **Tools**, **Sync** (number of brains with something to save or send), the time of the last refresh and the ⋯ menu: **Refresh**, **Undo** (the last write, with its label), **Keyboard shortcuts**, **Quit Actions Brain…**. The `[` key or the button at the head of the view hides the sidebar (the choice is remembered by the browser); below 900 px it becomes a drawer opened by that button and closed by Esc, the cross or a click outside it.
+- **Sidebar** (248 px). At the top, the brain selector (see "Several brains"). Then the navigation: **Priorities** (number of `Now` items of the brain's priorities file), **Today** (number of overdue or due-today actions), **Actions** (number of open actions), **Board**, **Timeline**, **Docs**. Then **Projects**: the brain's registers, grouped by client (the client, then its missions) or by folder (`projects/internal/` becomes "Internal"), each with its number of open actions; a click filters the current view (a client filters all its missions), **All projects** removes the filter. At the bottom: **Tools**, **Sync** (number of brains with something to save or send), the time of the last refresh and the ⋯ menu: **Refresh**, **Undo** (the last write, with its label), **Keyboard shortcuts**, **Quit Actions Brain…**. The `[` key or the button at the head of the view hides the sidebar (the choice is remembered by the browser); below 900 px it becomes a drawer opened by that button and closed by Esc, the cross or a click outside it.
 - **View header**: title and counter, the search field, the same in every view (`/` puts the cursor in it; see "Docs and Search"), **New note** and **New action** (`n`). Below, a row of filter chips: **Project** (when a sidebar project is chosen, with a cross to remove it), **Owner** (Everyone, Me, or a person: the owners as they are written in the registers, the ones with the most open actions first, each with that number; a person who no longer carries an action stays offered while chosen; the Board has its own Owner chip, see "Board"), **Status** (Open, All, Done and cancelled; Actions and Board views), **Group**, **Location** (Everywhere, Inbox, Outside projects; Docs view and search results), **Type** (All types, Notes, Sources, Workstreams, Journal, Project pages; Docs view only, remembered by the browser like the other filters). Only the **Project** and **Location** filters apply to the search results. **Clear** appears only when a filter is active and goes back to the open actions of all projects (in Docs, to all types too). In Actions, **Collapse all** and **Expand all** act on projects.
 - **Brain color.** Each brain has a stable accent color, so you always know which brain you are writing to: steel blue for `brain`, plum for `brain-perso`, then teal, olive, rust or slate for the others, chosen by hashing the name. It is used only for the brain mark in the sidebar, the active navigation item, the primary button, the focus ring, the selected row, the Timeline's mark for today and the strip at the top of the window.
 - **Statuses**: a small colored pictogram followed by the label in menus (empty circle for To do, half-disc for In progress, pause for Waiting, checked disc for Done, crossed-out disc for Cancelled, with the title struck through). An overdue due date is red. Priority: double up chevron for High, up chevron for Medium, down chevron for Low, nothing for Normal.
@@ -54,6 +54,10 @@ The view, the filters and the collapsed groups are kept after a refresh of the s
 **Touch.** On a touch screen (`pointer: coarse`) and on a phone-width page (700 px or less), the controls of the action views, of their header and of the detail panel are at least 36 px in both directions: filter chips and their cross, **Clear**, status and due-date buttons, the calendar buttons of the rows and of the Timeline tray, row and card actions, group headers, the Timeline toolbar. The rows and the cards keep their height (a status or due button grows into the padding around it). With a mouse on a wide page nothing changes.
 
 The interface automatically follows the system light or dark setting (`prefers-color-scheme`), with no toggle button. The only movements (panel sliding in, menu fade) respond to an action and disappear when the system asks for less animation (`prefers-reduced-motion`). Keyboard focus is always visible.
+
+## Priorities
+
+The first item of the sidebar, above Today. It shows the ranking written by the `/priorities` agent skill for the current brain, read from `priorities/<brain>.md` at the root of Work (see "Priorities file"); switching brain shows that brain's file. The header gives the title, when the file was generated ("Generated: 2 hours ago (09:42, 19 Nov 2026)", in the browser's language), the horizon and the next meeting. A file generated before today's date carries a "Not today's" badge and the hint to run `/priorities` in Claude Code to refresh it. **Warnings** is a notice at the top; every other section is a card with its title and its number of items, in file order (**Now** stands out, **Conflicts** is tinted as a warning). An action ID written in an item becomes a button that opens the detail panel of that action, when the action exists in the current brain; any other ID stays plain text. Without a file, the view says "No priorities for this brain yet. Run /priorities in Claude Code."; a file without a section says "Nothing to do in this horizon." The page reads the file again with each refresh and when the window regains focus, and draws it again only when its content changed. The shortcut is `0`; the count next to the entry is the number of `Now` items. The filter row is empty in this view.
 
 ## Today
 
@@ -127,7 +131,7 @@ The single keys do not apply while typing in a field; `?` shows their help, and 
 |---|---|
 | `/` | Search the actions and the documents |
 | `n` | New action |
-| `1` to `5` | Today, Actions, Board, Timeline, Docs |
+| `0` to `5` | Priorities, Today, Actions, Board, Timeline, Docs |
 | `j` `k`, `↓` `↑` | Next or previous action (Today, Actions, Board, Timeline) |
 | `←` `→` `↑` `↓` | On a Timeline chip: by date, and by project |
 | Alt `←` `→` | On a Timeline chip: move its deadline by a day (with Shift, a week) |
@@ -142,6 +146,39 @@ The single keys do not apply while typing in a field; `?` shows their help, and 
 | ⌘ B, I, U, K, ⇧ ⌘ X | In a note being written: bold, italic, underline, link, strikethrough |
 
 In a list, only the selected row (otherwise the first one) is in the tab order: Tab goes through its buttons, `j` and `k` move to the others.
+
+## Priorities file
+
+`GET /api/priorities` (optional `?brain=<name>`, the default brain otherwise) reads `priorities/<brain name>.md` in the Work root, where the name is the one of the brain's folder (`brain-acme`). The `priorities/` folder is ignored by Git and holds only generated files: the `/priorities` skill rewrites the file of every brain on each run. The server takes the brain only from its list of brains (an unknown or path-like name is refused with 400 "Unknown brain."), never reads a path sent by the page, and treats a file that is not a regular file (a symbolic link included) or that is larger than 1 MB as missing.
+
+```markdown
+---
+type: priorities
+brain: brain-acme
+generated: 2026-11-19T09:42:00+01:00
+horizon: 2026-11-19..2026-11-23
+next_meeting: 10:00 Steering committee
+---
+
+# Priorities — Thursday 19/11/2026
+
+## Warnings
+- The message review last ran on 2026-11-17: registers may miss recent requests.
+
+## Now
+- **Send the steering deck to Jane Doe** — the committee is at 10:00 · due 2026-11-19 · ACME-012
+  - optional detail sub-bullet
+
+## Follow-ups
+- **Jane Doe (mail, thread "Q3 budget")** — ask for the signed order · no answer since 2026-11-14 · ACME-007, ACME-009
+```
+
+- **Front matter**: flat `key: value` lines. `type` is always `priorities`; `brain` is the brain's folder name; `generated` is an ISO 8601 date-time with its UTC offset (required: without a valid one the file counts as not today's); `horizon` is `YYYY-MM-DD..YYYY-MM-DD`; `next_meeting` is optional free text. Other keys are ignored.
+- **Title**: one optional `# ` line.
+- **Sections**: `## ` headings with these fixed English titles, in this order, the empty ones left out: `Warnings`, `Now`, `Prepare`, `Conflicts`, `New requests`, `Follow-ups`, `To chase`, `To close`, `Lingering`, `Admin`. Titles are matched without regard to case; any other `## ` heading is still shown, as a generic section, in file order. Only the headings are fixed: the text of the items is in the owner's language.
+- **Items**: top-level `- ` bullets, each starting with the bold thing to do, then ` — ` why now, ` · ` deadline, ` · ` action IDs; sub-bullets are allowed. The count of a section is its number of top-level list items. A file with a front matter and no section means nothing to do.
+- **Action IDs**: `[A-Z]{2,5}-\d{3}` (`ACME-012`), the same pattern as the action routes.
+- **Answer**: `{"brain", "exists": false, "path"}` when the file is missing; otherwise also `title` (or `null`), `generated`, `horizon`, `next_meeting` (or `null`), `stale` (the date of `generated`, in its own offset, is before today's date in Europe/Paris, or `generated` is missing or invalid), `today`, `version` (the first 16 hex characters of the SHA-256 of the file) and `sections`, a list of `{"key", "title", "count", "html"}` where `key` is the slug of a known title (`new-requests`, `follow-ups`…) or `other`, and `html` is the section rendered by the same safe Markdown renderer as the documents (raw HTML is escaped, relative links are not links).
 
 ## Several brains
 

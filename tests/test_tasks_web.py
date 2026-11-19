@@ -20,7 +20,7 @@ import tempfile
 import threading
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -4345,18 +4345,18 @@ class TimelineViewTest(unittest.TestCase):
 
     def test_timeline_is_a_sidebar_view_right_after_the_board(self):
         views = re.findall(r'<button id="(\w+)" class="nav-item[^"]*" type="button" data-view="(\w+)" title="([^"]*)"', self.page)
-        self.assertEqual([view for _id, view, _title in views], ["today", "list", "board", "timeline", "docs", "archives", "tools", "git", "settings"])  # Search is a field, not a view of the sidebar
+        self.assertEqual([view for _id, view, _title in views], ["priorities", "today", "list", "board", "timeline", "docs", "archives", "tools", "git", "settings"])  # Search is a field, not a view of the sidebar
         titles = {view: title for _id, view, title in views}
         self.assertEqual([titles[view] for view in ("timeline", "docs")], ["Timeline (4)", "Docs (5)"])
         self.assertIn('<button id="timelineButton"', self.page)
-        self.assertIn("<kbd>1</kbd> to <kbd>5</kbd></dt><dd>Today, Actions, Board, Timeline, Docs</dd>", self.page)
+        self.assertIn("<kbd>0</kbd> to <kbd>5</kbd></dt><dd>Priorities, Today, Actions, Board, Timeline, Docs</dd>", self.page)
         self.assertIn("<kbd>Alt</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>On the Timeline: move the deadline by a day", self.page)
 
     def test_keyboard_scheme_follows_the_sidebar_order(self):
-        self.assertIn("const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git', 'settings'];", self.script)
-        self.assertIn("setView(['today', 'list', 'board', 'timeline', 'docs'][Number(digit) - 1]);", self.script)
-        self.assertIn("/^[1-5]$/.test(key)", self.script)
-        self.assertIn("/^Digit[1-5]$/.test(event.code)", self.script)
+        self.assertIn("const VIEWS = ['priorities', 'today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git', 'settings'];", self.script)
+        self.assertIn("setView(['priorities', 'today', 'list', 'board', 'timeline', 'docs'][Number(digit)]);", self.script)
+        self.assertIn("/^[0-5]$/.test(key)", self.script)
+        self.assertIn("/^Digit[0-5]$/.test(event.code)", self.script)
         # The timeline is an action view: filters, j/k, Enter, the detail panel and the quick edits work there as in the list and the board.
         self.assertRegex(self.script, r"const ACTION_VIEWS = \[[^\]]*'timeline'[^\]]*\];")
         self.assertIn("timeline: 'timelineButton'", self.script)
@@ -4369,7 +4369,7 @@ class TimelineViewTest(unittest.TestCase):
         self.assertNotIn("search: 'searchButton'", self.script)
         self.assertNotIn("view-searchless", self.script + self.styles)
         # `search` stays an internal view: never restored, never saved as the view to come back to.
-        self.assertIn("const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git', 'settings'];", self.script)
+        self.assertIn("const VIEWS = ['priorities', 'today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git', 'settings'];", self.script)
         self.assertIn("VIEWS.includes(savedUI.view) && savedUI.view !== 'search'", self.script)
         self.assertIn("view: view === 'search' ? searchReturn : view,", self.script)
         # A query shows the results page, an empty field or Esc goes back to the view it left; any other view ends the search.
@@ -5723,6 +5723,158 @@ class TaskBoxTest(unittest.TestCase):
         status, result = self.request("POST", "/api/undo", {"label": state["label"]})
         self.assertEqual((status, result["action_id"]), (200, self.NOTE))
         self.assertEqual(path.read_bytes(), original)
+
+
+class PrioritiesTest(unittest.TestCase):
+    """GET /api/priorities: the file `priorities/<brain>.md` of each brain, parsed and rendered."""
+    FILE = (
+        "---\ntype: priorities\nbrain: brain\ngenerated: {generated}\nhorizon: 2026-11-19..2026-11-23\nnext_meeting: 10:00 Steering committee\nextra: ignored\n---\n\n"
+        "# Priorities — Thursday 19/11/2026\n\n"
+        "## Follow-ups\n- **Jane Doe (mail)** — ask for the order · ACME-007\n\n"
+        "## Now\n- **Send the deck** — committee at 10:00 · due 2026-11-19 · ACME-012\n  - detail line\n- **Call Globex** — ACME-013\n\n"
+        "## Warnings\n- The message review is old.\n\n"
+        "## Something else\n- **Odd** item\n- Another\n"
+    )
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / "work"
+        self.root.mkdir()
+        for name in ("brain", "brain-acme"):
+            brain = self.root / name
+            (brain / ".data").mkdir(parents=True)
+            (brain / "AGENTS.md").write_text("# Brain\n", encoding="utf-8")
+            (brain / "projects/internal/alpha/state").mkdir(parents=True)
+            (brain / "projects/internal/alpha/state/actions.md").write_text("# Actions\n\n## Open\n- [ ] **ALP-001** — Jane — Task\n", encoding="utf-8")
+        server = tasks_web.TaskServer(("127.0.0.1", 0), tasks_web.Store(self.root / "brain"), work=self.root)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (server.shutdown(), server.server_close(), thread.join(timeout=2)))
+        self.server = server
+        self.base = f"http://127.0.0.1:{server.server_port}"
+
+    def request(self, method, path, payload=None):
+        return TasksWebTest.request(self, method, path, payload)
+
+    def put(self, name, text, folder="priorities"):
+        (self.root / folder).mkdir(exist_ok=True)
+        path = self.root / folder / f"{name}.md"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def now(self):
+        return datetime.now(ZoneInfo("Europe/Paris"))
+
+    def test_a_missing_file_is_reported_not_an_error(self):
+        self.assertEqual(self.request("GET", "/api/priorities"), (200, {"brain": "brain", "exists": False, "path": "priorities/brain.md"}))
+
+    def test_front_matter_sections_order_and_counts(self):
+        stamp = self.now().isoformat(timespec="seconds")
+        self.put("brain", self.FILE.format(generated=stamp))
+        status, data = self.request("GET", "/api/priorities")
+        self.assertEqual(status, 200)
+        self.assertEqual((data["brain"], data["exists"], data["path"]), ("brain", True, "priorities/brain.md"))
+        self.assertEqual((data["title"], data["generated"], data["horizon"], data["next_meeting"]),
+                         ("Priorities — Thursday 19/11/2026", stamp, "2026-11-19..2026-11-23", "10:00 Steering committee"))
+        self.assertEqual(data["today"], self.now().date().isoformat())
+        self.assertFalse(data["stale"])
+        self.assertRegex(data["version"], r"^[0-9a-f]{16}$")
+        # File order is kept; known titles get their slug (case-insensitive), the others are "other".
+        self.assertEqual([(s["key"], s["title"], s["count"]) for s in data["sections"]],
+                         [("follow-ups", "Follow-ups", 1), ("now", "Now", 2), ("warnings", "Warnings", 1), ("other", "Something else", 2)])
+        now = data["sections"][1]["html"]
+        self.assertIn("<strong>Send the deck</strong>", now)
+        self.assertIn("detail line", now)  # a sub-bullet is not a second item
+        self.assertNotIn("<h2", now)
+
+    def test_headings_match_case_insensitively_and_no_section_means_nothing_to_do(self):
+        stamp = self.now().isoformat(timespec="seconds")
+        self.put("brain", f"---\ntype: priorities\ngenerated: {stamp}\n---\n\n## NEW REQUESTS\n- **A** — ACME-001\n\n## to chase\n1. **B**\n")
+        data = self.request("GET", "/api/priorities")[1]
+        self.assertEqual([(s["key"], s["count"]) for s in data["sections"]], [("new-requests", 1), ("to-chase", 1)])
+        self.assertIsNone(data["title"])
+        self.assertIsNone(data["next_meeting"])
+        self.put("brain", f"---\ntype: priorities\ngenerated: {stamp}\n---\n")
+        self.assertEqual(self.request("GET", "/api/priorities")[1]["sections"], [])
+
+    def test_stale_follows_the_calendar_date_of_the_generation_in_its_own_offset(self):
+        today = self.now().date()
+        cases = {"yesterday": ((self.now() - timedelta(days=1)).isoformat(timespec="seconds"), True),
+                 "today-start": (f"{today.isoformat()}T00:05:00+14:00", False),
+                 "today-late": (f"{today.isoformat()}T23:55:00-11:00", False),
+                 "date-only-yesterday": ((today - timedelta(days=1)).isoformat(), True),
+                 "garbage": ("sometime", True), "empty": ("", True)}
+        for label, (generated, stale) in cases.items():
+            with self.subTest(label):
+                self.put("brain", f"---\ntype: priorities\ngenerated: {generated}\n---\n\n## Now\n- **A**\n")
+                self.assertEqual(self.request("GET", "/api/priorities")[1]["stale"], stale)
+        self.put("brain", "---\ntype: priorities\n---\n\n## Now\n- **A**\n")
+        data = self.request("GET", "/api/priorities")[1]
+        self.assertEqual((data["generated"], data["stale"]), (None, True))
+
+    def test_raw_html_and_unsafe_links_are_neutralised(self):
+        stamp = self.now().isoformat(timespec="seconds")
+        self.put("brain", f"---\ntype: priorities\ngenerated: {stamp}\n---\n\n## Now\n- **<script>alert(1)</script>** <img src=x onerror=alert(2)> "
+                          "[ext](https://example.com/a) [bad](javascript:alert(3)) [rel](../secret.md)\n")
+        html = self.request("GET", "/api/priorities")[1]["sections"][0]["html"]
+        self.assertNotIn("<script", html)
+        self.assertNotIn("<img", html)
+        self.assertIn("&lt;script&gt;", html)
+        self.assertIn('href="https://example.com/a"', html)
+        self.assertNotIn('href="javascript:', html)  # left as plain text, never a link
+        self.assertNotIn("../secret.md", html)
+
+    def test_unknown_or_path_like_brains_are_refused(self):
+        for value in ("brain-nope", "..", "../brain", "brain/../brain-acme", "%2e%2e%2fbrain", "priorities", ""):
+            with self.subTest(value):
+                self.assertEqual(self.request("GET", f"/api/priorities?brain={value}"), (400, {"error": "Unknown brain."}))
+        self.assertEqual(self.request("GET", "/api/priorities?brain=brain&brain=brain-acme")[0], 400)
+
+    def test_each_brain_has_its_own_file(self):
+        stamp = self.now().isoformat(timespec="seconds")
+        self.put("brain", f"---\ntype: priorities\ngenerated: {stamp}\n---\n\n## Now\n- **Default task**\n")
+        self.put("brain-acme", f"---\ntype: priorities\ngenerated: {stamp}\n---\n\n## Now\n- **First**\n- **Second**\n")
+        default = self.request("GET", "/api/priorities")[1]
+        acme = self.request("GET", "/api/priorities?brain=brain-acme")[1]
+        self.assertEqual((default["brain"], default["sections"][0]["count"]), ("brain", 1))
+        self.assertEqual((acme["brain"], acme["path"], acme["sections"][0]["count"]), ("brain-acme", "priorities/brain-acme.md", 2))
+        self.assertNotEqual(default["version"], acme["version"])
+        (self.root / "priorities/brain-acme.md").unlink()
+        self.assertEqual(self.request("GET", "/api/priorities?brain=brain-acme")[1]["exists"], False)
+        self.assertEqual(self.request("GET", "/api/priorities")[1]["exists"], True)
+
+    def test_version_follows_the_bytes(self):
+        stamp = self.now().isoformat(timespec="seconds")
+        text = f"---\ntype: priorities\ngenerated: {stamp}\n---\n\n## Now\n- **A**\n"
+        self.put("brain", text)
+        first = self.request("GET", "/api/priorities")[1]["version"]
+        self.assertEqual(first, self.request("GET", "/api/priorities")[1]["version"])
+        self.assertEqual(first, hashlib.sha256(text.encode()).hexdigest()[:16])
+        self.put("brain", text + "- **B**\n")
+        self.assertNotEqual(first, self.request("GET", "/api/priorities")[1]["version"])
+
+    def test_oversized_symlinked_or_non_regular_files_count_as_missing(self):
+        missing = {"brain": "brain", "exists": False, "path": "priorities/brain.md"}
+        stamp = self.now().isoformat(timespec="seconds")
+        good = f"---\ntype: priorities\ngenerated: {stamp}\n---\n\n## Now\n- **A**\n"
+        path = self.put("brain", good + "x" * tasks_web.DOC_SIZE_LIMIT)
+        self.assertEqual(self.request("GET", "/api/priorities"), (200, missing))
+        path.unlink()
+        outside = self.put("elsewhere", good, folder="other")
+        path.symlink_to(outside)
+        self.assertEqual(self.request("GET", "/api/priorities"), (200, missing))
+        path.unlink()
+        path.mkdir()
+        self.assertEqual(self.request("GET", "/api/priorities"), (200, missing))
+
+    def test_the_view_is_wired_in_the_page(self):
+        with urlopen(self.base + "/", timeout=3) as response:
+            page = response.read().decode("utf-8")
+        nav = re.findall(r'<button id="(\w+)" class="nav-item[^"]*" type="button" data-view="(\w+)"', page)
+        self.assertEqual(nav[0], ("prioButton", "priorities"))
+        self.assertIn('id="prioCount"', page)
+        self.assertIn('id="prioView"', page)
 
 
 if __name__ == "__main__":
