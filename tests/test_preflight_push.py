@@ -497,6 +497,7 @@ class PrePushHookTest(PreflightCase):
     def install_hook(self, repo: Path, work: Path) -> None:
         (work / "tools/machine/hooks").mkdir(parents=True, exist_ok=True)
         shutil.copy2(TOOL, work / "tools/machine/preflight-push.py")
+        shutil.copy2(TOOL.parent / "work_config.py", work / "tools/machine/work_config.py")  # imported next to the script
         hook = repo / ".git/hooks/pre-push"
         hook.parent.mkdir(exist_ok=True)
         shutil.copy2(HOOK, hook)
