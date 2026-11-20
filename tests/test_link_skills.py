@@ -381,46 +381,44 @@ class InstallThirdPartyTest(unittest.TestCase):
         path = self.root / "npx-calls"
         return len(path.read_text(encoding="utf-8").splitlines()) if path.exists() else 0
 
-    def test_if_changed_skips_npx_when_the_lock_and_the_skills_are_unchanged(self) -> None:
-        self.enable("tp")
-        (self.root / "skills-lock.json").write_text('{"v": 1}\n', encoding="utf-8")
-        self.assertEqual(self.install("tp", 0, "--if-changed").returncode, 0)
-        self.assertEqual(self.npx_calls(), 1)
-        self.assertTrue((self.root / ".agents/third-party-lock.hash").is_file())
-        second = self.install("", 0, "--if-changed")
-        self.assertEqual(second.returncode, 0, second.stderr)
-        self.assertIn("Third-party skills unchanged: install skipped.", second.stdout)
-        self.assertEqual(self.npx_calls(), 1)
-
-    def test_if_changed_installs_again_when_the_lock_changes_or_a_skill_is_missing(self) -> None:
-        self.enable("tp")
-        lock = self.root / "skills-lock.json"
-        lock.write_text('{"v": 1}\n', encoding="utf-8")
-        self.install("tp", 0, "--if-changed")
-        lock.write_text('{"v": 2}\n', encoding="utf-8")
-        self.install("tp", 0, "--if-changed")
-        self.assertEqual(self.npx_calls(), 2)
-        (self.root / ".agents/skills/tp/SKILL.md").unlink()
-        self.install("tp", 0, "--if-changed")
-        self.assertEqual(self.npx_calls(), 3)
-        self.assertTrue((self.root / ".agents/skills/tp/SKILL.md").is_file())
-
-    def test_without_the_flag_npx_always_runs_and_a_failed_install_records_nothing(self) -> None:
-        self.enable("tp")
-        (self.root / "skills-lock.json").write_text('{"v": 1}\n', encoding="utf-8")
-        self.install("tp")
-        self.install("tp")
-        self.assertEqual(self.npx_calls(), 2)
-        (self.root / ".agents/third-party-lock.hash").unlink()
-        (self.root / "skills-lock.json").write_text('{"v": 3}\n', encoding="utf-8")
-        self.install("tp", 3)
+    def test_missing_only_skips_npx_when_every_skill_is_installed(self) -> None:
+        self.enable("tp", "other")
+        self.install("tp other")
+        calls = self.npx_calls()
+        result = self.install("", 0, "--missing-only")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Third-party skills already installed: nothing to download.", result.stdout)
+        self.assertEqual(self.npx_calls(), calls)
         self.assertFalse((self.root / ".agents/third-party-lock.hash").exists())
 
-    def test_the_hash_file_is_not_a_skill_folder(self) -> None:
+    def test_missing_only_installs_when_a_skill_is_missing(self) -> None:
+        self.enable("tp", "other")
+        self.install("tp other")
+        (self.root / ".agents/skills/other/SKILL.md").unlink()
+        calls = self.npx_calls()
+        result = self.install("other", 0, "--missing-only")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Installing missing third-party skills: other", result.stdout)
+        self.assertEqual(self.npx_calls(), calls + 1)
+        self.assertTrue((self.root / ".agents/skills/other/SKILL.md").is_file())
+
+    def test_missing_only_counts_a_skill_set_aside_as_installed(self) -> None:
+        self.enable("tp", "other")
+        self.install("tp other")
+        (self.root / ".agents/skills-disabled").mkdir(parents=True, exist_ok=True)
+        (self.root / ".agents/skills/other").rename(self.root / ".agents/skills-disabled/other")
+        calls = self.npx_calls()
+        result = self.install("", 0, "--missing-only")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("nothing to download", result.stdout)
+        self.assertEqual(self.npx_calls(), calls)
+
+    def test_without_the_flag_npx_runs_even_when_everything_is_installed(self) -> None:
         self.enable("tp")
-        (self.root / "skills-lock.json").write_text('{"v": 1}\n', encoding="utf-8")
         self.install("tp")
-        self.assertEqual(sorted(entry.name for entry in (self.root / ".agents/skills").iterdir()), ["tp"])
+        self.install("tp")
+        self.assertEqual(self.npx_calls(), 2)
+        self.assertFalse((self.root / ".agents/third-party-lock.hash").exists())
 
     def test_an_unknown_flag_is_a_usage_error(self) -> None:
         self.assertEqual(self.install("", 0, "--nope").returncode, 2)

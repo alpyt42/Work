@@ -12,7 +12,7 @@ step 1 "Checking the configuration"
 uv run tools/machine/work_config.py check
 uv run tools/machine/work_config.py lock
 step 2 "Installing third-party skills"
-./tools/machine/install-third-party.sh --if-changed
+./tools/machine/install-third-party.sh --missing-only
 
 step 3 "Copying the house skills"
 uv run tools/machine/sync-house-skills.py

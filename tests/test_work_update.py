@@ -208,6 +208,18 @@ class WorkUpdateCase(unittest.TestCase):
         self.assertEqual([t["label"] for t in rep["timings"]], ["Moving to v1.1.0", "Only", "Total"])
         self.assertEqual(rep["update_script"]["output_tail"], ["out"])
 
+    @unittest.skipUnless(shutil.which("bash"), "bash is required for the update script")
+    def test_output_tail_drops_terminal_codes_and_banner_art(self) -> None:
+        self.release("v1.0.0")
+        self.clone_work()
+        self.commit(self.seed, "c.txt", "x\n", "feat: c")
+        self.release("v1.1.0")
+        self.stub.write_text("#!/bin/bash\nprintf '\\033[?25l\\033[38;5;102m███╗ ██╗\\033[0m\\n'\nprintf '│\\n\\n'\n"
+                             "printf '\\033[32m│  ● 3 skills already installed\\033[0m\\n'\necho done\n",
+                             encoding="utf-8")
+        rep = json.loads(self.tool("update", "--apply", "--to", "v1.1.0", "--json").stdout)
+        self.assertEqual(rep["update_script"]["output_tail"], ["● 3 skills already installed", "done"])
+
     def test_update_sh_announces_every_phase_in_order_with_a_constant_total(self) -> None:
         text = (TOOL.parent / "update.sh").read_text(encoding="utf-8")
         total = int(re.search(r"^STEPS=(\d+)$", text, re.M)[1])
@@ -215,7 +227,7 @@ class WorkUpdateCase(unittest.TestCase):
         self.assertEqual([int(i) for i, _ in steps], list(range(1, total + 1)))
         self.assertEqual([label for _, label in steps][:2], ["Checking the configuration", "Installing third-party skills"])
         self.assertIn('echo "::progress $1/$STEPS $2"', text)
-        self.assertIn("install-third-party.sh --if-changed", text)
+        self.assertIn("install-third-party.sh --missing-only", text)
 
     def test_progress_goes_with_apply(self) -> None:
         self.tool("update", "--check", "--progress", ok=2)

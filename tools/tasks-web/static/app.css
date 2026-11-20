@@ -266,6 +266,7 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .update-button.is-warn { border-color: var(--st-wait); background: transparent; color: var(--st-wait); }
 .update-button.is-warn:hover { background: var(--st-wait); color: var(--on-accent); }
 .update-dialog { width: min(520px, calc(100vw - 32px)); }
+.update-dialog .form-error { white-space: pre-line; overflow-wrap: anywhere; }
 .markdown-body.update-notes { flex: none; max-height: 220px; margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--bg-sunken); font-size: 13px; line-height: 1.5; }
 .update-progress { margin: 0 0 14px; }
 .update-bar { position: relative; height: 6px; overflow: hidden; border-radius: 3px; background: var(--bg-sunken); }
