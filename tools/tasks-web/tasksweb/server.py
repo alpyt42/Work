@@ -6,7 +6,9 @@ import json
 import os
 import re
 import secrets
+import socket
 import threading
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -551,6 +553,26 @@ class TaskServer(ThreadingHTTPServer):
 
     # On Windows SO_REUSEADDR lets a second server take a port already in use: there the bind must fail instead.
     allow_reuse_address = os.name != "nt"
+    LINGER_SECONDS = 2.0  # the longest a closing connection waits for the client to stop sending
+
+    def shutdown_request(self, request: socket.socket) -> None:
+        """Close a connection only once the client has nothing more to send.
+
+        A refusal (no token, wrong origin, too large) answers without reading the request body. Closing a socket that still
+        holds unread bytes resets the connection, and on Windows that reset discards the answer the client has not read yet
+        (WinError 10053 or 10054 instead of the 403). So the answer is ended with a half-close, what is left of the request is
+        read and dropped until the client closes its side or LINGER_SECONDS pass, and only then is the socket closed.
+        """
+        try:
+            request.shutdown(socket.SHUT_WR)
+            deadline = time.monotonic() + self.LINGER_SECONDS
+            while (left := deadline - time.monotonic()) > 0:
+                request.settimeout(left)
+                if not request.recv(65536):
+                    break
+        except OSError:
+            pass
+        self.close_request(request)
 
     def __init__(self, address: tuple[str, int], store: Store, work: Path | None = None) -> None:
         super().__init__(address, Handler)

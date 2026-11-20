@@ -21,10 +21,11 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from unittest.mock import Mock, patch
 
 REPO = Path(__file__).resolve().parents[1]
@@ -191,15 +192,16 @@ class WindowsInstallTest(FakeHomes):
 
     def test_the_powershell_script_creates_the_shortcut_with_quoted_paths(self):
         link = Path("/fake/Start Menu/Programs/Actions Brain.lnk")
+        # Windows paths whatever the host: a Path would print C:/Work’s on macOS and C:\Work’s on Windows.
         script = install.powershell_script(link, "C:/Users/o'neil/.local/bin/uvw.exe", 'run --gui-script "C:/Work’s/launch.py"',
-                                           Path("C:/Work’s"), Path("C:/Work’s/icon.ico"), 1)
+                                           PureWindowsPath("C:/Work’s"), PureWindowsPath("C:/Work’s/icon.ico"), 1)
         lines = script.splitlines()
         self.assertEqual(lines[:2], ["$ErrorActionPreference = 'Stop'", "$shell = New-Object -ComObject WScript.Shell"])
         self.assertIn(f"$link = $shell.CreateShortcut('{link}')", lines)
         self.assertIn("$link.TargetPath = 'C:/Users/o''neil/.local/bin/uvw.exe'", lines)
         self.assertIn("$link.Arguments = 'run --gui-script \"C:/Work’’s/launch.py\"'", lines)
-        self.assertIn("$link.WorkingDirectory = 'C:/Work’’s'", lines)
-        self.assertIn("$link.IconLocation = 'C:/Work’’s/icon.ico,0'", lines)
+        self.assertIn("$link.WorkingDirectory = 'C:\\Work’’s'", lines)
+        self.assertIn("$link.IconLocation = 'C:\\Work’’s\\icon.ico,0'", lines)
         self.assertIn(f"$link.Description = '{install.DESCRIPTION}'", lines)
         self.assertEqual(lines[-2:], ["$link.WindowStyle = 1", "$link.Save()"])
         command = install.powershell_command(script)
@@ -244,7 +246,9 @@ class WindowsInstallTest(FakeHomes):
         self.assertFalse(self.desktop_link().exists())
 
     def test_a_real_install_needs_windows(self):
-        code, _, err = self.installer("--platform", "windows", "--uv", str(self.uv_exe))
+        # Any host stands for a non-Windows one here: on Windows the real install would run PowerShell.
+        with patch.object(install.launch_tool, "system_name", return_value="linux"):
+            code, _, err = self.installer("--platform", "windows", "--uv", str(self.uv_exe))
         self.assertEqual(code, 1)
         self.assertIn("only be created on Windows", err)
         self.assertFalse(self.appdata.exists())
@@ -283,7 +287,7 @@ class MacInstallTest(FakeHomes):
         return build
 
     def test_the_applescript_runs_launch_py_with_the_absolute_uv(self):
-        source = install.applescript_source('/opt/u"v\\bin/uv', Path("/srv/Work/tools/tasks-web/launch.py"))
+        source = install.applescript_source('/opt/u"v\\bin/uv', PurePosixPath("/srv/Work/tools/tasks-web/launch.py"))  # a macOS path on any host
         self.assertIn(install.MARKER, source.splitlines()[0])
         self.assertIn('do shell script ((quoted form of "/opt/u\\"v\\\\bin/uv") & " run --quiet --script " & '
                       '(quoted form of "/srv/Work/tools/tasks-web/launch.py") & " --no-dialog")', source)
@@ -406,25 +410,24 @@ HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
 class LaunchTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)  # first in, last out: after a started server let go of its log (Windows)
         self.work = Path(self.temp.name)
         self.opener = Mock(return_value=True)
         shell = patch.object(launch, "login_shell_path", return_value=[])  # never the tester's own shell startup files
         shell.start()
         self.addCleanup(shell.stop)
 
-    def tearDown(self):
-        self.temp.cleanup()
-
     def test_the_server_gets_the_tools_of_the_login_shell_even_from_the_dock(self):
         # A Dock or desktop launch has only the system folders: uv and npx, installed by Homebrew or nvm, would look missing.
         home = self.work / "home"
         (home / ".local/bin").mkdir(parents=True)
-        dock = {"PATH": "/usr/bin:/bin", "SHELL": "/bin/zsh"}
+        dock = {"PATH": os.pathsep.join(["/usr/bin", "/bin"]), "SHELL": "/bin/zsh"}  # the PATH of this host, its separator
         login = Mock(return_value=["/opt/acme/node/bin", "/usr/bin"])
-        path = launch.tool_path(dock, "macos", home, uv="/opt/fake/uv", shell_path=login)
+        uv = str(Path("/opt/fake/uv"))
+        path = launch.tool_path(dock, "macos", home, uv=uv, shell_path=login)
         parts = path.split(os.pathsep)
         self.assertEqual(parts[:3], ["/opt/acme/node/bin", "/usr/bin", "/bin"])  # the shell's order first, each folder once
-        self.assertIn("/opt/fake", parts)
+        self.assertIn(str(Path(uv).parent), parts)
         self.assertIn(str(home / ".local/bin"), parts)
         self.assertNotIn(str(home / ".cargo/bin"), parts)  # only the usual places that exist
         login.assert_called_once_with("macos", dock)
@@ -438,12 +441,15 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(start.call_args.kwargs["environment"]["PATH"], "/x:/y")
         self.assertEqual(start.call_args.kwargs["environment"]["PYTHONUTF8"], "1")
 
+    @unittest.skipIf(os.name == "nt", "a login shell's PATH is read on macOS and Linux only, and Windows cannot run a #! script")
     def test_the_login_shell_path_is_read_between_marks_and_never_fails(self):
         script = self.work / "fake-shell"
         script.write_text('#!/bin/sh\necho "welcome banner"\nprintf "\\n__ACTIONS_PATH__=/opt/acme/bin:/usr/bin\\n"\n', encoding="utf-8")
         script.chmod(0o755)
         self.assertEqual(REAL_LOGIN_SHELL_PATH("linux", {"SHELL": str(script)}), ["/opt/acme/bin", "/usr/bin"])
         self.assertEqual(REAL_LOGIN_SHELL_PATH("linux", {"SHELL": str(self.work / "missing-shell")}), [])
+
+    def test_windows_has_no_login_shell_path_to_read(self):
         self.assertEqual(REAL_LOGIN_SHELL_PATH("windows", {}), [])
 
     def serve(self, handler) -> int:
@@ -477,7 +483,7 @@ class LaunchTest(unittest.TestCase):
         result = launch.launch(port, self.work, command=[sys.executable, "-c", STUB_SERVER, str(port)], opener=self.opener,
                                start_attempts=100, delay=0.05)
         pid = int((self.work / "agents/tasks-web.pid").read_text(encoding="utf-8"))
-        self.addCleanup(self.stop, pid)
+        self.addCleanup(self.stop, pid, self.work / "agents/tasks-web.log")
         self.assertEqual(result, "started")
         self.opener.assert_called_once_with(f"http://127.0.0.1:{port}/")
         self.assertTrue(launch.ready(port))
@@ -485,7 +491,19 @@ class LaunchTest(unittest.TestCase):
             self.assertEqual(os.getsid(pid), pid)  # its own session: closing the launcher's terminal does not stop it
         self.assertIn("stub server ready", (self.work / "agents/tasks-web.log").read_text(encoding="utf-8"))
 
-    def stop(self, pid: int) -> None:
+    def stop(self, pid: int, log: Path) -> None:
+        """Stop the server the test started, with its children, so that the temporary folder can be removed."""
+        if os.name == "nt":
+            # No process group to signal: end the whole tree (a virtual environment's python.exe runs the real one as
+            # a child), then wait until the log, open in the server, can be deleted.
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            for _ in range(100):
+                try:
+                    log.unlink(missing_ok=True)
+                    return
+                except PermissionError:
+                    time.sleep(0.05)
+            return
         try:
             os.killpg(pid, signal.SIGTERM)
             os.waitpid(pid, 0)
@@ -527,14 +545,17 @@ class LaunchTest(unittest.TestCase):
 
     def test_uv_is_the_one_running_the_launcher_then_path_then_the_usual_places(self):
         root = self.work / "uv"
-        running, on_path, usual = root / "running/uv", root / "path/uv", root / ".local/bin/uv"
+        # The PATH lookup is this host's (on Windows, only a name with a PATHEXT extension such as uv.exe is found).
+        system, exe = ("windows", "uv.exe") if os.name == "nt" else ("linux", "uv")
+        running, on_path, usual = root / "running" / exe, root / "path" / exe, root / ".local/bin" / exe
         for path in (running, on_path, usual):
             path.parent.mkdir(parents=True)
             path.write_bytes(b"")
             path.chmod(0o755)
-        self.assertEqual(launch.find_uv({"UV": str(running), "PATH": str(on_path.parent)}, "linux", root), str(running))
-        self.assertEqual(launch.find_uv({"PATH": str(on_path.parent)}, "linux", root), str(on_path))
-        self.assertEqual(launch.find_uv({"PATH": ""}, "linux", root), str(usual))
+        self.assertEqual(launch.find_uv({"UV": str(running), "PATH": str(on_path.parent)}, system, root), str(running))
+        # normcase: on Windows, shutil.which spells the extension as PATHEXT does (uv.EXE).
+        self.assertEqual(os.path.normcase(launch.find_uv({"PATH": str(on_path.parent)}, system, root)), os.path.normcase(on_path))
+        self.assertEqual(launch.find_uv({"PATH": ""}, system, root), str(usual))
         windows = launch.uv_candidates("windows", {"USERPROFILE": "C:/Users/jane", "LOCALAPPDATA": "C:/Users/jane/AppData/Local"})
         self.assertEqual(windows[0], Path("C:/Users/jane/.local/bin/uv.exe"))
         self.assertIn(Path("C:/Users/jane/AppData/Local/Microsoft/WinGet/Links/uv.exe"), windows)

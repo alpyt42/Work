@@ -208,7 +208,7 @@ def skills_checks() -> None:
                                     "(typically Git Bash on Windows without symlink support: ln -s copied the folder) "
                                     "— enable Developer Mode (Settings > System > For developers), remove the copy, then rerun tools/machine/update.sh")
                 continue
-            target = os.readlink(entry)
+            target = os.readlink(entry).replace("\\", "/")  # Windows returns backslashes
             if not entry.exists():
                 report("WARN", f"broken link: {agent}/skills/{entry.name} — run tools/machine/update.sh")
             elif MANAGED_LINK.fullmatch(target) and (agent, entry.name, target) not in expected and entry.name not in unadopted:

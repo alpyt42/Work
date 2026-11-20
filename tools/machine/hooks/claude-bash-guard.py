@@ -28,12 +28,17 @@ also exits 0 (with a short note on stderr): the guard never breaks the session.
 The command is split by a small shell lexer (quotes, substitutions, heredocs, operators); nothing is
 executed or expanded, except `~`, `$HOME` and `$CLAUDE_PROJECT_DIR`. A target that cannot be resolved
 statically (`"$VAR"`, a command substitution in the first path component) is not blocked.
+
+On Windows (Git Bash), paths are compared in one form whatever their spelling: `C:\\x`, `c:/x`, `/c/x`
+and `/cygdrive/c/x` are the same folder, file and command names ignore case, and `rm.exe` is `rm`.
 """
 
 from __future__ import annotations
 
 import json
+import ntpath
 import os
+import posixpath
 import re
 import sys
 from fnmatch import fnmatchcase
@@ -79,12 +84,21 @@ COMMIT_VALUE_LONG = {"--message", "--file", "--author", "--date", "--reuse-messa
 RSYNC_VALUE_OPTS = {"-e", "-f", "-T", "--rsh", "--exclude", "--include", "--filter", "--exclude-from", "--include-from", "--files-from", "--rsync-path", "--port", "--log-file", "--backup-dir", "--temp-dir", "--compare-dest", "--copy-dest", "--link-dest", "--bwlimit", "--timeout", "--partial-dir", "--chmod", "--max-size", "--min-size"}
 
 
+WINDOWS = os.name == "nt"  # read at each call, so that a test can run a private copy with the other rules
+DRIVE = re.compile(r"[A-Za-z]:(?=/|$)")
+MSYS_DRIVE = re.compile(r"/(?:cygdrive/)?([A-Za-z])(?=/|$)")
+
+
 def home() -> str:
     return os.environ.get("HOME") or os.path.expanduser("~")
 
 
 def basename(text: str) -> str:
-    return text.rsplit("/", 1)[-1]
+    """The command name of a word: `/bin/rm` is `rm`; on Windows `C:\\Git\\usr\\bin\\RM.exe` is too."""
+    name = text.rsplit("/", 1)[-1]
+    if WINDOWS:
+        name = name.rsplit("\\", 1)[-1].lower().removesuffix(".exe")
+    return name
 
 
 # --- Lexer -------------------------------------------------------------------------------------------
@@ -438,8 +452,89 @@ def expand_braces(text: str, budget: int = 64) -> list[str]:
     return [text]
 
 
+def slashed(path: str) -> str:
+    """The path with `/` separators: the one spelling every other path function expects.
+
+    On Windows a backslash is a separator, and `C:\\x`, `c:/x`, `/c/x`, `/cygdrive/c/x` and `\\\\?\\C:\\x`
+    all become `C:/x` (a bare `C:` is its root, `C:/`). Elsewhere the path is returned unchanged.
+    """
+    if not WINDOWS:
+        return path
+    path = path.replace("\\", "/")
+    if path.startswith("//?/"):  # extended-length prefix
+        path = "//" + path[8:] if path[4:8].upper() == "UNC/" else path[4:]
+    match = MSYS_DRIVE.match(path)
+    if match:
+        return match.group(1).upper() + ":/" + path[match.end() :].lstrip("/")
+    if DRIVE.match(path):
+        return path[0].upper() + ":" + (path[2:] or "/")
+    return path
+
+
+def is_abs(path: str) -> bool:
+    """For a slashed path. On Windows, `/x` (a Git Bash root path) and `C:/x` are absolute, `C:x` is not."""
+    return path.startswith("/") or (WINDOWS and DRIVE.match(path) is not None)
+
+
+def norm(path: str) -> str:
+    """Lexical normal form of a slashed path (`.` and `..` folded), still slashed."""
+    if WINDOWS:
+        return slashed(ntpath.normpath(slashed(path)))
+    return posixpath.normpath(path)
+
+
+def join(base: str, rel: str) -> str:
+    """A relative path under an absolute one, both slashed (on Windows `/` + `c` is the C: drive)."""
+    return slashed(base.rstrip("/") + "/" + rel)
+
+
+def real(path: str) -> str:
+    """The slashed path through symlinks (and on Windows 8.3 short names); `path` when the OS cannot say."""
+    if WINDOWS != (os.name == "nt") or (WINDOWS and not (DRIVE.match(path) or path.startswith("//"))):
+        return path  # the other platform's rules (a test), or a Git Bash root path the OS does not know
+    try:
+        return norm(slashed(os.path.realpath(path)))
+    except (OSError, ValueError):
+        return path
+
+
+def parent(path: str) -> str:
+    return norm(path.rstrip("/") + "/..") if path.rstrip("/") else path
+
+
+def expand_home(path: str) -> str:
+    """`~` and `~/x` through $HOME, as the shell reads them (on Windows os.path.expanduser ignores HOME)."""
+    if path == "~" or path.startswith("~/") or (WINDOWS and path.startswith("~\\")):
+        return home() + path[1:]
+    return os.path.expanduser(path)
+
+
+def split_root(path: str) -> tuple[str, list[str]]:
+    """(root, components) of an absolute slashed path: `/` on POSIX; `C:/`, `//` (UNC) or `/` on Windows."""
+    root = "/"
+    if WINDOWS and DRIVE.match(path):
+        root, path = path[:2] + "/", path[2:]
+    elif WINDOWS and path.startswith("//"):
+        root = "//"
+    return root, [p for p in path.split("/") if p]
+
+
 def parts(path: str) -> list[str]:
+    """Lower-case components of a slashed path; on Windows the first one is the drive (`c:`)."""
     return [p.lower() for p in path.split("/") if p]
+
+
+def remote(text: str) -> bool:
+    """An rsync `host:path`; on Windows `C:/x` and `C:\\x` are local drive paths, not host `C`."""
+    return REMOTE.match(text) is not None and not (WINDOWS and DRIVE.match(slashed(text)))
+
+
+def linked(path: str) -> bool:
+    """A symlink, or on Windows a junction."""
+    try:
+        return os.path.islink(path) or bool(getattr(os.path, "isjunction", lambda _: False)(path))
+    except (OSError, ValueError):
+        return False
 
 
 class Context:
@@ -459,34 +554,40 @@ class Context:
     def work(self) -> str | None:
         if self._work is None:
             found = ""
-            env = os.environ.get("CLAUDE_PROJECT_DIR")
-            if env and os.path.isabs(env):
-                found = os.path.normpath(env)
+            env = slashed(os.environ.get("CLAUDE_PROJECT_DIR") or "")
+            if env and is_abs(env):
+                found = norm(env)
             elif self.cwd:
                 path = self.cwd
-                while True:
+                for _ in range(256):
                     if os.path.isfile(path + "/tools/machine/work_config.py"):
                         found = path
                         break
-                    parent = os.path.dirname(path)
-                    if parent == path:
+                    up = parent(path)
+                    if up == path:
                         break
-                    path = parent
+                    path = up
             self._work = found
         return self._work or None
 
     @staticmethod
-    def configured_artifacts(work: str) -> str | None:
-        """The `artifactsDir` setting as an absolute path; None when absent or unreadable (never raises)."""
+    def configured_artifacts(work: str) -> list[str]:
+        """The `artifactsDir` setting as absolute slashed paths; [] when absent or unreadable (never raises).
+
+        Two paths when `~` reads differently through $HOME (the shell) and the OS (Windows USERPROFILE).
+        """
         try:
             with open(work + "/work-config.local.json", encoding="utf-8") as handle:
                 value = json.load(handle).get("artifactsDir")
             if not isinstance(value, str) or not value.strip() or "\0" in value:
-                return None
-            value = os.path.expanduser(value)
-            return os.path.normpath(value if os.path.isabs(value) else work + "/" + value)
+                return []
+            out = []
+            for expanded in (expand_home(value), os.path.expanduser(value)):
+                path = slashed(expanded)
+                out.append(norm(path if is_abs(path) else join(work, path)))
+            return list(dict.fromkeys(out))
         except Exception:
-            return None
+            return []
 
     def artifacts(self) -> tuple[list[list[str]], list[list[str]]]:
         """Component lists of the protected folders and of their archive/ (lexical and real path).
@@ -495,11 +596,8 @@ class Context:
         """
         if self._artifacts is None:
             work = self.work()
-            lexicals = [os.path.normpath(work + "/artifacts")] if work else []
-            configured = self.configured_artifacts(work) if work else None
-            if configured:
-                lexicals.append(configured)
-            paths = list(dict.fromkeys(p for lexical in lexicals for p in (lexical, os.path.realpath(lexical))))
+            lexicals = [norm(join(work, "artifacts")), *self.configured_artifacts(work)] if work else []
+            paths = list(dict.fromkeys(p for lexical in lexicals for p in (lexical, real(lexical))))
             self._artifacts = ([parts(p) for p in paths], [parts(p) + ["archive"] for p in paths])
         return self._artifacts
 
@@ -509,11 +607,11 @@ class Context:
             self._unlinked = None
             try:
                 work = self.work()
-                configured = self.configured_artifacts(work) if work else None
-                art = os.path.normpath(work + "/artifacts") if work else ""
+                configured = self.configured_artifacts(work) if work else []
+                art = norm(join(work, "artifacts")) if work else ""
                 # A real directory or a missing one: a write would create or fill the wrong folder.
-                if configured and configured.lower() != art.lower() and not os.path.islink(art):
-                    self._unlinked = (art, configured)
+                if configured and parts(configured[0]) != parts(art) and not linked(art):
+                    self._unlinked = (art, configured[0])
             except Exception:
                 self._unlinked = None
         return self._unlinked or None
@@ -524,24 +622,30 @@ class Context:
         if not state:
             return
         art, configured = state
-        path = os.path.normpath(path)
-        if path.lower() == art.lower() or path.lower().startswith(art.lower() + "/"):
-            rel = path[len(art) :].lstrip("/")
-            self.hits.setdefault("unlinked", configured + (("/" + rel) if rel else ""))
+        path = norm(slashed(path))
+        bases = list(dict.fromkeys(tuple(parts(p)) for p in (art, real(art))))
+        for candidate in dict.fromkeys((path, real(path))):
+            names = [p for p in candidate.split("/") if p]
+            for base in bases:
+                if tuple(p.lower() for p in names[: len(base)]) == base:
+                    rel = "/".join(names[len(base) :])
+                    self.hits.setdefault("unlinked", configured.rstrip("/") + "/" + rel if rel else configured)
+                    return
 
     def write_target(self, word: Word | None, cwd: str | None) -> None:
         """A path that the command writes to (never a read)."""
         if word is None or not self.unlinked():
             return
         for text in expand_braces(word.text):
+            text = slashed(text)
             if "\0" in text.split("/", 1)[0]:
                 continue
             text = text.replace("\0", "*")
-            if not text.startswith("/"):
+            if not is_abs(text):
                 if cwd is not None:
-                    text = cwd + "/" + text
+                    text = join(cwd, text)
                 elif text.split("/", 1)[0].lower() == "artifacts" and self.work():  # after an unknown `cd`
-                    text = self.work() + "/" + text
+                    text = join(self.work(), text)
                 else:
                     continue
             self.written(text)
@@ -569,29 +673,36 @@ def resolve(word: Word, cwd: str | None, ctx: Context) -> Resolved:
     """
     out: Resolved = []
     for text in expand_braces(word.text):
+        text = slashed(text)
         if "\0" in text.split("/", 1)[0]:
             continue
         glob = word.glob or "\0" in text
         text = text.replace("\0", "*")
-        if not text.startswith("/"):
+        if not is_abs(text):
             if cwd is not None:
-                text = cwd + "/" + text
+                text = join(cwd, text)
             elif text.split("/", 1)[0].lower() == "artifacts" and ctx.work():  # after an unknown `cd`
-                text = ctx.work() + "/" + text
+                text = join(ctx.work(), text)
             else:
                 continue
-        comps = [p for p in text.split("/") if p and p != "."]
+        root, comps = split_root(text)
+        comps = [p for p in comps if p != "."]
         k = len(comps)
         if glob:
             k = next((j for j, p in enumerate(comps) if any(ch in p for ch in GLOB_CHARS)), k)
-        prefix = "/" + "/".join(comps[:k])
+        prefix = root + "/".join(comps[:k])
         rest = [p.lower() for p in comps[k:]]
         variants = []
-        for path in dict.fromkeys((os.path.normpath(prefix), os.path.realpath(prefix))):
+        for path in dict.fromkeys((norm(prefix), real(prefix))):
             literal = parts(path)
             variants.append((literal + rest, len(literal)))
         out.append(variants)
     return out
+
+
+def matches(art: str, pattern: str, first: bool) -> bool:
+    # On Windows a pattern in a Git Bash root path (`/?`, `/[cd]`) also matches a drive by its mount name.
+    return fnmatchcase(art, pattern) or (first and WINDOWS and art.endswith(":") and fnmatchcase(art[:-1], pattern))
 
 
 def overlaps(resolved: Resolved, artifacts: list[list[str]]) -> bool:
@@ -599,7 +710,7 @@ def overlaps(resolved: Resolved, artifacts: list[list[str]]) -> bool:
     for variants in resolved:
         for comps, literal in variants:
             for art in artifacts:
-                if all((comps[i] == art[i]) if i < literal else fnmatchcase(art[i], comps[i]) for i in range(min(len(comps), len(art)))):
+                if all((comps[i] == art[i]) if i < literal else matches(art[i], comps[i], i == 0) for i in range(min(len(comps), len(art)))):
                     return True
     return False
 
@@ -623,16 +734,16 @@ def in_archive(word: Word | None, cwd: str | None, ctx: Context) -> bool:
 def change_dir(args: list[Word], cwd: str | None) -> str | None:
     pos = [a for a in args if a.text == "-" or not a.text.startswith("-")]
     if not pos:
-        return home()
+        return norm(slashed(home()))
     word = pos[0]
     if word.glob or "\0" in word.text or word.text == "-":
         return None
-    path = word.text
-    if not path.startswith("/"):
+    path = slashed(word.text)
+    if not is_abs(path):
         if cwd is None:
             return None
-        path = cwd + "/" + path
-    return os.path.normpath(path)
+        path = join(cwd, path)
+    return norm(path)
 
 
 # --- Rules -------------------------------------------------------------------------------------------
@@ -761,7 +872,7 @@ def writes(name: str, args: list[Word], cwd: str | None, ctx: Context) -> None:
         targets = [mv_split(args)[1]] if name != "ditto" else list(positional(args)[1:][-1:])
     elif name == "rsync":
         pos = rsync_positional(args)
-        targets = list(pos[-1:]) if len(pos) >= 2 and not REMOTE.match(pos[-1].text) else []
+        targets = list(pos[-1:]) if len(pos) >= 2 and not remote(pos[-1].text) else []
     elif name == "tee":
         targets = list(positional(args))
     elif name == "mkdir":
@@ -881,8 +992,8 @@ def rsync(args: list[Word], cwd: str | None, ctx: Context) -> None:
         i += 1
     if len(pos) < 2:
         return
-    dest, sources = pos[-1], [w for w in pos[:-1] if not REMOTE.match(w.text)]
-    if any(f.startswith("--delete") or f == "--del" for f in flags) and not REMOTE.match(dest.text):
+    dest, sources = pos[-1], [w for w in pos[:-1] if not remote(w.text)]
+    if any(f.startswith("--delete") or f == "--del" for f in flags) and not remote(dest.text):
         found = touching([dest], cwd, ctx)
         if found:
             ctx.hit("artifacts", f"rsync --delete {found}")
@@ -1004,8 +1115,7 @@ def main() -> int:
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
     if not isinstance(command, str) or not command.strip():
         return 0
-    cwd = data.get("cwd")
-    cwd = os.path.normpath(cwd) if isinstance(cwd, str) and os.path.isabs(cwd) else os.getcwd()
+    cwd = start_dir(data.get("cwd"))
     ctx = Context(cwd)
     try:
         ctx.analyze(command, cwd)
@@ -1016,6 +1126,12 @@ def main() -> int:
     reasons = " ".join(refusal(rule, ctx) for rule in MESSAGES if rule in ctx.hits)
     sys.stderr.write(f"claude-bash-guard blocked this command. {reasons}\n")
     return 2
+
+
+def start_dir(value: object) -> str:
+    """The hook's `cwd`, normalised and slashed; the process directory when it is missing or relative."""
+    path = slashed(value) if isinstance(value, str) else ""
+    return norm(path if is_abs(path) else slashed(os.getcwd()))
 
 
 def refusal(rule: str, ctx: Context) -> str:
@@ -1039,12 +1155,11 @@ def check_file_tool(data: dict, tool_input: object) -> int:
     path = tool_input.get(FILE_TOOLS[data["tool_name"]]) if isinstance(tool_input, dict) else None
     if not isinstance(path, str) or not path.strip() or "\0" in path:
         return 0
-    cwd = data.get("cwd")
-    cwd = os.path.normpath(cwd) if isinstance(cwd, str) and os.path.isabs(cwd) else os.getcwd()
+    cwd = start_dir(data.get("cwd"))
     ctx = Context(cwd)
     try:
-        path = os.path.expanduser(path)
-        ctx.written(path if os.path.isabs(path) else cwd + "/" + path)
+        path = slashed(expand_home(path))
+        ctx.written(path if is_abs(path) else join(cwd, path))
     except Exception as exc:
         sys.stderr.write(f"claude-bash-guard: error while checking ({type(exc).__name__}: {exc})\n")
     if "unlinked" not in ctx.hits:

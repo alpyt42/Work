@@ -202,8 +202,9 @@ def ssh_command(identity_arg: str) -> str:
         raise ValueError("SSH keys must stay outside Work")
     if os.name != "nt" and stat.S_IMODE(identity.stat().st_mode) & 0o077:  # Windows has no such mode bits (ACLs instead)
         raise ValueError("SSH key permissions must be owner-only")
+    no_config = "none" if os.name == "nt" else os.devnull  # "-F none" reads no file; ssh cannot open "nul"
     return shlex.join([
-        "ssh", "-F", os.devnull, "-i", str(identity),
+        "ssh", "-F", no_config, "-i", identity.as_posix(),
         "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=yes", "-o", "BatchMode=yes",
     ])
 

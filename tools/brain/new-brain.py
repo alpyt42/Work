@@ -62,7 +62,7 @@ def write_boundary(target: Path, fields: dict[str, str]) -> None:
         declaration.update(json.loads(path.read_text(encoding="utf-8")))
     declaration.update(fields)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(declaration, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(declaration, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
 
 
 def install_hooks(target: Path) -> None:
@@ -87,7 +87,7 @@ def create(name: str, git: bool = True, boundary: dict[str, str] | None = None) 
         if path.is_file() and path.suffix in TEXT:
             text = path.read_text(encoding="utf-8")
             if PLACEHOLDER in text:
-                path.write_text(text.replace(PLACEHOLDER, name), encoding="utf-8")
+                path.write_text(text.replace(PLACEHOLDER, name), encoding="utf-8", newline="\n")
     fields = {key: value for key, value in (boundary or {}).items() if value}
     if fields:
         write_boundary(target, fields)

@@ -118,8 +118,13 @@ def redact(url: str) -> str:
     return re.sub(r"^((?:ssh|ssh\+git|git\+ssh)://[^/@:]+):[^/@]*@", r"\1@", url)
 
 
-def ssh_target(url: str) -> tuple[str, str, str | None] | None:
-    """(user, host, port) of an SSH remote URL (ssh://… or scp-like user@host:path); None for any other URL."""
+def ssh_target(url: str, windows: bool = os.name == "nt") -> tuple[str, str, str | None] | None:
+    """(user, host, port) of an SSH remote URL (ssh://… or scp-like user@host:path); None for any other URL.
+
+    On Windows, Git reads a drive letter and a colon (C:\\…, C:/…) as a local path, not as the host C.
+    """
+    if windows and re.match(r"^[A-Za-z]:", url):
+        return None
     if "://" in url:
         try:
             parts = urlsplit(url)
@@ -261,6 +266,13 @@ def push_urls(repo: Path, remote: str) -> tuple[list[str], bool]:
     return [], False
 
 
+def url_matches(url: str, pattern: str, windows: bool = os.name == "nt") -> bool:
+    """Whether a push URL matches a "remote" pattern; on Windows a local path may be written with \\ or /."""
+    if windows:
+        url, pattern = url.replace("\\", "/"), pattern.replace("\\", "/")
+    return fnmatch.fnmatchcase(url, pattern)
+
+
 def check_boundary(repo: Path, urls: list[str], email: str | None, report: Report) -> None:
     path = repo / ".data/brain.json"
     if not path.is_file():
@@ -280,7 +292,7 @@ def check_boundary(repo: Path, urls: list[str], email: str | None, report: Repor
         report.emit("ERROR", "no push URL to compare with the \"remote\" pattern of brain.json")
     else:
         for url in urls:
-            if fnmatch.fnmatchcase(url, patterns["remote"]):
+            if url_matches(url, patterns["remote"]):
                 report.emit("OK", f'push URL {redact(url)} matches the "remote" pattern of brain.json')
             else:
                 report.emit("ERROR", f'push URL {redact(url)} does not match the "remote" pattern of brain.json (trust boundary)')

@@ -54,7 +54,7 @@ class SetupTestCase(unittest.TestCase):
     def write_json(self, relative: str, value: object, indent: int | None = 2) -> Path:
         path = self.work / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(value, indent=indent) + "\n", encoding="utf-8")
+        path.write_text(json.dumps(value, indent=indent) + "\n", encoding="utf-8", newline="\n")
         return path
 
     def read_json(self, relative: str) -> object:

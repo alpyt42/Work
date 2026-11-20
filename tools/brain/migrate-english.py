@@ -628,7 +628,7 @@ def convert_anchors(change: Change, source: Path, brain: Path, kit: Path) -> Non
             heading = re.search(r"^## Ranger l'information", (brain / "AGENTS.md").read_text(encoding="utf-8"), re.MULTILINE) if (brain / "AGENTS.md").is_file() else None
             if heading is None:  # the seed once pointed to the brain's AGENTS.md, which never had that section
                 count(change, "kit anchor")
-                return f"]({os.path.relpath(kit / 'AGENTS.md', source.parent)}#where-information-goes)"
+                return f"]({Path(os.path.relpath(kit / 'AGENTS.md', source.parent)).as_posix()}#where-information-goes)"
         try:
             relative = resolved.relative_to(kit)
         except ValueError:

@@ -58,7 +58,7 @@ class ClientReposTest(unittest.TestCase):
 
     def run_tool(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [sys.executable, str(TOOL), *args], env=self.env, capture_output=True, text=True, check=False
+            [sys.executable, str(TOOL), *args], env=self.env, capture_output=True, text=True, encoding="utf-8", check=False
         )
 
     def git(self, *args: str) -> str:
@@ -81,7 +81,7 @@ class ClientReposTest(unittest.TestCase):
                  "commit", "-q", "--allow-empty", "-m", "init")
         self.git("clone", "-q", "--bare", str(source), str(bare))
         with self.gitconfig.open("a", encoding="utf-8") as handle:
-            handle.write(f'[url "file://{bare}"]\n  insteadOf = {url}\n')
+            handle.write(f'[url "{bare.as_uri()}"]\n  insteadOf = {url}\n')
 
     def test_catalog_is_read_from_the_default_brain_unless_brain_dir_is_set(self) -> None:
         catalog = json.dumps({"schema_version": 1, "repositories": [{"path": "repos/acme/app", "url": URL_A}]})
@@ -343,8 +343,9 @@ class ClientReposTest(unittest.TestCase):
         self.assertIn("absolute key path", relative.stderr)
         in_work = self.run_tool("clone", "acme", "--identity", str(inside), *author)
         self.assertIn("outside Work", in_work.stderr)
-        too_open = self.run_tool("clone", "acme", "--identity", str(outside), *author)
-        self.assertIn("owner-only", too_open.stderr)
+        if os.name != "nt":  # Windows has no owner-only mode bits (ACLs instead): the tool does not check them there
+            too_open = self.run_tool("clone", "acme", "--identity", str(outside), *author)
+            self.assertIn("owner-only", too_open.stderr)
         outside.chmod(0o600)
         incomplete = self.run_tool("clone", "acme", "--identity", str(outside))
         self.assertIn("override needs", incomplete.stderr)

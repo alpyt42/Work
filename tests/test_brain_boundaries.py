@@ -676,7 +676,7 @@ new AsyncFunction("app", "tp", "Notice", code)(app, tp, Notice)
             script = Path(folder) / "harness.js"
             script.write_text(harness, encoding="utf-8")
             result = subprocess.run(
-                ["node", str(script)], capture_output=True, text=True,
+                ["node", str(script)], capture_output=True, text=True, encoding="utf-8",
                 env={**os.environ, "TEMPLATE": str(TEMPLATE), "SCENARIO": json.dumps({"files": files, "choose": choose})},
             )
         self.assertEqual(result.returncode, 0, result.stderr)

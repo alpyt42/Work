@@ -2041,7 +2041,7 @@ def maintain(args: argparse.Namespace) -> int:
 def run(args: argparse.Namespace) -> object:
     brain = (args.brain[0] if args.brain else BRAIN).expanduser().resolve()
     if not (brain / "projects").is_dir():
-        raise ActionError("not_found", f"Registers not found under {brain / 'projects'}")
+        raise ActionError("not_found", f"Registers not found under {(brain / 'projects').as_posix()}")
     if args.command == "list":
         return listing(brain, args.project, args.state, args.owner, args.due_before, args.limit, args.archived)
     if args.command == "show":

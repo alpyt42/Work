@@ -342,7 +342,7 @@ class ArchivedProjectDecisionsTest(unittest.TestCase):
         shown = self.run_tool("show", "Zulu", "--project", "acme/old")
         self.assertEqual((shown["title"], shown["register"], shown["project_archived"]), ("Zulu", self.OLD, True))
         text = self.run_tool("show", "Zulu", "--project", "acme/old", "--text")
-        self.assertEqual(text.splitlines()[-1], f"{self.archived.resolve()}:7 (archived project)")
+        self.assertEqual(text.splitlines()[-1], f"{self.archived.resolve().as_posix()}:7 (archived project)")
         self.assertNotIn("project_archived", self.run_tool("show", "Alpha", "--project", "acme/gamma"))
         self.assertNotIn("archived project", self.run_tool("show", "Alpha", "--project", "acme/gamma", "--text"))
 

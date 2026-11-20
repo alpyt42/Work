@@ -573,7 +573,7 @@ def set_transcripts(ws: Workspace, value: str) -> list[str]:
         raise SetupError("transcripts_dir: a folder path is expected")
     path = Path(text).expanduser()
     home = Path.home()
-    if path.is_absolute():
+    if path.is_absolute() or path.root or path.drive:  # on Windows /x has no drive and C:x no root: neither is relative
         for base in (home, home.resolve()):
             with contextlib.suppress(ValueError):
                 path = path.relative_to(base)

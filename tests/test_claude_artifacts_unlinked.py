@@ -4,7 +4,7 @@ import json
 import unittest
 from pathlib import Path
 
-from test_claude_bash_guard import GuardTestCase
+from test_claude_bash_guard import GuardTestCase, shell
 
 MESSAGE = "is not linked yet to the artifacts folder"
 
@@ -77,13 +77,13 @@ class UnlinkedArtifactsTest(GuardTestCase):
         (work / "work-config.local.json").write_text(json.dumps({"artifactsDir": str(synced)}), encoding="utf-8")
         for command in WRITES:
             with self.subTest(command=command):
-                result = self.assert_blocked(command.replace("@WORK@", str(work)), MESSAGE, cwd=work)
-                self.assertIn(str(synced), result.stderr)
+                result = self.assert_blocked(command.replace("@WORK@", shell(work)), MESSAGE, cwd=work)
+                self.assertIn(shell(synced), result.stderr)
 
     def test_the_corrected_path_keeps_the_relative_part(self) -> None:
         work = self.work_root("corrected-work", "../corrected-sync")
         result = self.assert_blocked("cp a.txt artifacts/acme-report/a.txt", MESSAGE, cwd=work)
-        self.assertIn(f"write to {self.home}/corrected-sync/acme-report/a.txt instead", result.stderr)
+        self.assertIn(f"write to {shell(self.home)}/corrected-sync/acme-report/a.txt instead", result.stderr)
 
     def test_file_tools_are_refused(self) -> None:
         work = self.work_root("tools-work", "~/tools-sync")
@@ -94,7 +94,7 @@ class UnlinkedArtifactsTest(GuardTestCase):
                     result = self.tool(tool, path, work, key)
                     self.assertEqual(result.returncode, 2, result.stderr)
                     self.assertIn(MESSAGE, result.stderr)
-                    self.assertIn(f"{self.home}/tools-sync", result.stderr)
+                    self.assertIn(f"{shell(self.home)}/tools-sync", result.stderr)
             for path in (f"{work}/repos/demo/a.md", "repos/a.md", f"{self.home}/tools-sync/a.md", f"{work}/artifacts-notes.md"):
                 with self.subTest(tool=tool, allowed=path):
                     self.assertEqual(self.tool(tool, path, work, key).returncode, 0)
@@ -108,7 +108,7 @@ class UnlinkedArtifactsTest(GuardTestCase):
 
     def test_writes_to_the_configured_folder_are_allowed(self) -> None:
         work = self.work_root("configured-work", "../configured-synced")
-        for command in (f"cp a.txt {self.home}/configured-synced/a.txt", f"echo hi > {self.home}/configured-synced/a.txt", "mkdir -p ../configured-synced/new"):
+        for command in (f"cp a.txt {shell(self.home)}/configured-synced/a.txt", f"echo hi > {shell(self.home)}/configured-synced/a.txt", "mkdir -p ../configured-synced/new"):
             with self.subTest(command=command):
                 self.assert_allowed(command, cwd=work)
         self.assertEqual(self.tool("Write", f"{self.home}/configured-synced/a.md", work).returncode, 0)

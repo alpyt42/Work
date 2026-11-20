@@ -23,8 +23,8 @@ class NewBrainTest(unittest.TestCase):
         self.work = Path(self._tmp.name).resolve() / "Work"
         self.work.mkdir()
         # A brain reads the shared conventions and tools from its Work root.
-        (self.work / "kit").symlink_to(REPO / "kit")
-        (self.work / "tools").symlink_to(REPO / "tools")
+        (self.work / "kit").symlink_to(REPO / "kit", target_is_directory=True)
+        (self.work / "tools").symlink_to(REPO / "tools", target_is_directory=True)
         self.env = {**os.environ, "WORK_DIR": str(self.work)}
 
     def tearDown(self) -> None:
@@ -73,7 +73,8 @@ class NewBrainTest(unittest.TestCase):
         for source, installed in (("brain-pre-commit", "pre-commit"), ("commit-msg", "commit-msg"), ("pre-push", "pre-push")):
             self.assertEqual((hooks / installed).read_bytes(), (REPO / "tools/machine/hooks" / source).read_bytes(), installed)
             self.assertTrue(os.access(hooks / installed, os.X_OK), installed)
-            self.assertEqual((hooks / installed).stat().st_mode & 0o777, 0o755, installed)
+            if os.name != "nt":  # Windows keeps no POSIX mode bits (the executable bit comes from the index)
+                self.assertEqual((hooks / installed).stat().st_mode & 0o777, 0o755, installed)
 
     def test_no_git_installs_no_hook(self) -> None:
         result = self.run_tool("brain-acme", "--no-git")
@@ -127,7 +128,8 @@ class NewBrainTest(unittest.TestCase):
         script.write_text(snippet + "print(work, brain, tools, sep='\\n')\n", encoding="utf-8")
         (self.work / "brain-perso/skills/demo/SKILL.md").write_text("# demo\n", encoding="utf-8")
         (self.work / ".claude/skills").mkdir(parents=True)
-        (self.work / ".claude/skills/demo").symlink_to("../../brain-perso/skills/demo")
+        # A Path target: a relative Windows link resolves only with \ separators (a str target is stored as written).
+        (self.work / ".claude/skills/demo").symlink_to(Path("../../brain-perso/skills/demo"), target_is_directory=True)
 
         def probe(path: Path, **extra: str) -> list[str]:
             env = {key: value for key, value in os.environ.items() if key not in ("WORK_DIR", "BRAIN_DIR")}
