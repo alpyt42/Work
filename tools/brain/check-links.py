@@ -117,7 +117,7 @@ def list_md_files() -> list[str]:
         dirs[:] = [d for d in dirs if not d.startswith(".")]
         for n in names:
             if n.endswith(".md"):
-                files.append(os.path.relpath(os.path.join(root, n), BRAIN))
+                files.append(os.path.relpath(os.path.join(root, n), BRAIN).replace(os.sep, "/"))  # / as git ls-files, on Windows too
     return sorted(f for f in files if not is_skill_asset(f))
 
 
