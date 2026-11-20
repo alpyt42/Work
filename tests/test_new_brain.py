@@ -128,7 +128,8 @@ class NewBrainTest(unittest.TestCase):
         script.write_text(snippet + "print(work, brain, tools, sep='\\n')\n", encoding="utf-8")
         (self.work / "brain-perso/skills/demo/SKILL.md").write_text("# demo\n", encoding="utf-8")
         (self.work / ".claude/skills").mkdir(parents=True)
-        (self.work / ".claude/skills/demo").symlink_to("../../brain-perso/skills/demo", target_is_directory=True)
+        # A Path target: a relative Windows link resolves only with \ separators (a str target is stored as written).
+        (self.work / ".claude/skills/demo").symlink_to(Path("../../brain-perso/skills/demo"), target_is_directory=True)
 
         def probe(path: Path, **extra: str) -> list[str]:
             env = {key: value for key, value in os.environ.items() if key not in ("WORK_DIR", "BRAIN_DIR")}

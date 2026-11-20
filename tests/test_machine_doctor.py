@@ -194,9 +194,10 @@ class MachineDoctorTest(unittest.TestCase):
         (self.work / "brain/skills/off").mkdir()
         (self.work / "brain/skills/off/SKILL.md").write_text("# off\n", encoding="utf-8")
         self.write_local({"version": 1, "skills": {"disabled": ["off"]}})
-        (skills / "live").symlink_to("../../brain/skills/live", target_is_directory=True)
-        (skills / "off").symlink_to("../../brain/skills/off", target_is_directory=True)  # exists but no longer enabled
-        (skills / "gone").symlink_to("../../brain/skills/gone", target_is_directory=True)  # target removed
+        # Path targets: a relative Windows link resolves only with \ separators (a str target is stored as written).
+        (skills / "live").symlink_to(Path("../../brain/skills/live"), target_is_directory=True)
+        (skills / "off").symlink_to(Path("../../brain/skills/off"), target_is_directory=True)  # exists but no longer enabled
+        (skills / "gone").symlink_to(Path("../../brain/skills/gone"), target_is_directory=True)  # target removed
         (skills / "foreign").symlink_to(self.home, target_is_directory=True)  # not a managed link
         out = self.run_doctor().stdout
         self.assertIn("broken link: .claude/skills/gone", out)
@@ -213,8 +214,8 @@ class MachineDoctorTest(unittest.TestCase):
         claude, agents = self.work / ".claude/skills", self.work / ".agents/skills"
         claude.mkdir(parents=True)
         agents.mkdir(parents=True)
-        (claude / "linked").symlink_to("../../brain/skills/linked", target_is_directory=True)
-        (agents / "linked").symlink_to("../../brain/skills/linked", target_is_directory=True)
+        (claude / "linked").symlink_to(Path("../../brain/skills/linked"), target_is_directory=True)  # \ on Windows
+        (agents / "linked").symlink_to(Path("../../brain/skills/linked"), target_is_directory=True)
         (claude / "copied").mkdir()  # copy-mode skill: a generated copy is expected
         (claude / "copied/.generated-from-brain-skill").write_text("generated\n", encoding="utf-8")
         (claude / "flat").mkdir()  # what `ln -s` leaves on Git Bash without symlink support
