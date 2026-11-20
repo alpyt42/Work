@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
@@ -4343,6 +4343,80 @@ class MarkdownToolbarTest(unittest.TestCase):
         value, tools = json.loads(done.stdout)
         self.assertEqual(value, "a⇒ b")
         self.assertEqual(len(tools), 11)
+
+
+class PixelLookTest(unittest.TestCase):
+    """The soft palette, each brain's pixel sticker and the sidebar's pixel icons."""
+    STATIC = TOOL.parent / "static"
+    RUN = re.compile(r"M(\d+) (\d+)h(\d+)v1h-(\d+)z")
+    PATH = re.compile(r'<path fill="(#[0-9A-F]{6})" d="([^"]+)"/>')
+    INK = "#2B3142"
+
+    def setUp(self):
+        self.styles = (self.STATIC / "app.css").read_text(encoding="utf-8")
+        self.page = (self.STATIC / "index.html").read_text(encoding="utf-8")
+
+    def assert_pixel_sticker(self, markup, size, label, path=PATH, ink=INK):
+        # A sticker on its grid: one path per colour, each made of whole-pixel runs inside the grid, outlined in ink.
+        paths = path.findall(markup)
+        self.assertGreaterEqual(len(paths), 3, label)  # the ink and a light and a deep tone at least
+        self.assertIn(ink, [colour for colour, _data in paths], label)
+        self.assertEqual(len({colour for colour, _data in paths}), len(paths), label)
+        for _colour, data in paths:
+            runs = self.RUN.findall(data)
+            self.assertEqual("".join(f"M{x} {y}h{w}v1h-{back}z" for x, y, w, back in runs), data, label)
+            for x, y, w, back in runs:
+                self.assertEqual(w, back, label)
+                self.assertLessEqual(int(x) + int(w), size, label)
+                self.assertLess(int(y), size, label)
+
+    def test_every_brain_accent_has_its_own_pixel_sticker(self):
+        script = app_script()
+        accents = ["steel", "plum", *re.search(r"const EXTRA_ACCENTS = \[([^\]]*)\];", script).group(1).replace("'", "").replace(" ", "").split(",")]
+        stickers = {}
+        for accent in accents:
+            rule = re.search(r'\[data-accent="' + accent + r'"\] \{ --logo: url\("data:image/svg\+xml,([^"]+)"\); \}', self.styles)
+            self.assertIsNotNone(rule, accent)
+            stickers[accent] = unquote(rule.group(1))
+            self.assertIn('viewBox="0 0 14 14" shape-rendering="crispEdges"', stickers[accent])
+            self.assert_pixel_sticker(stickers[accent], 14, accent)
+        self.assertEqual(len(set(stickers.values())), len(accents))  # one sticker per brain colour
+        # Every place that shows a brain carries its sticker, with the white edge; the bar is gone.
+        self.assertIn(".brain-logo, .brain-swatch, .brain-swipe-mark, .git-head::before, .brain-mini::before {", self.styles)
+        self.assertIn("background: var(--logo) center / 100% 100% no-repeat; filter: var(--sticker-edge);", self.styles)
+        self.assertIn('<span class="brain-logo" aria-hidden="true"></span>', self.page)
+        for gone in ("brain-marker", "--accent-bright", "--accent-pale", "--accent-deep", "mask: var(--logo)"):
+            self.assertNotIn(gone, self.styles + self.page)
+
+    def test_the_sidebar_is_light_and_its_icons_are_pixel_stickers(self):
+        light, dark = self.styles.split("@media (prefers-color-scheme: dark)", 1)
+        for token in ("--bg-sidebar:", "--sticker-edge:"):
+            self.assertIn(token, light.split("/* Brain accents")[0])
+            self.assertIn(token, dark.split("/* Brain accents")[0])
+        self.assertIn("background: var(--bg-sidebar);", self.styles)
+        self.assertNotIn("color-scheme: dark;", self.styles)  # the sidebar follows the system like the rest of the page
+        sidebar = self.page[self.page.index('<aside id="sidebar"'):self.page.index("</aside>")]
+        icons = re.findall(r'<svg class="(nav-icon px-icon|px-icon)" viewBox="0 0 12 12" aria-hidden="true">((?:<path [^>]+/>)+)</svg>', sidebar)
+        self.assertEqual(len(icons), 12)  # six views, the update button, four in the footer and the ⋯ button
+        self.assertEqual(sum(kind == "nav-icon px-icon" for kind, _markup in icons), sidebar.count('class="nav-icon'))
+        # Every colour is a tone class: the ink, white paper, neutral greys, and the brain's hue in four tones, which every icon but ⋯ carries.
+        tones = {"i", "w", "pa", "s1", "s2", "s3", "s4", "k1", "k2", "k3", "k4", "c1", "c2", "c3", "c4"}
+        for kind, markup in icons:
+            self.assert_pixel_sticker(markup, 12, markup[:40], path=re.compile(r'<path class="([a-z0-9]+)" d="([^"]+)"/>'), ink="i")
+            used = set(re.findall(r'class="([a-z0-9]+)"', markup))
+            self.assertLessEqual(used, tones)
+            if kind == "nav-icon px-icon":
+                self.assertTrue(used & {"c2", "c3", "c4"}, markup[:40])
+        for tone in tones:
+            self.assertIn(f".px-icon .{tone} {{ fill: ", self.styles)
+        self.assertIn(".px-icon .c4 { fill: var(--hue); }", self.styles)
+        # The hue is the brain's accent of light mode, set once per accent and kept in dark mode.
+        for accent in ("steel", "plum", "teal", "olive", "rust", "slate"):
+            self.assertRegex(self.styles, r'\[data-accent="' + accent + r'"\]\s+\{ --accent: (#[0-9A-F]{6}); [^}]*--hue: \1; \}')
+        self.assertNotIn("--hue", dark.split("/* Each brain's logo")[0].split("@media (prefers-color-scheme: dark)")[-1])
+        self.assertIn("svg.px-icon { fill: none; stroke: none; shape-rendering: crispEdges; filter: var(--sticker-edge); }", self.styles)
+        self.assertIn(".nav-item .nav-icon { width: 24px; height: 24px; }", self.styles)
+        self.assertIn(".update-button .nav-icon { width: 12px; height: 12px; }", self.styles)
 
 
 class BrainSwipeTest(unittest.TestCase):

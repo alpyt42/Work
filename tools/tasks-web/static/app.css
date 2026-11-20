@@ -1,5 +1,5 @@
 /* Actions Brain: local task app. One token system, light and dark (prefers-color-scheme), one accent per brain.
-   The look: a night-blue sidebar, white cards on a light grey page, outlined controls. */
+   The look: soft cool greys, a light sidebar, white cards on a light grey page, outlined controls, one dusty accent per brain. */
 
 /* ---------- Font ---------- */
 /* IBM Plex Sans (SIL Open Font License 1.1, static/licenses/), served by the app itself: nothing comes from the network. */
@@ -18,67 +18,72 @@
   --sidebar-w: 264px; --panel-w: 420px; --row-h: 46px;
   --page-x: 32px; /* the side margin of the views */
 
-  --bg-page: #F5F6F8; --bg-surface: #FFFFFF; --bg-sunken: #EEF0F3; --bg-hover: #F5F7FA;
-  --line: #E3E6EA; --line-soft: #EEF0F2; --line-strong: #C3C9D2;
-  --text: #1C2434; --text-muted: #5C6676; --text-faint: #8A93A3;
-  /* Readable "faint" text (IDs, times, counts): the spec faint is 3.1:1, kept for icons and marks only. */
-  --text-quiet: #687282;
+  --bg-page: #F7F8FA; --bg-surface: #FFFFFF; --bg-sunken: #EEF0F3; --bg-hover: #F3F5F8;
+  --bg-sidebar: #EFF1F4; /* the sidebar, a step below the page */
+  --line: #E4E7EB; --line-soft: #EEF0F3; --line-strong: #CDD2D9;
+  --text: #1F2530; --text-muted: #5B6472; --text-faint: #8E96A3;
+  /* Readable "faint" text (IDs, times, counts): the spec faint is 3:1, kept for icons and marks only. */
+  --text-quiet: #646D7B;
+  --sticker-edge: drop-shadow(1px 0 0 #FFFFFF) drop-shadow(-1px 0 0 #FFFFFF) drop-shadow(0 1px 0 #FFFFFF) drop-shadow(0 -1px 0 #FFFFFF); /* the white edge of the pixel stickers */
 
-  --st-todo: #8A93A3; --st-doing: #1F8A84; --st-wait: #B7791F; --st-done: #3C8D5A; --st-cancel: #9AA2AF;
-  --danger: #C2413B; --danger-soft: #FBEDEC; --prio-high: #C4532D;
+  --st-todo: #8E96A3; --st-doing: #4C7FA8; --st-wait: #B0843A; --st-done: #5A8F6E; --st-cancel: #A0A7B2;
+  --danger: #B5483F; --danger-soft: #F9EDEB; --prio-high: #B8603E;
   --on-accent: #FFFFFF;
-  --toast-bg: #1B2330; --toast-text: #FFFFFF;
-  --shadow-pop: 0 12px 32px rgba(17, 24, 39, .14), 0 2px 6px rgba(17, 24, 39, .08);
-  --shadow-card: 0 1px 2px rgba(16, 24, 40, .04), 0 2px 6px rgba(16, 24, 40, .06);
-  --scrim: rgba(17, 24, 39, .32);
-  --mark-bg: #FFE58A; --mark-text: #3A2A00;
-  --tag-bg: #ECE9FC; --tag-text: #4B3CA7; /* the small labels (a document's type, a badge) */
-  --diff-add-bg: #E8F5EC; --diff-add-text: #24603C; --diff-del-bg: #FCEDEC; --diff-del-text: #9A2F2A; --diff-hunk-bg: #EEF2F7;
-  --git-ok: #3C8D5A; --git-ok-tint: #E8F5EC; --git-ok-text: #24603C; --git-warn: #B7791F; --git-warn-tint: #FBF1DE; --git-warn-text: #8A5A12; --git-info: #1F8A84; --git-info-tint: #E3F3F1;
+  --toast-bg: #262C36; --toast-text: #FFFFFF;
+  --shadow-pop: 0 12px 32px rgba(31, 37, 48, .12), 0 2px 6px rgba(31, 37, 48, .07);
+  --shadow-card: 0 1px 2px rgba(31, 37, 48, .04), 0 2px 6px rgba(31, 37, 48, .05);
+  --scrim: rgba(31, 37, 48, .28);
+  --mark-bg: #FCEFB8; --mark-text: #3D2F00;
+  --tag-bg: #ECEEF4; --tag-text: #4A5468; /* the small labels (a document's type, a badge) */
+  --diff-add-bg: #EAF4EE; --diff-add-text: #2E6343; --diff-del-bg: #F9ECEB; --diff-del-text: #943A33; --diff-hunk-bg: #EFF2F6;
+  --git-ok: #5A8F6E; --git-ok-tint: #EAF4EE; --git-ok-text: #2E6343; --git-warn: #B0843A; --git-warn-tint: #F8F0E1; --git-warn-text: #7F5B1E; --git-info: #4C7FA8; --git-info-tint: #E8F0F6;
 
-  --grp-0: #2F78BD; --grp-1: #238A6A; --grp-2: #B97A0C; --grp-3: #C4503A; --grp-4: #7C55C0; --grp-5: #BE4A8A; --grp-6: #17899A; --grp-7: #7B8A1E;
+  --grp-0: #5578A8; --grp-1: #4E8A73; --grp-2: #B08A3E; --grp-3: #B0674F; --grp-4: #7D68A8; --grp-5: #A8607F; --grp-6: #4A8794; --grp-7: #7D8A4A;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg-page: #141920; --bg-surface: #1A2029; --bg-sunken: #11161C; --bg-hover: #1F2631;
-    --line: #2A323D; --line-soft: #232A34; --line-strong: #3A4452;
-    --text: #E6EAF0; --text-muted: #A3ACBA; --text-faint: #6F7987; --text-quiet: #909AA9;
-    --st-todo: #8A93A3; --st-doing: #3FB5AD; --st-wait: #D9A142; --st-done: #5DB37C; --st-cancel: #7C8696;
-    --danger: #E07A72; --danger-soft: #3A2224; --prio-high: #EE8A5C;
-    --on-accent: #141920;
-    --toast-bg: #E6EAF0; --toast-text: #141920;
+    --bg-page: #15181D; --bg-surface: #1B1F25; --bg-sunken: #12151A; --bg-hover: #20252C;
+    --bg-sidebar: #111418;
+    --line: #2B3038; --line-soft: #23272E; --line-strong: #3A404A;
+    --text: #E4E7EC; --text-muted: #A2A9B4; --text-faint: #6E7682; --text-quiet: #8F97A3;
+    --sticker-edge: drop-shadow(1px 0 0 rgba(255, 255, 255, .9)) drop-shadow(-1px 0 0 rgba(255, 255, 255, .9)) drop-shadow(0 1px 0 rgba(255, 255, 255, .9)) drop-shadow(0 -1px 0 rgba(255, 255, 255, .9));
+    --st-todo: #8E96A3; --st-doing: #7FA6CB; --st-wait: #D2A65E; --st-done: #7DB592; --st-cancel: #79818D;
+    --danger: #E08A80; --danger-soft: #3A2426; --prio-high: #E39A78;
+    --on-accent: #15181D;
+    --toast-bg: #E4E7EC; --toast-text: #15181D;
     --shadow-pop: 0 14px 36px rgba(0, 0, 0, .5), 0 2px 6px rgba(0, 0, 0, .35);
     --shadow-card: 0 1px 2px rgba(0, 0, 0, .35);
     --scrim: rgba(0, 0, 0, .5);
-    --mark-bg: #6B5300; --mark-text: #FFF1C2;
-    --tag-bg: #2B2748; --tag-text: #C9C0FA;
-    --diff-add-bg: #16291E; --diff-add-text: #7FD19C; --diff-del-bg: #35201F; --diff-del-text: #F0A29C; --diff-hunk-bg: #1E2733;
-    --git-ok: #5DB37C; --git-ok-tint: #16291E; --git-ok-text: #7FD19C; --git-warn: #D9A142; --git-warn-tint: #2F2616; --git-warn-text: #E3B563; --git-info: #3FB5AD; --git-info-tint: #16302F;
-    --grp-0: #6AA8E8; --grp-1: #5CC59C; --grp-2: #E0A84F; --grp-3: #EE8A73; --grp-4: #B293EC; --grp-5: #E286B7; --grp-6: #5CC8D6; --grp-7: #B4C35A;
+    --mark-bg: #5E4C12; --mark-text: #FCEFC4;
+    --tag-bg: #262B35; --tag-text: #B9C1CF;
+    --diff-add-bg: #172720; --diff-add-text: #8CC8A2; --diff-del-bg: #33211F; --diff-del-text: #EBA39B; --diff-hunk-bg: #1E242C;
+    --git-ok: #7DB592; --git-ok-tint: #172720; --git-ok-text: #8CC8A2; --git-warn: #D2A65E; --git-warn-tint: #2D2618; --git-warn-text: #DDB774; --git-info: #7FA6CB; --git-info-tint: #1A2633;
+    --grp-0: #8FADD6; --grp-1: #85C0A6; --grp-2: #D8B672; --grp-3: #DE9C86; --grp-4: #B3A2D8; --grp-5: #D899B4; --grp-6: #82BFCB; --grp-7: #B4C07E;
   }
 }
-/* Brain accents: the one memorable colour. Set on <html> (current brain) and on brain swatches. `--accent-bright`, `--accent-pale` and
-   `--accent-deep` do not change with the mode: the night-blue sidebar reads them (a bright mark, a pale active entry with deep text). */
-[data-accent="steel"] { --accent: #1F5BE6; --accent-soft: #E8EEFD; --accent-strong: #1847B8;
-  --accent-bright: #8FB0FF; --accent-pale: #E4EAFE; --accent-deep: #1F55D6; }
-[data-accent="plum"]  { --accent: #7A45C8; --accent-soft: #F1EBFB; --accent-strong: #5C31A0;
-  --accent-bright: #C3A3F5; --accent-pale: #EFE8FC; --accent-deep: #5C31A0; }
-[data-accent="teal"]  { --accent: #0B7F76; --accent-soft: #E3F4F2; --accent-strong: #0A6A62;
-  --accent-bright: #6BD3C9; --accent-pale: #E1F3F1; --accent-deep: #0A6A62; }
-[data-accent="olive"] { --accent: #567F10; --accent-soft: #EEF5E2; --accent-strong: #46690C;
-  --accent-bright: #B3D66A; --accent-pale: #EDF5DF; --accent-deep: #46690C; }
-[data-accent="rust"]  { --accent: #C2521C; --accent-soft: #FCEEE6; --accent-strong: #9A4014;
-  --accent-bright: #F5A576; --accent-pale: #FBECE3; --accent-deep: #9A4014; }
-[data-accent="slate"] { --accent: #44546C; --accent-soft: #EBEEF3; --accent-strong: #323F52;
-  --accent-bright: #AAB8CC; --accent-pale: #E9EDF2; --accent-deep: #323F52; }
+/* Brain accents: the one memorable colour, soft and dusty so it marks without shouting. Set on <html> (current brain) and on each
+   brain's icon. */
+[data-accent="steel"] { --accent: #4A63B5; --accent-soft: #ECEFF8; --accent-strong: #3A4F96; --hue: #4A63B5; }
+[data-accent="plum"]  { --accent: #7A5FA3; --accent-soft: #F2EEF7; --accent-strong: #614985; --hue: #7A5FA3; }
+[data-accent="teal"]  { --accent: #3F7F78; --accent-soft: #E8F2F0; --accent-strong: #326761; --hue: #3F7F78; }
+[data-accent="olive"] { --accent: #66743A; --accent-soft: #EFF2E6; --accent-strong: #535F2E; --hue: #66743A; }
+[data-accent="rust"]  { --accent: #A86444; --accent-soft: #F7EEE9; --accent-strong: #8A5036; --hue: #A86444; }
+[data-accent="slate"] { --accent: #5C6779; --accent-soft: #EEF0F3; --accent-strong: #4A5463; --hue: #5C6779; }
 @media (prefers-color-scheme: dark) {
-  [data-accent="steel"] { --accent: #8FB0FF; --accent-soft: #1D2944; --accent-strong: #B0C8FF; }
-  [data-accent="plum"]  { --accent: #C3A3F5; --accent-soft: #2E2742; --accent-strong: #D4BCF8; }
-  [data-accent="teal"]  { --accent: #6BD3C9; --accent-soft: #183533; --accent-strong: #8FDFD7; }
-  [data-accent="olive"] { --accent: #B3D66A; --accent-soft: #283320; --accent-strong: #C6E28C; }
-  [data-accent="rust"]  { --accent: #F5A576; --accent-soft: #3A2A22; --accent-strong: #F8BE9A; }
-  [data-accent="slate"] { --accent: #AAB8CC; --accent-soft: #273140; --accent-strong: #C2CDDC; }
+  [data-accent="steel"] { --accent: #93A6E0; --accent-soft: #232B40; --accent-strong: #B3C1EA; }
+  [data-accent="plum"]  { --accent: #B5A0D6; --accent-soft: #2D2838; --accent-strong: #CBBCE3; }
+  [data-accent="teal"]  { --accent: #86BDB5; --accent-soft: #1D2E2C; --accent-strong: #A6D0CA; }
+  [data-accent="olive"] { --accent: #AEB98A; --accent-soft: #282D20; --accent-strong: #C4CDA6; }
+  [data-accent="rust"]  { --accent: #D6A386; --accent-soft: #352822; --accent-strong: #E2BBA4; }
+  [data-accent="slate"] { --accent: #A3ADBD; --accent-soft: #262C35; --accent-strong: #BEC6D2; }
 }
+/* Each brain's logo: a pixel sticker on a 14 x 14 grid, in the brain's colour (see "Brain logos"). */
+[data-accent="steel"] { --logo: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2014%2014%22%20shape-rendering%3D%22crispEdges%22%3E%3Cpath%20fill%3D%22%232B3142%22%20d%3D%22M5%200h4v1h-4zM3%201h2v1h-2zM9%201h2v1h-2zM2%202h1v1h-1zM11%202h1v1h-1zM1%203h1v1h-1zM8%203h1v1h-1zM12%203h1v1h-1zM1%204h1v1h-1zM11%204h1v1h-1zM0%205h1v1h-1zM10%205h1v1h-1zM0%206h1v1h-1zM8%206h2v1h-2zM0%207h1v1h-1zM8%207h2v1h-2zM0%208h1v1h-1zM10%208h1v1h-1zM1%209h1v1h-1zM11%209h1v1h-1zM1%2010h1v1h-1zM12%2010h1v1h-1zM2%2011h1v1h-1zM11%2011h1v1h-1zM3%2012h2v1h-2zM9%2012h2v1h-2zM5%2013h4v1h-4z%22%2F%3E%3Cpath%20fill%3D%22%23E4ECFA%22%20d%3D%22M5%201h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%23A9C1EA%22%20d%3D%22M6%201h3v1h-3zM3%202h2v1h-2zM9%202h2v1h-2zM2%203h1v1h-1zM11%203h1v1h-1zM8%204h1v1h-1zM1%205h1v1h-1zM8%208h2v1h-2zM10%209h1v1h-1zM11%2010h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%236F8FD6%22%20d%3D%22M5%202h3v1h-3zM3%203h5v1h-5zM9%203h2v1h-2zM2%204h6v1h-6zM9%204h1v1h-1zM2%205h6v1h-6zM1%206h7v1h-7zM1%207h7v1h-7zM2%208h6v1h-6zM2%209h8v1h-8zM3%2010h8v1h-8zM5%2011h4v1h-4z%22%2F%3E%3Cpath%20fill%3D%22%234A63B5%22%20d%3D%22M8%202h1v1h-1zM10%204h1v1h-1zM8%205h2v1h-2zM1%208h1v1h-1zM2%2010h1v1h-1zM3%2011h2v1h-2zM9%2011h2v1h-2zM5%2012h4v1h-4z%22%2F%3E%3C%2Fsvg%3E"); } /* a blue chomper */
+[data-accent="plum"] { --logo: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2014%2014%22%20shape-rendering%3D%22crispEdges%22%3E%3Cpath%20fill%3D%22%232B3142%22%20d%3D%22M5%200h4v1h-4zM3%201h2v1h-2zM9%201h2v1h-2zM2%202h1v1h-1zM11%202h1v1h-1zM1%203h1v1h-1zM12%203h1v1h-1zM1%204h1v1h-1zM12%204h1v1h-1zM1%205h1v1h-1zM12%205h1v1h-1zM1%206h1v1h-1zM12%206h1v1h-1zM1%207h1v1h-1zM12%207h1v1h-1zM1%208h1v1h-1zM12%208h1v1h-1zM1%209h1v1h-1zM12%209h1v1h-1zM1%2010h1v1h-1zM12%2010h1v1h-1zM1%2011h1v1h-1zM5%2011h1v1h-1zM8%2011h1v1h-1zM12%2011h1v1h-1zM1%2012h1v1h-1zM4%2012h2v1h-2zM8%2012h2v1h-2zM12%2012h1v1h-1zM2%2013h2v1h-2zM6%2013h2v1h-2zM10%2013h2v1h-2z%22%2F%3E%3Cpath%20fill%3D%22%23F0EAF8%22%20d%3D%22M5%201h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%23CBB9E6%22%20d%3D%22M6%201h3v1h-3zM3%202h2v1h-2zM9%202h2v1h-2zM2%203h1v1h-1zM11%203h1v1h-1zM3%206h2v1h-2zM8%206h2v1h-2z%22%2F%3E%3Cpath%20fill%3D%22%239C82C6%22%20d%3D%22M5%202h4v1h-4zM5%203h3v1h-3zM10%203h1v1h-1zM2%204h1v1h-1zM5%204h3v1h-3zM10%204h2v1h-2zM2%205h1v1h-1zM5%205h3v1h-3zM10%205h2v1h-2zM2%206h1v1h-1zM5%206h3v1h-3zM10%206h2v1h-2zM2%207h10v1h-10zM2%208h10v1h-10zM2%209h10v1h-10zM2%2010h3v1h-3zM6%2010h2v1h-2zM9%2010h3v1h-3zM2%2011h2v1h-2zM6%2011h2v1h-2zM10%2011h2v1h-2z%22%2F%3E%3Cpath%20fill%3D%22%236F539A%22%20d%3D%22M3%203h2v1h-2zM8%203h2v1h-2zM5%2010h1v1h-1zM8%2010h1v1h-1zM4%2011h1v1h-1zM9%2011h1v1h-1zM2%2012h2v1h-2zM6%2012h2v1h-2zM10%2012h2v1h-2z%22%2F%3E%3Cpath%20fill%3D%22%23FFFFFF%22%20d%3D%22M3%204h2v1h-2zM8%204h2v1h-2zM3%205h1v1h-1zM8%205h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%236F8FD6%22%20d%3D%22M4%205h1v1h-1zM9%205h1v1h-1z%22%2F%3E%3C%2Fsvg%3E"); } /* a heather ghost */
+[data-accent="teal"] { --logo: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2014%2014%22%20shape-rendering%3D%22crispEdges%22%3E%3Cpath%20fill%3D%22%232B3142%22%20d%3D%22M5%200h4v1h-4zM4%201h1v1h-1zM9%201h1v1h-1zM4%202h1v1h-1zM9%202h1v1h-1zM5%203h1v1h-1zM8%203h1v1h-1zM4%204h2v1h-2zM8%204h2v1h-2zM3%205h1v1h-1zM10%205h1v1h-1zM2%206h1v1h-1zM11%206h1v1h-1zM1%207h1v1h-1zM12%207h1v1h-1zM1%208h1v1h-1zM12%208h1v1h-1zM1%209h1v1h-1zM12%209h1v1h-1zM1%2010h1v1h-1zM12%2010h1v1h-1zM2%2011h1v1h-1zM11%2011h1v1h-1zM3%2012h1v1h-1zM10%2012h1v1h-1zM4%2013h6v1h-6z%22%2F%3E%3Cpath%20fill%3D%22%23FCEBE1%22%20d%3D%22M5%201h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%23F2B898%22%20d%3D%22M6%201h3v1h-3z%22%2F%3E%3Cpath%20fill%3D%22%23A35F3E%22%20d%3D%22M5%202h4v1h-4z%22%2F%3E%3Cpath%20fill%3D%22%23F4F6F9%22%20d%3D%22M6%203h1v1h-1zM3%2011h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%23D3D9E2%22%20d%3D%22M7%203h1v1h-1zM4%205h2v1h-2zM8%205h2v1h-2zM3%206h1v1h-1zM10%206h1v1h-1zM2%207h1v1h-1zM11%207h1v1h-1zM4%2011h1v1h-1zM9%2011h2v1h-2zM5%2012h4v1h-4z%22%2F%3E%3Cpath%20fill%3D%22%23A3ADBD%22%20d%3D%22M6%204h2v1h-2zM2%208h1v1h-1zM11%208h1v1h-1zM2%209h1v1h-1zM11%209h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%236B7588%22%20d%3D%22M6%205h2v1h-2zM4%206h1v1h-1zM9%206h1v1h-1zM2%2010h1v1h-1zM11%2010h1v1h-1zM4%2012h1v1h-1zM9%2012h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%23E0F2EF%22%20d%3D%22M5%206h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%239FD3CB%22%20d%3D%22M6%206h3v1h-3zM3%207h2v1h-2zM9%207h2v1h-2zM4%209h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%235AA79C%22%20d%3D%22M5%207h4v1h-4zM3%208h1v1h-1zM5%208h6v1h-6zM3%209h1v1h-1zM5%209h6v1h-6zM5%2010h4v1h-4z%22%2F%3E%3Cpath%20fill%3D%22%23FFFFFF%22%20d%3D%22M4%208h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%233A7A71%22%20d%3D%22M3%2010h2v1h-2zM9%2010h2v1h-2zM5%2011h4v1h-4z%22%2F%3E%3C%2Fsvg%3E"); } /* a teal potion */
+[data-accent="olive"] { --logo: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2014%2014%22%20shape-rendering%3D%22crispEdges%22%3E%3Cpath%20fill%3D%22%232B3142%22%20d%3D%22M6%200h2v1h-2zM5%201h1v1h-1zM8%201h1v1h-1zM4%202h1v1h-1zM9%202h1v1h-1zM1%203h2v1h-2zM4%203h1v1h-1zM9%203h1v1h-1zM0%204h1v1h-1zM3%204h2v1h-2zM9%204h1v1h-1zM11%204h2v1h-2zM0%205h1v1h-1zM3%205h2v1h-2zM9%205h2v1h-2zM13%205h1v1h-1zM0%206h1v1h-1zM9%206h2v1h-2zM13%206h1v1h-1zM1%207h1v1h-1zM13%207h1v1h-1zM2%208h3v1h-3zM12%208h1v1h-1zM3%209h2v1h-2zM9%209h3v1h-3zM2%2010h1v1h-1zM11%2010h1v1h-1zM2%2011h1v1h-1zM11%2011h1v1h-1zM3%2012h1v1h-1zM10%2012h1v1h-1zM4%2013h6v1h-6z%22%2F%3E%3Cpath%20fill%3D%22%23EEF2DC%22%20d%3D%22M6%201h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%23C9D49A%22%20d%3D%22M7%201h1v1h-1zM5%202h1v1h-1zM8%202h1v1h-1zM1%204h2v1h-2zM11%205h2v1h-2zM3%206h2v1h-2zM9%207h2v1h-2z%22%2F%3E%3Cpath%20fill%3D%22%2397A65A%22%20d%3D%22M6%202h2v1h-2zM5%203h4v1h-4zM5%204h4v1h-4zM1%205h2v1h-2zM5%205h4v1h-4zM2%206h1v1h-1zM5%206h4v1h-4zM11%206h2v1h-2zM5%207h4v1h-4zM11%207h1v1h-1zM5%208h4v1h-4z%22%2F%3E%3Cpath%20fill%3D%22%2366743A%22%20d%3D%22M1%206h1v1h-1zM2%207h3v1h-3zM12%207h1v1h-1zM9%208h3v1h-3zM5%209h4v1h-4z%22%2F%3E%3Cpath%20fill%3D%22%23FCEBE1%22%20d%3D%22M3%2010h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%23F2B898%22%20d%3D%22M4%2010h7v1h-7z%22%2F%3E%3Cpath%20fill%3D%22%23A35F3E%22%20d%3D%22M3%2011h1v1h-1zM10%2011h1v1h-1zM4%2012h6v1h-6z%22%2F%3E%3Cpath%20fill%3D%22%23DE8A5F%22%20d%3D%22M4%2011h6v1h-6z%22%2F%3E%3C%2Fsvg%3E"); } /* a moss cactus */
+[data-accent="rust"] { --logo: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2014%2014%22%20shape-rendering%3D%22crispEdges%22%3E%3Cpath%20fill%3D%22%232B3142%22%20d%3D%22M2%201h3v1h-3zM9%201h3v1h-3zM1%202h1v1h-1zM5%202h1v1h-1zM8%202h1v1h-1zM12%202h1v1h-1zM0%203h1v1h-1zM6%203h2v1h-2zM13%203h1v1h-1zM0%204h1v1h-1zM13%204h1v1h-1zM0%205h1v1h-1zM13%205h1v1h-1zM0%206h1v1h-1zM13%206h1v1h-1zM1%207h1v1h-1zM12%207h1v1h-1zM2%208h1v1h-1zM11%208h1v1h-1zM3%209h1v1h-1zM10%209h1v1h-1zM4%2010h1v1h-1zM9%2010h1v1h-1zM5%2011h1v1h-1zM8%2011h1v1h-1zM6%2012h2v1h-2z%22%2F%3E%3Cpath%20fill%3D%22%23FBE3E0%22%20d%3D%22M2%202h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%23F1A49B%22%20d%3D%22M3%202h2v1h-2zM9%202h3v1h-3zM1%203h1v1h-1zM5%203h1v1h-1zM8%203h1v1h-1zM12%203h1v1h-1zM6%204h2v1h-2zM2%205h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%23A9443A%22%20d%3D%22M2%203h1v1h-1zM1%206h1v1h-1zM12%206h1v1h-1zM2%207h1v1h-1zM11%207h1v1h-1zM3%208h1v1h-1zM10%208h1v1h-1zM4%209h1v1h-1zM9%209h1v1h-1zM5%2010h1v1h-1zM8%2010h1v1h-1zM6%2011h2v1h-2z%22%2F%3E%3Cpath%20fill%3D%22%23DC6A5E%22%20d%3D%22M3%203h2v1h-2zM9%203h3v1h-3zM1%204h1v1h-1zM3%204h3v1h-3zM8%204h5v1h-5zM1%205h1v1h-1zM3%205h10v1h-10zM2%206h10v1h-10zM3%207h8v1h-8zM4%208h6v1h-6zM5%209h4v1h-4zM6%2010h2v1h-2z%22%2F%3E%3Cpath%20fill%3D%22%23FFFFFF%22%20d%3D%22M2%204h1v1h-1z%22%2F%3E%3C%2Fsvg%3E"); } /* a clay heart */
+[data-accent="slate"] { --logo: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2014%2014%22%20shape-rendering%3D%22crispEdges%22%3E%3Cpath%20fill%3D%22%232B3142%22%20d%3D%22M3%201h8v1h-8zM2%202h1v1h-1zM11%202h1v1h-1zM1%203h1v1h-1zM12%203h1v1h-1zM0%204h1v1h-1zM13%204h1v1h-1zM0%205h1v1h-1zM13%205h1v1h-1zM1%206h1v1h-1zM12%206h1v1h-1zM2%207h1v1h-1zM11%207h1v1h-1zM3%208h1v1h-1zM10%208h1v1h-1zM4%209h1v1h-1zM9%209h1v1h-1zM5%2010h1v1h-1zM8%2010h1v1h-1zM6%2011h2v1h-2z%22%2F%3E%3Cpath%20fill%3D%22%23E4ECFA%22%20d%3D%22M3%202h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%23A9C1EA%22%20d%3D%22M4%202h7v1h-7zM2%203h1v1h-1zM11%203h1v1h-1zM1%204h1v1h-1zM4%204h1v1h-1zM12%204h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%236F8FD6%22%20d%3D%22M3%203h1v1h-1zM5%203h6v1h-6z%22%2F%3E%3Cpath%20fill%3D%22%23FFFFFF%22%20d%3D%22M4%203h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%234A63B5%22%20d%3D%22M2%204h2v1h-2zM5%204h7v1h-7z%22%2F%3E%3Cpath%20fill%3D%22%23F4F6F9%22%20d%3D%22M1%205h1v1h-1z%22%2F%3E%3Cpath%20fill%3D%22%23D3D9E2%22%20d%3D%22M2%205h11v1h-11z%22%2F%3E%3Cpath%20fill%3D%22%236B7588%22%20d%3D%22M2%206h1v1h-1zM11%206h1v1h-1zM3%207h1v1h-1zM10%207h1v1h-1zM4%208h1v1h-1zM9%208h1v1h-1zM5%209h1v1h-1zM8%209h1v1h-1zM6%2010h2v1h-2z%22%2F%3E%3Cpath%20fill%3D%22%23A3ADBD%22%20d%3D%22M3%206h8v1h-8zM4%207h6v1h-6zM5%208h4v1h-4zM6%209h2v1h-2z%22%2F%3E%3C%2Fsvg%3E"); } /* a slate gem */
 
 /* ---------- Base ---------- */
 *, *::before, *::after { box-sizing: border-box; }
@@ -116,8 +121,18 @@ svg { flex: none; }
 .nav-icon circle[r=".6"], .more circle { fill: currentColor; stroke: none; }
 /* Filled icons (Material Symbols, see `ms` in app/core.js): a little larger than the stroked ones. */
 .ms { fill: currentColor; stroke: none; }
+/* The sidebar's icons are pixel stickers in the brain's colour: a 12 x 12 grid drawn at 24 px (12 px in the update button), so each pixel stays
+   whole, with an ink outline and a white edge. */
+svg.px-icon { fill: none; stroke: none; shape-rendering: crispEdges; filter: var(--sticker-edge); }
+.icon-button svg.px-icon { width: 24px; height: 24px; }
+/* Their colours: an ink outline, white paper, neutral slate and screen greys, and four tones of the brain's hue (`--hue`). */
+.px-icon .i { fill: #2B3142; } .px-icon .w { fill: #FFFFFF; } .px-icon .pa { fill: #DDE2EA; }
+.px-icon .s1 { fill: #F4F6F9; } .px-icon .s2 { fill: #D3D9E2; } .px-icon .s3 { fill: #A3ADBD; } .px-icon .s4 { fill: #6B7588; }
+.px-icon .k1 { fill: #525B72; } .px-icon .k2 { fill: #454D62; } .px-icon .k3 { fill: #3A4154; } .px-icon .k4 { fill: #333A4B; }
+.px-icon .c1 { fill: color-mix(in srgb, var(--hue) 14%, #FFF); } .px-icon .c2 { fill: color-mix(in srgb, var(--hue) 45%, #FFF); }
+.px-icon .c3 { fill: color-mix(in srgb, var(--hue) 78%, #FFF); } .px-icon .c4 { fill: var(--hue); }
 .icon-button svg:has(.ms), .button svg:has(.ms), .row-action svg:has(.ms), .menu-item svg:has(.ms), .search-icon:has(.ms) { width: 18px; height: 18px; }
-.nav-item .nav-icon { width: 20px; height: 20px; }
+.nav-item .nav-icon { width: 24px; height: 24px; }
 
 /* ---------- Controls ---------- */
 .button {
@@ -133,7 +148,7 @@ svg { flex: none; }
 .button-danger { color: var(--danger); border-color: transparent; background: transparent; padding: 0 8px; }
 .button-danger:hover { background: var(--danger-soft); }
 .button-danger-solid { background: var(--danger); border-color: var(--danger); color: #FFFFFF; }
-@media (prefers-color-scheme: dark) { .button-danger-solid { color: #141920; } }
+@media (prefers-color-scheme: dark) { .button-danger-solid { color: #15181D; } }
 .button-danger-solid:hover { filter: brightness(.94); }
 .button:disabled, .button[aria-busy="true"] { opacity: .55; cursor: default; }
 .icon-button {
@@ -171,24 +186,17 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .scrim { display: none; }
 
 /* ---------- Sidebar ---------- */
-/* Night blue, in light and dark alike. The sidebar redefines the tokens it reads, so its rules and its menus (brain, More options)
-   stay the shared ones; the brain's colour turns to its bright, pale and deep variants, readable on the night blue. */
+/* A step below the page, in light and dark alike, with a hairline on its edge. Hovers are a wash of the text colour, so they show on
+   the sidebar's own grey, and the active entry is a tint of the brain's colour mixed into it. */
 .sidebar {
-  color-scheme: dark;
-  --bg-page: #0A1C38; --bg-surface: #14284A; --bg-sunken: rgba(255, 255, 255, .09); --bg-hover: rgba(255, 255, 255, .06);
-  --line: rgba(255, 255, 255, .14); --line-soft: rgba(255, 255, 255, .09); --line-strong: rgba(255, 255, 255, .24);
-  --text: #F3F6FB; --text-muted: #B4BFD0; --text-faint: #7F8DA6; --text-quiet: #9AA7BC;
-  --danger: #F29A90; --danger-soft: rgba(242, 154, 144, .16); --st-wait: #E2AA4E;
-  --shadow-pop: 0 14px 36px rgba(0, 0, 0, .45), 0 2px 6px rgba(0, 0, 0, .3);
-  --accent: var(--accent-bright); --accent-soft: var(--accent-pale); --accent-strong: var(--accent-deep); --on-accent: #0A1C38;
-  display: flex; flex-direction: column; min-height: 0; background: var(--bg-page); color: var(--text);
+  --bg-sunken: rgba(31, 37, 48, .07); --bg-hover: rgba(31, 37, 48, .045);
+  --accent-soft: color-mix(in srgb, var(--accent) 13%, var(--bg-sidebar));
+  display: flex; flex-direction: column; min-height: 0; background: var(--bg-sidebar); color: var(--text); border-right: 1px solid var(--line);
 }
-/* In dark mode a pale entry would glare: the active entry is a tint of the bright accent instead. */
-@media (prefers-color-scheme: dark) { .sidebar { --accent-soft: color-mix(in srgb, var(--accent-bright) 22%, transparent); --accent-strong: var(--accent-bright); } }
-.sidebar-top { display: flex; align-items: flex-start; gap: 4px; padding: 18px 14px 16px; border-bottom: 1px solid var(--line-soft); }
+@media (prefers-color-scheme: dark) { .sidebar { --bg-sunken: rgba(255, 255, 255, .07); --bg-hover: rgba(255, 255, 255, .045); --accent-soft: color-mix(in srgb, var(--accent) 18%, var(--bg-sidebar)); } }
+.sidebar-top { display: flex; align-items: flex-start; gap: 4px; padding: 18px 14px 16px; border-bottom: 1px solid var(--line); }
 .sidebar-close { display: none; }
-.brain-switch { position: relative; flex: 1 1 auto; min-width: 0; display: flex; align-items: stretch; gap: 10px; }
-.brain-marker { flex: none; width: 4px; border-radius: 2px; background: var(--accent); }
+.brain-switch { position: relative; flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px; }
 .brain-static, .brain-button { min-width: 0; display: flex; flex-direction: column; justify-content: center; min-height: 40px; }
 .brain-button {
   flex: 1 1 auto; flex-direction: row; align-items: center; gap: 6px; margin: -2px 0 -2px -6px; padding: 2px 6px;
@@ -206,8 +214,11 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .brain-option { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: var(--radius-control); cursor: pointer; }
 .brain-option:hover { background: var(--bg-hover); }
 .brain-option.is-active { background: var(--bg-sunken); box-shadow: inset 0 0 0 2px var(--accent); }
-.brain-swatch { flex: none; width: 4px; height: 26px; border-radius: 2px; background: var(--accent); }
-.sidebar .brain-swatch { background: var(--accent-bright); } /* each swatch carries its own brain's accent */
+/* Brain logos: the brain's sticker (`--logo`), at the head of the sidebar, in the selector's entries, on the swipe's cue and the Sync
+   cards (28 px, 2 px a pixel), and before the short name under 900 px (14 px). */
+.brain-logo, .brain-swatch, .brain-swipe-mark, .git-head::before, .brain-mini::before {
+  flex: none; width: 28px; height: 28px; background: var(--logo) center / 100% 100% no-repeat; filter: var(--sticker-edge);
+}
 .brain-option-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .brain-option-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .brain-check { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; visibility: hidden; }
@@ -267,7 +278,7 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 }
 .update-button:hover { background: var(--accent); color: var(--on-accent); }
 .update-button[hidden] { display: none; }
-.update-button .nav-icon { width: 14px; height: 14px; }
+.update-button .nav-icon { width: 12px; height: 12px; }
 .update-button.is-warn { border-color: var(--st-wait); background: transparent; color: var(--st-wait); }
 .update-button.is-warn:hover { background: var(--st-wait); color: var(--on-accent); }
 .update-dialog { width: min(520px, calc(100vw - 32px)); }
@@ -314,6 +325,7 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .sidebar-toggle { margin-left: -6px; }
 /* Under 900 px the toggle also names the brain, with its accent marker: the brain stays visible without the sidebar. */
 .brain-mini { display: none; }
+.brain-mini::before { content: ""; position: absolute; left: 0; top: 1px; width: 14px; height: 14px; }
 .view-heading { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
 .view-heading h1 { font-size: 24px; font-weight: 500; line-height: 1.2; letter-spacing: -.01em; white-space: nowrap; }
 .result-count, .view-status { font-size: var(--fs-xs); color: var(--text-quiet); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1126,7 +1138,7 @@ mark { background: var(--mark-bg); color: var(--mark-text); border-radius: 2px; 
 .git-card[data-state="changes"], .git-card[data-state="behind"] { --git-tone: var(--git-warn); --git-tint: var(--git-warn-tint); }
 .git-card[data-state="unsent"] { --git-tone: var(--git-info); --git-tint: var(--git-info-tint); }
 .git-head { display: flex; align-items: center; gap: 10px; min-height: 24px; }
-.git-head::before { content: ""; flex: none; width: 4px; height: 20px; border-radius: 2px; background: var(--accent); }
+.git-head::before { content: ""; }
 .git-head h2 { font-size: var(--fs-md); letter-spacing: -.005em; }
 .git-current { margin-left: auto; font-size: var(--fs-xs); color: var(--text-quiet); }
 .git-status { display: flex; align-items: flex-start; gap: 12px; }
@@ -1240,7 +1252,6 @@ html, body { overscroll-behavior-x: none; }
 .brain-swipe[data-side="right"] { right: 16px; }
 .brain-swipe[data-side="right"]::after { content: "\2192"; color: var(--text-muted); }
 .brain-swipe[data-side="left"]::before { content: "\2190"; color: var(--text-muted); }
-.brain-swipe-mark { flex: none; width: 4px; height: 20px; border-radius: 2px; background: var(--accent); }
 .brain-swipe.is-end { color: var(--text-muted); font-weight: 400; }
 .brain-swipe.is-end .brain-swipe-mark { display: none; }
 @media (prefers-reduced-motion: no-preference) {
@@ -1289,7 +1300,7 @@ html, body { overscroll-behavior-x: none; }
   .toast:not([hidden]) { animation: fade-in 120ms ease-out; }
   .app.drawer-open .sidebar { transition: transform 160ms cubic-bezier(.2, .7, .3, 1); }
   /* While the workspace turns to another brain, its colour fades in (only then: never on load). */
-  .brain-turning body::before, .brain-turning .brain-marker, .brain-turning .nav-item, .brain-turning .project-item,
+  .brain-turning body::before, .brain-turning .nav-item, .brain-turning .project-item,
   .brain-turning .button-primary, .brain-turning .update-button { transition: background-color .3s ease, color .3s ease, border-color .3s ease; }
   @keyframes panel-in { from { transform: translateX(24px); opacity: .4; } }
   @keyframes fade-in { from { opacity: 0; } }
@@ -1385,7 +1396,7 @@ html, body { overscroll-behavior-x: none; }
   .sidebar-top { padding-top: 14px; }
   .sidebar-close { display: inline-grid; }
   .sidebar-toggle { display: inline-flex; align-items: center; width: auto; gap: 8px; padding: 0 8px 0 6px; }
-  .brain-mini { display: inline-block; padding-left: 8px; border-left: 3px solid var(--accent); color: var(--text); font-size: var(--fs-xs); font-weight: 600; line-height: 16px; max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .brain-mini { display: inline-block; position: relative; padding-left: 20px; color: var(--text); font-size: var(--fs-xs); font-weight: 600; line-height: 16px; max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 @media (max-width: 700px) {
   .panel { top: 0; width: 100vw; border-left: 0; z-index: 55; }
