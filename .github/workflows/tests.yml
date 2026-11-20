@@ -1,4 +1,4 @@
-# Every pull request into main is tested on Linux before the owner merges it. Only the owner updates main (a ruleset),
+# Every pull request into main is tested on Linux and on Windows before the owner merges it. Only the owner updates main (a ruleset),
 # and the merge is what release.yml releases. A separate workflow: release.yml queues its runs, and a pull request run
 # must never cancel a pending release.
 name: Tests
@@ -17,6 +17,25 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - name: Git identity of the test repositories
+        run: |
+          git config --global user.name "Work CI"
+          git config --global user.email "ci@example.invalid"
+          git config --global init.defaultBranch main
+      - name: Tests
+        run: uv run --with pytest --with markdown-it-py --with tzdata pytest tests/ -q
+
+  # The same suite on Windows, in Git Bash as the README asks (the runner's account may create symbolic links).
+  test-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v5
         with:

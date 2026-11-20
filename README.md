@@ -102,6 +102,7 @@ On Windows:
 - Install `uv`, and Node.js LTS when third-party skills are enabled; open a new terminal afterwards so that the `PATH` includes them.
 - Turn on Developer Mode (Settings > System > For developers): the skills and a relocated artifacts folder are symbolic links, which Windows otherwise reserves to administrators. `bootstrap.sh` stops before any change when it cannot create one, and `doctor.py` reports a skill copied where a link was expected.
 - In `~/.gitconfig`, write the folder rules as `gitdir/i:` (Windows paths are case-insensitive; see `tools/machine/gitconfig.example`).
+- Line endings need no setting: the `.gitattributes` of Work and of every brain created from `kit/brain/seed/` check text files out with LF, whatever `core.autocrlf` says (bash and the Git hooks fail on CRLF). A brain created before has none: copy `kit/brain/seed/.gitattributes` into it.
 
 ### Brains and trust boundaries
 

@@ -165,6 +165,17 @@ class NewBrainTest(unittest.TestCase):
                 if p.is_file() and (pattern.search(p.read_text(encoding="utf-8")) or pattern.search(str(p.relative_to(SEED))))]
         self.assertEqual(hits, [])
 
+    def test_work_and_a_new_brain_check_text_out_with_lf_whatever_autocrlf_says(self) -> None:
+        self.assertEqual(self.run_tool("brain").returncode, 0)
+        brain = self.work / "brain"
+        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+        for repo in (REPO, brain):
+            for path in ("tools/machine/bootstrap.sh", "tools/machine/hooks/pre-push", "README.md"):
+                attributes = subprocess.run(["git", "check-attr", "text", "eol", "--", path], cwd=repo, env=env,
+                                            capture_output=True, text=True, check=True).stdout
+                self.assertIn(f"{path}: text: auto", attributes, repo)
+                self.assertIn(f"{path}: eol: lf", attributes, repo)
+
     def test_seed_gitignore_keeps_local_caches_out_of_the_brain(self) -> None:
         self.assertEqual(self.run_tool("brain").returncode, 0)
         brain = self.work / "brain"
