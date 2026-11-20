@@ -142,7 +142,7 @@ def brain_checks() -> None:
     expected = config.get("brains", [default.name] if default else [])
     for name in expected:
         if name not in present:
-            report("ERROR", f"expected brain missing: {name}/ (clone it by hand, see the README section \"Set up a new machine\")")
+            report("ERROR", f"expected brain missing: {name}/ (clone it by hand, see \"Set up a new machine\" in docs/SETUP.md)")
     for name in present:
         brain = WORK / name
         if not (brain / "AGENTS.md").is_file() or not (brain / ".data").is_dir():

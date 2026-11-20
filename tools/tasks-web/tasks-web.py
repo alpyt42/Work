@@ -28,7 +28,7 @@ import subprocess  # noqa: F401
 import sys
 from pathlib import Path
 
-# The code is in the package tasksweb/ beside this file (README.md, section "Code layout"): importable whether this file runs as a
+# The code is in the package tasksweb/ beside this file (REFERENCE.md, section "Code layout"): importable whether this file runs as a
 # script or is loaded by path, as tests/test_tasks_web.py does.
 _APP_DIR = str(Path(__file__).resolve().parent)
 if _APP_DIR not in sys.path:

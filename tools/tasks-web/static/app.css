@@ -267,6 +267,17 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .update-button.is-warn:hover { background: var(--st-wait); color: var(--on-accent); }
 .update-dialog { width: min(520px, calc(100vw - 32px)); }
 .markdown-body.update-notes { flex: none; max-height: 220px; margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--bg-sunken); font-size: 13px; line-height: 1.5; }
+.update-progress { margin: 0 0 14px; }
+.update-bar { position: relative; height: 6px; overflow: hidden; border-radius: 3px; background: var(--bg-sunken); }
+.update-bar-fill { display: block; height: 100%; width: 0; border-radius: 3px; background: var(--accent); }
+.update-bar.is-determinate .update-bar-fill { transition: width .3s ease; }
+.update-bar:not(.is-determinate) .update-bar-fill { width: 35%; background: repeating-linear-gradient(135deg, var(--accent) 0 8px, color-mix(in srgb, var(--accent) 55%, var(--bg-sunken)) 8px 16px); }
+.update-progress-line { display: flex; justify-content: space-between; gap: 12px; margin: 8px 0 0; color: var(--text-muted); font-size: var(--fs-sm); }
+.update-elapsed { flex: none; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: no-preference) {
+  .update-bar:not(.is-determinate) .update-bar-fill { animation: update-slide 1.2s ease-in-out infinite alternate; }
+  @keyframes update-slide { from { transform: translateX(0); } to { transform: translateX(186%); } }
+}
 .update-actions { display: flex; gap: 8px; margin-top: 10px; }
 .markdown-body.update-notes > * { max-width: none; }
 .markdown-body.update-notes h1, .markdown-body.update-notes h2, .markdown-body.update-notes h3 { font-size: 13px; margin: .8em 0 .3em; }

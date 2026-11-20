@@ -326,5 +326,6 @@ loadBrains({initial: true}).finally(() => {
   setView(view, false);
   refresh();
 });
+showUpdatedToast();
 checkUpdate();
 setInterval(checkUpdate, UPDATE_CHECK_EVERY);

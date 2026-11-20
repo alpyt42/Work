@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -174,6 +175,50 @@ class WorkUpdateCase(unittest.TestCase):
         self.assertEqual(self.git(self.work, "rev-parse", "HEAD"), self.git(self.seed, "rev-parse", "HEAD"))
         self.assertEqual(self.check()["state"], "up-to-date")
         self.assertEqual(self.tool("update", "--apply", "--json").returncode, 0)  # nothing to do
+
+    @unittest.skipUnless(shutil.which("bash"), "bash is required for the update script")
+    def test_apply_progress_events_timings_and_marker_lines(self) -> None:
+        self.release("v1.0.0")
+        self.clone_work()
+        self.commit(self.seed, "c.txt", "x\n", "feat: c")
+        self.release("v1.1.0")
+        self.stub.write_text("#!/bin/bash\necho '::progress 1/2 First phase'\necho one\necho '::progress 2/2 Second phase'\n"
+                             "echo two\n", encoding="utf-8")
+        proc = self.tool("update", "--apply", "--to", "v1.1.0", "--progress", "--json")
+        events = [json.loads(line) for line in proc.stderr.splitlines()]
+        self.assertEqual([(e["index"], e["total"], e["label"]) for e in events],
+                         [(1, None, "Fetching the releases"), (2, None, "Moving to v1.1.0"), (3, 4, "First phase"), (4, 4, "Second phase")])
+        rep = json.loads(proc.stdout)
+        self.assertEqual(rep["update_script"]["output_tail"], ["one", "two"])
+        self.assertEqual([t["label"] for t in rep["timings"]],
+                         ["Fetching the releases", "Moving to v1.1.0", "First phase", "Second phase", "Total"])
+        self.assertTrue(all(isinstance(t["seconds"], float) and t["seconds"] >= 0 for t in rep["timings"]))
+
+    @unittest.skipUnless(shutil.which("bash"), "bash is required for the update script")
+    def test_apply_without_progress_writes_nothing_to_stderr_and_no_fetch_skips_that_phase(self) -> None:
+        self.release("v1.0.0")
+        self.clone_work()
+        self.commit(self.seed, "c.txt", "x\n", "feat: c")
+        self.release("v1.1.0")
+        self.git(self.work, "fetch", "-q", "--tags", "starter")
+        self.stub.write_text("#!/bin/bash\necho '::progress 1/1 Only'\necho out\n", encoding="utf-8")
+        proc = self.tool("update", "--apply", "--no-fetch", "--json")
+        self.assertEqual(proc.stderr, "")
+        rep = json.loads(proc.stdout)
+        self.assertEqual([t["label"] for t in rep["timings"]], ["Moving to v1.1.0", "Only", "Total"])
+        self.assertEqual(rep["update_script"]["output_tail"], ["out"])
+
+    def test_update_sh_announces_every_phase_in_order_with_a_constant_total(self) -> None:
+        text = (TOOL.parent / "update.sh").read_text(encoding="utf-8")
+        total = int(re.search(r"^STEPS=(\d+)$", text, re.M)[1])
+        steps = re.findall(r'^step (\d+) "([^"]+)"$', text, re.M)
+        self.assertEqual([int(i) for i, _ in steps], list(range(1, total + 1)))
+        self.assertEqual([label for _, label in steps][:2], ["Checking the configuration", "Installing third-party skills"])
+        self.assertIn('echo "::progress $1/$STEPS $2"', text)
+        self.assertIn("install-third-party.sh --if-changed", text)
+
+    def test_progress_goes_with_apply(self) -> None:
+        self.tool("update", "--check", "--progress", ok=2)
 
     def test_apply_to_mismatch_refused(self) -> None:
         self.release("v1.0.0")

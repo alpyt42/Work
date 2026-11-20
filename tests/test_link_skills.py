@@ -356,9 +356,9 @@ class InstallThirdPartyTest(unittest.TestCase):
         config = {"version": 1, "skills": {"disabled": [], "thirdParty": {name: third_party_entry(name) for name in names}}}
         (self.root / "work-config.local.json").write_text(json.dumps(config), encoding="utf-8")
 
-    def install(self, installs: str = "", status: int = 0) -> subprocess.CompletedProcess[str]:
+    def install(self, installs: str = "", status: int = 0, *flags: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [BASH, str(self.root / "tools/machine/install-third-party.sh")],
+            [BASH, str(self.root / "tools/machine/install-third-party.sh"), *flags],
             env={**self.env, "STUB_INSTALL": installs, "STUB_STATUS": str(status)},
             capture_output=True,
             text=True,
@@ -376,6 +376,54 @@ class InstallThirdPartyTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.root / "npx-calls").read_text(encoding="utf-8"), "--yes skills experimental_install\n")
         self.assertTrue((self.root / ".agents/skills/tp/SKILL.md").is_file())
+
+    def npx_calls(self) -> int:
+        path = self.root / "npx-calls"
+        return len(path.read_text(encoding="utf-8").splitlines()) if path.exists() else 0
+
+    def test_if_changed_skips_npx_when_the_lock_and_the_skills_are_unchanged(self) -> None:
+        self.enable("tp")
+        (self.root / "skills-lock.json").write_text('{"v": 1}\n', encoding="utf-8")
+        self.assertEqual(self.install("tp", 0, "--if-changed").returncode, 0)
+        self.assertEqual(self.npx_calls(), 1)
+        self.assertTrue((self.root / ".agents/third-party-lock.hash").is_file())
+        second = self.install("", 0, "--if-changed")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("Third-party skills unchanged: install skipped.", second.stdout)
+        self.assertEqual(self.npx_calls(), 1)
+
+    def test_if_changed_installs_again_when_the_lock_changes_or_a_skill_is_missing(self) -> None:
+        self.enable("tp")
+        lock = self.root / "skills-lock.json"
+        lock.write_text('{"v": 1}\n', encoding="utf-8")
+        self.install("tp", 0, "--if-changed")
+        lock.write_text('{"v": 2}\n', encoding="utf-8")
+        self.install("tp", 0, "--if-changed")
+        self.assertEqual(self.npx_calls(), 2)
+        (self.root / ".agents/skills/tp/SKILL.md").unlink()
+        self.install("tp", 0, "--if-changed")
+        self.assertEqual(self.npx_calls(), 3)
+        self.assertTrue((self.root / ".agents/skills/tp/SKILL.md").is_file())
+
+    def test_without_the_flag_npx_always_runs_and_a_failed_install_records_nothing(self) -> None:
+        self.enable("tp")
+        (self.root / "skills-lock.json").write_text('{"v": 1}\n', encoding="utf-8")
+        self.install("tp")
+        self.install("tp")
+        self.assertEqual(self.npx_calls(), 2)
+        (self.root / ".agents/third-party-lock.hash").unlink()
+        (self.root / "skills-lock.json").write_text('{"v": 3}\n', encoding="utf-8")
+        self.install("tp", 3)
+        self.assertFalse((self.root / ".agents/third-party-lock.hash").exists())
+
+    def test_the_hash_file_is_not_a_skill_folder(self) -> None:
+        self.enable("tp")
+        (self.root / "skills-lock.json").write_text('{"v": 1}\n', encoding="utf-8")
+        self.install("tp")
+        self.assertEqual(sorted(entry.name for entry in (self.root / ".agents/skills").iterdir()), ["tp"])
+
+    def test_an_unknown_flag_is_a_usage_error(self) -> None:
+        self.assertEqual(self.install("", 0, "--nope").returncode, 2)
 
     def test_failure_after_installing_every_skill_is_accepted_on_windows_only(self) -> None:
         self.enable("tp", "other")

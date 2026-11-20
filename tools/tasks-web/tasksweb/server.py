@@ -121,6 +121,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/update":
             self._json(HTTPStatus.OK, self.server.update.public(cached=True))
             return
+        if path == "/api/update/progress":
+            self._json(HTTPStatus.OK, self.server.update.progress_public())
+            return
         if path in {"/api/notes", "/api/notes/content", "/api/notes/backlinks"}:
             self._notes_request(path, store)
             return
