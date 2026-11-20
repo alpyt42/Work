@@ -60,8 +60,8 @@ class PreflightCase(unittest.TestCase):
         """The global config: no identity of its own, one boundary file per folder (the template of gitconfig.example)."""
         if text is None:
             text = "[user]\n    useConfigOnly = true\n"
-            for pattern, boundary in ((f"{self.work}/brain-acme/", "acme"), (f"{self.work}/.git", "acme"), (f"{self.work}/brain-globex/", "globex")):
-                text += f'[includeIf "gitdir:{pattern}"]\n    path = {self.home}/.gitconfig-{boundary}\n'
+            for pattern, boundary in ((f"{self.work.as_posix()}/brain-acme/", "acme"), (f"{self.work.as_posix()}/.git", "acme"), (f"{self.work.as_posix()}/brain-globex/", "globex")):
+                text += f'[includeIf "gitdir:{pattern}"]\n    path = {self.home.as_posix()}/.gitconfig-{boundary}\n'
         (self.home / ".gitconfig").write_text(text, encoding="utf-8")
 
     def git(self, repo: Path, *args: str, check: bool = True, **env: str) -> subprocess.CompletedProcess:
@@ -170,7 +170,7 @@ class IdentityTest(PreflightCase):
 
     def test_included_file_that_is_not_a_boundary_file_is_a_warning(self) -> None:
         (self.home / "acme-identity.inc").write_text("[user]\n    name = Ada\n    email = ada@acme.example\n", encoding="utf-8")
-        self.write_global(f'[includeIf "gitdir:{self.work}/brain-acme/"]\n    path = {self.home}/acme-identity.inc\n')
+        self.write_global(f'[includeIf "gitdir:{self.work.as_posix()}/brain-acme/"]\n    path = {self.home.as_posix()}/acme-identity.inc\n')
         repo = self.make_repo()
         result = self.run_tool(repo)
         text = self.out(result)
@@ -497,6 +497,7 @@ class PrePushHookTest(PreflightCase):
     def install_hook(self, repo: Path, work: Path) -> None:
         (work / "tools/machine/hooks").mkdir(parents=True, exist_ok=True)
         shutil.copy2(TOOL, work / "tools/machine/preflight-push.py")
+        shutil.copy2(TOOL.parent / "work_config.py", work / "tools/machine/work_config.py")  # imported next to the script
         hook = repo / ".git/hooks/pre-push"
         hook.parent.mkdir(exist_ok=True)
         shutil.copy2(HOOK, hook)

@@ -45,6 +45,16 @@ REAL_LOGIN_SHELL_PATH = launch.login_shell_path  # LaunchTest patches it out; it
 OSACOMPILE = Path("/usr/bin/osacompile")
 
 
+def entry_value(path: Path) -> str:
+    """A path as a Desktop Entry value: each `\\` doubled (a Windows host's paths have some, POSIX ones none)."""
+    return str(path).replace("\\", "\\\\")
+
+
+def exec_argument(path: Path) -> str:
+    """A path as a quoted Exec argument: `\\` escaped inside the quotes, then again as a value."""
+    return '"' + str(path).replace("\\", "\\" * 4) + '"'
+
+
 def free_port() -> int:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
@@ -105,9 +115,9 @@ class LinuxInstallTest(FakeHomes):
         lines = self.entry().read_text(encoding="utf-8").splitlines()
         self.assertEqual(lines[0], "[Desktop Entry]")
         for line in ("Type=Application", "Name=Actions Brain", "Terminal=false", "Categories=Office;",
-                     f"Path={install.WORK}", f"Icon={self.icon()}", f"X-Actions-Brain={install.MARKER}"):
+                     f"Path={entry_value(install.WORK)}", f"Icon={entry_value(self.icon())}", f"X-Actions-Brain={install.MARKER}"):
             self.assertIn(line, lines)
-        self.assertIn(f'Exec="{self.uv}" "run" "--quiet" "--script" "{install.LAUNCH}"', lines)
+        self.assertIn(f'Exec={exec_argument(self.uv)} "run" "--quiet" "--script" {exec_argument(install.LAUNCH)}', lines)
         self.assertEqual(self.icon().read_bytes(), (WEB / "static/icon.png").read_bytes())
         self.assertIn(install.ICON_MARKER, self.icon().read_bytes())
         self.assertIn(str(self.entry()), out)
@@ -158,7 +168,7 @@ class LinuxInstallTest(FakeHomes):
             other = self.root / "bin/uv2"
             other.write_bytes(b"fake uv")
             self.assertEqual(self.installer("--platform", "linux", "--uv", str(other))[0], 0)
-        self.assertIn(f'Exec="{other}"', self.entry().read_text(encoding="utf-8"))
+        self.assertIn(f'Exec={exec_argument(other)}', self.entry().read_text(encoding="utf-8"))
 
 
 class WindowsInstallTest(FakeHomes):
@@ -471,7 +481,8 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(result, "started")
         self.opener.assert_called_once_with(f"http://127.0.0.1:{port}/")
         self.assertTrue(launch.ready(port))
-        self.assertEqual(os.getsid(pid), pid)  # its own session: closing the launcher's terminal does not stop it
+        if hasattr(os, "getsid"):
+            self.assertEqual(os.getsid(pid), pid)  # its own session: closing the launcher's terminal does not stop it
         self.assertIn("stub server ready", (self.work / "agents/tasks-web.log").read_text(encoding="utf-8"))
 
     def stop(self, pid: int) -> None:

@@ -741,7 +741,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    for _stream in (sys.stdout, sys.stderr):  # UTF-8 even through a pipe on Windows
-        if hasattr(_stream, "reconfigure"):
-            _stream.reconfigure(encoding="utf-8", errors=_stream.errors)
+    work_config.utf8_stdio()
     raise SystemExit(main())

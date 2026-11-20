@@ -1,6 +1,6 @@
 # tests/
 
-Tests of the scripts in `tools/`, with no remote service or private data, on temporary `Work/` workspaces: `uv run --with pytest --with markdown-it-py pytest tests/` from the `Work/` root. The interface tests only open an ephemeral port on `127.0.0.1`.
+Tests of the scripts in `tools/`, with no remote service or private data, on temporary `Work/` workspaces: `uv run --with pytest --with markdown-it-py --with tzdata pytest tests/` from the `Work/` root (`tzdata` gives Python a time zone database on Windows, which has none of its own). The interface tests only open an ephemeral port on `127.0.0.1`.
 
 Fictitious names only in tests and fixtures (`acme`, `globex`, `initech`, `brain-acme`…): see the rule in [`AGENTS.md`](../AGENTS.md), « Keep repository boundaries ».
 

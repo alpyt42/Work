@@ -88,7 +88,7 @@ class TimelineTest(unittest.TestCase):
 
     def run_tool(self, *args: str, code: int = 0, now: str = "2026-10-20 10:00") -> dict | str:
         env = {**os.environ, "ACTION_NOW": now}
-        result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), *args], env=env, capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), *args], env=env, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
         try:
             return json.loads(result.stdout)

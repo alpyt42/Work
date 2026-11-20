@@ -9,9 +9,12 @@ usage() {
   cat <<'EOF'
 Usage: tools/machine/install.sh [options]
 
-  --brain <url>         Clone an existing private brain into brain/.
+  --brain <url>         Clone an existing private brain into brain/ (or --brain-dir).
                         Without it, a blank brain is created from kit/brain/seed/
                         (fresh Git repository, no commit, no remote).
+  --brain-dir <folder>  Folder of that brain at the Work root: "brain" (default) or "brain-<name>"
+                        (lowercase letters, digits, "-"). When it is not "brain", it is recorded as
+                        the default brain in work-config.local.json.
   --brain-perso <url|new>
                         Optional second brain in brain-perso/: clone <url>,
                         or create a blank one from kit/brain/seed/ with "new".
@@ -21,18 +24,24 @@ EOF
 }
 
 BRAIN_URL=""
+BRAIN_DIR="brain"
 BRAIN_PERSO=""
 BOOTSTRAP=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --brain) BRAIN_URL="${2:?--brain needs a URL}"; shift 2 ;;
+    --brain-dir) BRAIN_DIR="${2:?--brain-dir needs a folder name}"; shift 2 ;;
     --brain-perso) BRAIN_PERSO="${2:?--brain-perso needs a URL or new}"; shift 2 ;;
     --no-bootstrap) BOOTSTRAP=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+brain_name='^brain(-[a-z0-9][a-z0-9-]*)?$'  # same rule as BRAIN_NAME in work_config.py
+[[ "$BRAIN_DIR" =~ $brain_name ]] || { echo "--brain-dir must be \"brain\" or \"brain-<name>\" (lowercase letters, digits, -): $BRAIN_DIR" >&2; exit 2; }
+[[ "$BRAIN_DIR" != brain-perso || -z "$BRAIN_PERSO" ]] || { echo "--brain-dir brain-perso clashes with --brain-perso" >&2; exit 2; }
 
 command -v git >/dev/null || { echo "git is required" >&2; exit 1; }
 command -v uv >/dev/null || { echo "uv is required" >&2; exit 1; }
@@ -63,10 +72,14 @@ fi
 
 # 2. brain/ (unless another default brain is already here and no URL is given) and optional brain-perso/
 existing="$(uv run tools/machine/work_config.py default-brain 2>/dev/null || true)"
-if [[ -z "$BRAIN_URL" && -n "$existing" && "$existing" != brain ]]; then
+if [[ -z "$BRAIN_URL" && -n "$existing" && "$existing" != "$BRAIN_DIR" && "$BRAIN_DIR" == brain ]]; then
   echo "$existing/ is the default brain; brain/ not created."
 else
-  prepare_brain brain "${BRAIN_URL:-new}"
+  prepare_brain "$BRAIN_DIR" "${BRAIN_URL:-new}"
+  # A brain outside brain/ becomes the default one, so the tools act on it when none is named.
+  if [[ "$BRAIN_DIR" != brain ]]; then
+    uv run tools/machine/setup.py set defaultBrain "$BRAIN_DIR"
+  fi
 fi
 [[ -z "$BRAIN_PERSO" ]] || prepare_brain brain-perso "$BRAIN_PERSO"
 

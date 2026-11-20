@@ -194,7 +194,7 @@ class MigrateEnglishTest(unittest.TestCase):
 
     def run_tool(self, tool: Path, *args: str, code: int = 0) -> str:
         env = {**os.environ, "WORK_DIR": str(self.work), "BRAIN_DIR": str(self.brain), "ACTION_NOW": "2026-10-13 14:32"}
-        result = subprocess.run([sys.executable, str(tool), *args], env=env, capture_output=True, text=True, check=False)
+        result = subprocess.run([sys.executable, str(tool), *args], env=env, capture_output=True, text=True, encoding="utf-8", check=False)
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
         return result.stdout
 
@@ -291,7 +291,7 @@ class MigrateEnglishTest(unittest.TestCase):
     def test_default_brain_is_found_under_another_name_without_brain_dir(self) -> None:
         self.brain.rename(self.work / "brain-initech")  # the only brain of the Work root
         env = {key: value for key, value in os.environ.items() if key != "BRAIN_DIR"}
-        result = subprocess.run([sys.executable, str(TOOL), "--check"], env={**env, "WORK_DIR": str(self.work)}, capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(TOOL), "--check"], env={**env, "WORK_DIR": str(self.work)}, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("projects/clients/acme/missions/mission/state/actions.md:", result.stdout)
 
@@ -572,7 +572,7 @@ class StructureTest(unittest.TestCase):
 
     def run_tool(self, *args: str, code: int = 0) -> str:
         env = {**os.environ, "WORK_DIR": str(self.work), "BRAIN_DIR": str(self.brain)}
-        result = subprocess.run([sys.executable, str(TOOL), *args], env=env, capture_output=True, text=True, check=False)
+        result = subprocess.run([sys.executable, str(TOOL), *args], env=env, capture_output=True, text=True, encoding="utf-8", check=False)
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
         return result.stdout
 

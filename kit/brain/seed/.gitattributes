@@ -1,0 +1,3 @@
+# Every text file is checked out with LF line endings, on Windows too (where Git for Windows defaults to CRLF):
+# bash, the Git hooks and the shell scripts fail on a carriage return. Binary files are detected and left alone.
+* text=auto eol=lf

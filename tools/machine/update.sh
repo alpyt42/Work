@@ -6,10 +6,7 @@ cd "$ROOT"
 
 uv run tools/machine/work_config.py check
 uv run tools/machine/work_config.py lock
-if [[ -n "$(uv run tools/machine/work_config.py list-third-party)" ]]; then
-  command -v npx >/dev/null || { echo "Node.js (npx) is required for third-party skills" >&2; exit 1; }
-  npx --yes skills experimental_install
-fi
+./tools/machine/install-third-party.sh
 
 uv run tools/machine/sync-house-skills.py
 ./tools/machine/link-skills.sh

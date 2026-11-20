@@ -11,6 +11,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 CHECKER = REPO / "tools/brain/check-links.py"
+BASH = shutil.which("bash") or "bash"  # on Windows a bare "bash" starts the WSL launcher of System32, found before the PATH
 
 
 class CheckLinksTest(unittest.TestCase):
@@ -37,6 +38,7 @@ class CheckLinksTest(unittest.TestCase):
                     env={**os.environ, "BRAIN_DIR": str(brain)},
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
                     check=False,
                 )
 
@@ -88,7 +90,7 @@ class CheckLinksTest(unittest.TestCase):
 
                 def check() -> subprocess.CompletedProcess[str]:
                     return subprocess.run([sys.executable, str(CHECKER)], env={**os.environ, "BRAIN_DIR": str(brain)},
-                                          capture_output=True, text=True, check=False)
+                                          capture_output=True, text=True, encoding="utf-8", check=False)
 
                 result = check()
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -114,6 +116,7 @@ class CheckLinksTest(unittest.TestCase):
                     env={**os.environ, "BRAIN_DIR": str(brain)},
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
                     check=False,
                 )
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
@@ -135,7 +138,7 @@ class DefaultBrainTest(unittest.TestCase):
     def check(self, **env: str) -> subprocess.CompletedProcess[str]:
         base = {key: value for key, value in os.environ.items() if key not in ("BRAIN_DIR", "BRAIN")}
         return subprocess.run([sys.executable, str(CHECKER)], env={**base, "WORK_DIR": str(self.work), **env},
-                              capture_output=True, text=True, check=False)
+                              capture_output=True, text=True, encoding="utf-8", check=False)
 
     def test_brain_then_the_setting_then_the_only_brain(self) -> None:
         self.assertIn("DEAD MD LINK (missing-a.md)", self.check().stdout)
@@ -181,6 +184,7 @@ class CrossBrainLinksTest(unittest.TestCase):
             env={**os.environ, "BRAIN_DIR": str(self.work / brain)},
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=False,
         )
 
@@ -263,8 +267,8 @@ class CheckLinksScriptTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def check(self) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(["bash", str(self.root / "tools/machine/check-links.sh")],
-                              env={**os.environ, "WORK_DIR": str(self.root)}, capture_output=True, text=True, check=False)
+        return subprocess.run([BASH, str(self.root / "tools/machine/check-links.sh")],
+                              env={**os.environ, "WORK_DIR": str(self.root)}, capture_output=True, text=True, encoding="utf-8", check=False)
 
     def test_every_brain_is_checked_and_any_failure_fails_the_script(self) -> None:
         self.assertEqual(self.check().returncode, 0)

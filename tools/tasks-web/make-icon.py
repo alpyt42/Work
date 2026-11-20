@@ -289,4 +289,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "machine"))
+    import work_config  # tools/machine/work_config.py
+
+    work_config.utf8_stdio()
     raise SystemExit(main())

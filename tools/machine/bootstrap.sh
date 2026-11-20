@@ -3,6 +3,25 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+# Git Bash on Windows: make ln -s create a real symbolic link (Developer Mode) or fail, never a silent copy.
+# Other systems ignore MSYS.
+export MSYS="${MSYS:+$MSYS }winsymlinks:nativestrict"
+
+# Windows allows symbolic links only with Developer Mode (or as administrator): check before changing anything,
+# instead of stopping halfway on a bare "ln: ... Operation not permitted".
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN*)
+    probe="$(mktemp -d)"
+    mkdir "$probe/target"
+    if ! ln -s target "$probe/link" 2>/dev/null; then
+      rm -rf "$probe"
+      echo "This Windows account cannot create symbolic links, which the skills and the artifacts folder need." >&2
+      echo "Turn on Developer Mode (Settings > System > For developers), open a new Git Bash, then run bootstrap.sh again." >&2
+      exit 1
+    fi
+    rm -rf "$probe"
+    ;;
+esac
 
 command -v git >/dev/null || { echo "git is required" >&2; exit 1; }
 command -v uv >/dev/null || { echo "uv is required for workspace checks" >&2; exit 1; }
@@ -48,10 +67,7 @@ fi
 # Skills: validate the configuration, write the lock, install the third-party skills, expose everything.
 uv run tools/machine/work_config.py check
 uv run tools/machine/work_config.py lock
-if [[ -n "$(uv run tools/machine/work_config.py list-third-party)" ]]; then
-  command -v npx >/dev/null || { echo "Node.js (npx) is required for third-party skills" >&2; exit 1; }
-  npx --yes skills experimental_install
-fi
+./tools/machine/install-third-party.sh
 
 uv run tools/machine/sync-house-skills.py
 ./tools/machine/link-skills.sh

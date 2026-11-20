@@ -992,7 +992,7 @@ def run(events: list, cwd: str | None, ctx: Context) -> None:
 
 def main() -> int:
     try:
-        data = json.loads(sys.stdin.read())
+        data = json.loads(sys.stdin.buffer.read())  # bytes: UTF-8 from Claude Code, not the ANSI code page of Windows
     except ValueError:
         sys.stderr.write("claude-bash-guard: unreadable input, command not checked\n")
         return 0

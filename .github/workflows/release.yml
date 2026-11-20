@@ -29,7 +29,7 @@ jobs:
           git config --global user.email "ci@example.invalid"
           git config --global init.defaultBranch main
       - name: Tests
-        run: uv run --with pytest --with markdown-it-py pytest tests/ -q
+        run: uv run --with pytest --with markdown-it-py --with tzdata pytest tests/ -q
 
   release:
     needs: test

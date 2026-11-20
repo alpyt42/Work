@@ -270,4 +270,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    work_config.utf8_stdio()
     raise SystemExit(main())

@@ -61,7 +61,7 @@ class DecisionTest(unittest.TestCase):
 
     def run_tool(self, *args: str, code: int = 0) -> dict | list | str:
         result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), *args], env=self.env,
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
         try:
             return json.loads(result.stdout)
@@ -99,7 +99,7 @@ class DecisionTest(unittest.TestCase):
             "  3. [proposed] 2026-10-03 — Beta carrée  (acme / gamma)",
         ])
         result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), "list", "--state", "active"], env=self.env,
-                                capture_output=True, text=True, check=False)
+                                capture_output=True, text=True, encoding="utf-8", check=False)
         self.assertEqual(result.returncode, 2)
         self.assertIn("invalid choice", result.stderr)
 

@@ -12,7 +12,7 @@ symlink status, files no repository backs up).
 It also checks the skill configuration (valid layers, changed since the last
 update.sh, skills of skills-lock.json no layer knows, enabled third-party skills not
 installed, broken or orphan links in .agents/skills and .claude/skills, real folders of
-.agents/skills that are neither an enabled third-party skill nor a generated copy) and, for each
+.agents/skills that are neither an enabled third-party skill nor a generated copy, managed entries that are a copy instead of a link) and, for each
 brain, its boundary declaration .data/brain.json (fields filled in; Git remote and
 effective user.email matching the declared patterns).
 It never fetches, pulls or writes, and prints no configured path but the artifacts folder; the skill links
@@ -198,10 +198,15 @@ def skills_checks() -> None:
         if skill["mode"] == "link"
         for agent in (".agents", ".claude")
     } | {(".claude", name, f"../../.agents/skills/{name}") for name in third_party}
+    link_names = {(agent, name) for agent, name, _ in expected}
     for agent in (".agents", ".claude"):
         folder = WORK / agent / "skills"
         for entry in sorted(folder.iterdir()) if folder.is_dir() else []:
             if not entry.is_symlink():
+                if entry.is_dir() and (agent, entry.name) in link_names:
+                    report("ERROR", f"copy where a link is expected: {agent}/skills/{entry.name} is a real folder, not a symbolic link "
+                                    "(typically Git Bash on Windows without symlink support: ln -s copied the folder) "
+                                    "— enable Developer Mode (Settings > System > For developers), remove the copy, then rerun tools/machine/update.sh")
                 continue
             target = os.readlink(entry)
             if not entry.exists():
@@ -264,4 +269,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    work_config.utf8_stdio()
     main()

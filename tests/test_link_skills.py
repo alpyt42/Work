@@ -17,6 +17,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 MACHINE = REPO / "tools/machine"
+BASH = shutil.which("bash") or "bash"  # on Windows a bare "bash" starts the WSL launcher of System32, found before the PATH
 MARKER = ".generated-from-brain-skill"
 LEGACY_MARKER = ".generated-from-skills-new-project"
 
@@ -57,7 +58,7 @@ class LinkSkillsTest(unittest.TestCase):
 
     def link_skills(self) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            ["bash", str(self.root / "tools/machine/link-skills.sh")], env=self.env, capture_output=True, text=True
+            [BASH, str(self.root / "tools/machine/link-skills.sh")], env=self.env, capture_output=True, text=True
         )
 
     def sync(self, *args: str) -> subprocess.CompletedProcess[str]:
@@ -75,6 +76,11 @@ class LinkSkillsTest(unittest.TestCase):
     def link(self, agent: str, name: str) -> Path:
         return self.root / agent / "skills" / name
 
+    @staticmethod
+    def target(link: Path) -> str:
+        """The link's target with `/` separators: Git Bash on Windows stores a native link with `\\`."""
+        return Path(os.readlink(link)).as_posix()
+
     def names(self, agent: str) -> list[str]:
         folder = self.root / agent / "skills"
         return sorted(path.name for path in folder.iterdir()) if folder.is_dir() else []
@@ -85,7 +91,7 @@ class LinkSkillsTest(unittest.TestCase):
             for brain, name in (("brain", "alpha"), ("brain-perso", "beta")):
                 link = self.link(agent, name)
                 self.assertTrue(link.is_symlink(), link)
-                self.assertEqual(os.readlink(link), f"../../{brain}/skills/{name}")
+                self.assertEqual(self.target(link), f"../../{brain}/skills/{name}")
                 self.assertTrue((link / "SKILL.md").is_file())
         self.ok(self.link_skills())  # idempotent
 
@@ -121,7 +127,7 @@ class LinkSkillsTest(unittest.TestCase):
         self.ok(self.link_skills())
         for agent in (".agents", ".claude"):
             for name in ("alpha", "beta"):
-                self.assertEqual(os.readlink(self.link(agent, name)), f"../../brain-initech/skills/{name}")
+                self.assertEqual(self.target(self.link(agent, name)), f"../../brain-initech/skills/{name}")
                 self.assertTrue((self.link(agent, name) / "SKILL.md").is_file())
 
     def test_unmanaged_paths_are_refused_or_left_alone(self) -> None:
@@ -197,7 +203,7 @@ class LinkSkillsTest(unittest.TestCase):
         installed.mkdir(parents=True)
         (installed / "SKILL.md").write_text("# tp\n", encoding="utf-8")
         self.ok(self.link_skills())
-        self.assertEqual(os.readlink(self.link(".claude", "tp")), "../../.agents/skills/tp")
+        self.assertEqual(self.target(self.link(".claude", "tp")), "../../.agents/skills/tp")
 
         self.write_local(disabled=["tp"], third_party={"tp": third_party_entry("tp")})
         self.ok(self.link_skills())
@@ -221,7 +227,7 @@ class LinkSkillsTest(unittest.TestCase):
         self.ok(self.link_skills())
         self.assertEqual((installed / "SKILL.md").read_text(encoding="utf-8"), "# tp\n")
         self.assertFalse((self.root / ".agents/skills-disabled/tp").exists())
-        self.assertEqual(os.readlink(self.link(".claude", "tp")), "../../.agents/skills/tp")
+        self.assertEqual(self.target(self.link(".claude", "tp")), "../../.agents/skills/tp")
 
         self.write_local(third_party={"other": third_party_entry("other")})  # still missing when nothing is set aside
         self.assertIn("Missing installed skill: other", self.fails(self.link_skills()))
@@ -254,8 +260,8 @@ class LinkSkillsTest(unittest.TestCase):
             self.link(agent, "theirs").symlink_to(elsewhere)
         self.ok(self.link_skills())
         for agent in (".agents", ".claude"):
-            self.assertEqual(os.readlink(self.link(agent, "alpha")), "../../brain/skills/alpha")
-            self.assertEqual(os.readlink(self.link(agent, "beta")), "../../brain-perso/skills/beta")
+            self.assertEqual(self.target(self.link(agent, "alpha")), "../../brain/skills/alpha")
+            self.assertEqual(self.target(self.link(agent, "beta")), "../../brain-perso/skills/beta")
             self.assertTrue((self.link(agent, "beta") / "SKILL.md").is_file())
             self.assertFalse(self.link(agent, "gone").is_symlink())
             self.assertTrue(self.link(agent, "mine").is_symlink() and self.link(agent, "theirs").is_symlink())
@@ -314,9 +320,78 @@ class LinkSkillsTest(unittest.TestCase):
         self.ok(self.sync())
         self.ok(self.link_skills())
         for agent in (".agents", ".claude"):
-            self.assertEqual(os.readlink(self.link(agent, "new-project")), "../../brain/skills/new-project")
+            self.assertEqual(self.target(self.link(agent, "new-project")), "../../brain/skills/new-project")
             self.assertFalse(self.link(agent, "retired").exists())
             self.assertTrue((self.link(agent, "by-hand") / "SKILL.md").is_file())
+
+
+@unittest.skipUnless(shutil.which("uv") and shutil.which("bash"), "uv and bash are required")
+class InstallThirdPartyTest(unittest.TestCase):
+    """install-third-party.sh, with a stand-in `npx` first on the PATH: no network, no Node.js."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name).resolve()
+        (self.root / "tools/machine").mkdir(parents=True)
+        for name in ("install-third-party.sh", "work_config.py"):
+            shutil.copy(MACHINE / name, self.root / "tools/machine" / name)
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        npx = bin_dir / "npx"  # records its call, installs the skills named in STUB_INSTALL, exits with STUB_STATUS
+        npx.write_text(
+            "#!/usr/bin/env bash\n"
+            'echo "$*" >> npx-calls\n'
+            'for skill in $STUB_INSTALL; do mkdir -p ".agents/skills/$skill" && echo "# $skill" > ".agents/skills/$skill/SKILL.md"; done\n'
+            'exit "${STUB_STATUS:-0}"\n',
+            encoding="utf-8",
+            newline="\n",
+        )
+        npx.chmod(0o755)
+        self.env = {**os.environ, "WORK_DIR": str(self.root), "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def enable(self, *names: str) -> None:
+        config = {"version": 1, "skills": {"disabled": [], "thirdParty": {name: third_party_entry(name) for name in names}}}
+        (self.root / "work-config.local.json").write_text(json.dumps(config), encoding="utf-8")
+
+    def install(self, installs: str = "", status: int = 0) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [BASH, str(self.root / "tools/machine/install-third-party.sh")],
+            env={**self.env, "STUB_INSTALL": installs, "STUB_STATUS": str(status)},
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    def test_nothing_enabled_runs_no_installer(self) -> None:
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / "npx-calls").exists())
+
+    def test_enabled_skills_are_installed_by_npx(self) -> None:
+        self.enable("tp")
+        result = self.install("tp")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / "npx-calls").read_text(encoding="utf-8"), "--yes skills experimental_install\n")
+        self.assertTrue((self.root / ".agents/skills/tp/SKILL.md").is_file())
+
+    def test_failure_after_installing_every_skill_is_accepted_on_windows_only(self) -> None:
+        self.enable("tp", "other")
+        result = self.install("tp other", status=1)
+        if os.name == "nt":
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("npx skills exited with status 1, but every enabled third-party skill is installed", result.stderr)
+        else:
+            self.assertEqual(result.returncode, 1, result.stderr)
+
+    def test_failure_that_leaves_a_skill_uninstalled_stops(self) -> None:
+        self.enable("tp", "other")
+        result = self.install("tp", status=3)
+        self.assertEqual(result.returncode, 3, result.stderr)
+        if os.name == "nt":
+            self.assertIn("left skills uninstalled: other", result.stderr)
 
 
 if __name__ == "__main__":

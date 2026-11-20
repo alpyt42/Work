@@ -19,6 +19,7 @@ REPO = Path(__file__).resolve().parents[1]
 NEW_BRAIN = REPO / "tools/brain/new-brain.py"
 CHECK_NO_CLIENT = REPO / "tools/machine/check-no-client.py"
 HOOK = REPO / "tools/machine/hooks/brain-pre-commit"
+BASH = shutil.which("bash") or "bash"  # on Windows a bare "bash" starts the WSL launcher of System32, found before the PATH
 TEMPLATE = REPO / "kit/brain/templates/templater/new-action.md"
 GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 
@@ -500,7 +501,7 @@ class PreCommitHookTest(WorkFolder):
         git(brain, "add", "-A")
 
     def run_hook(self, brain: Path) -> subprocess.CompletedProcess:
-        return subprocess.run(["bash", str(HOOK)], cwd=brain, env=GIT_ENV, capture_output=True, text=True)
+        return subprocess.run([BASH, str(HOOK)], cwd=brain, env=GIT_ENV, capture_output=True, text=True)
 
     def test_clean_seeds_pass(self) -> None:
         for brain in (self.default, self.perso):

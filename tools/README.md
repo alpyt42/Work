@@ -54,9 +54,10 @@ Installation, update, Git hooks and checks of the workspace on a machine: see [m
 
 | Command | Role | Guide |
 |---|---|---|
-| `tools/machine/install.sh [--brain URL] [--brain-perso URL\|new] [--no-bootstrap]` | Entry point after the clone: clones or creates `brain/` (and `brain-perso/`), then runs `bootstrap.sh` | [README.md](machine/README.md) |
+| `tools/machine/install.sh [--brain URL] [--brain-dir FOLDER] [--brain-perso URL\|new] [--no-bootstrap]` | Entry point after the clone: clones or creates `brain/` or `--brain-dir` (and `brain-perso/`), then runs `bootstrap.sh` | [README.md](machine/README.md) |
 | `tools/machine/bootstrap.sh` | Prepares a fresh checkout: local folders, Git hooks of Work and of every brain, skills, links, checks | [README.md](machine/README.md) |
 | `tools/machine/update.sh` | Regenerates skills and links from the configuration, records the configuration fingerprint and reports the Git state of Work and of every brain | [README.md](machine/README.md) |
+| `tools/machine/install-third-party.sh` | Installs the enabled third-party skills with `npx skills` (run by `bootstrap.sh` and `update.sh`) | [README.md](machine/README.md) |
 | `uv run tools/machine/work_config.py <command>` | Skill configuration (`check`, `list-brains`, `default-brain`, `list-own`, `list-third-party`, `list-catalog`, `lock`, `adopt [--brain B]`, `stamp`, `status`) | [README.md](machine/README.md) |
 | `uv run tools/machine/doctor.py` | Read-only local diagnosis of the workspace, the brains and their boundaries | [README.md](machine/README.md) |
 | `uv run tools/machine/setup.py status [--json] \| set <key> <value> \| default <key>` | Setup checklist of this machine: settings an agent asks and writes (`defaultBrain`, `artifactsDir`, `brains`, `transcripts_dir`, each brain's owner and boundary), with their default (`default`, alias `ignore`), and checks of what only the owner can do; the SessionStart hook prints what is missing | [README.md](machine/README.md) |

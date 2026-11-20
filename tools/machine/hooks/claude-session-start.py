@@ -125,6 +125,7 @@ def main() -> int:
         root = Path(env_root).resolve() if env_root else Path(__file__).resolve().parents[3]
         try:
             wc = load_work_config(root)
+            wc.utf8_stdio()  # Claude Code reads this output as UTF-8
         except Exception:
             wc = None
         setup = start_setup(root) if wc is not None else None

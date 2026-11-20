@@ -21,7 +21,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from work_config import GENERATED_MARKER as MARKER, ROOT, ConfigError, enabled_own, is_generated_copy, rel, resolve
+from work_config import GENERATED_MARKER as MARKER, ROOT, ConfigError, enabled_own, is_generated_copy, rel, resolve, utf8_stdio
 
 DESTINATIONS = (ROOT / ".agents/skills", ROOT / ".claude/skills")
 CACHES = ("__pycache__", "*.pyc", ".DS_Store")
@@ -56,7 +56,7 @@ def is_current(destination: Path, name: str, skill: dict) -> bool:
 
 def is_managed_link(path: Path, name: str) -> bool:
     # `../../skills/<name>` is the link of the previous layout (house skills in Work/skills/)
-    return path.is_symlink() and re.fullmatch(rf"\.\./\.\./(brain(-[a-z0-9][a-z0-9-]*)?/)?skills/{re.escape(name)}", str(path.readlink())) is not None
+    return path.is_symlink() and re.fullmatch(rf"\.\./\.\./(brain(-[a-z0-9][a-z0-9-]*)?/)?skills/{re.escape(name)}", path.readlink().as_posix()) is not None
 
 
 def sync(copies: dict[str, dict], check: bool) -> list[str]:
@@ -113,4 +113,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    utf8_stdio()
     raise SystemExit(main())

@@ -31,7 +31,7 @@ class MachineDoctorTest(unittest.TestCase):
         (self.work / "brain/.data").mkdir()
         (self.work / "artifacts").mkdir()
         self.write_config({"transcripts_dir": "inbox/transcripts", "recordings_dir": "inbox/missing", "brains": ["brain"]})
-        self.env = {**os.environ, "WORK_DIR": str(self.work), "HOME": str(self.home)}
+        self.env = {**os.environ, "WORK_DIR": str(self.work), "HOME": str(self.home), "USERPROFILE": str(self.home)}  # Windows expands ~ from USERPROFILE
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -203,6 +203,27 @@ class MachineDoctorTest(unittest.TestCase):
         self.assertIn("orphan link: .claude/skills/off", out)
         self.assertNotIn("skills/live", out)
         self.assertNotIn("skills/foreign", out)
+
+    def test_link_mode_skill_installed_as_a_real_folder_is_reported(self) -> None:
+        for name, marker in (("linked", ""), ("copied", ".install-as-copy"), ("flat", "")):
+            (self.work / "brain/skills" / name).mkdir(parents=True)
+            (self.work / "brain/skills" / name / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
+            if marker:
+                (self.work / "brain/skills" / name / marker).write_text("", encoding="utf-8")
+        claude, agents = self.work / ".claude/skills", self.work / ".agents/skills"
+        claude.mkdir(parents=True)
+        agents.mkdir(parents=True)
+        (claude / "linked").symlink_to("../../brain/skills/linked")
+        (agents / "linked").symlink_to("../../brain/skills/linked")
+        (claude / "copied").mkdir()  # copy-mode skill: a generated copy is expected
+        (claude / "copied/.generated-from-brain-skill").write_text("generated\n", encoding="utf-8")
+        (claude / "flat").mkdir()  # what `ln -s` leaves on Git Bash without symlink support
+        (claude / "flat/SKILL.md").write_text("# flat\n", encoding="utf-8")
+        out = self.run_doctor().stdout
+        self.assertIn("copy where a link is expected: .claude/skills/flat", out)
+        self.assertIn("Developer Mode", out)
+        self.assertNotIn("skills/linked", out)
+        self.assertNotIn("skills/copied", out)
 
     def test_real_folder_in_agents_skills_that_is_neither_enabled_nor_generated_is_a_warning(self) -> None:
         skills = self.work / ".agents/skills"

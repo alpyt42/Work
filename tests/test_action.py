@@ -101,7 +101,7 @@ class ArchiveActionsTest(unittest.TestCase):
     def run_tool(self, *args: str, code: int = 0, env: dict | None = None) -> subprocess.CompletedProcess:
         result = subprocess.run(
             [sys.executable, str(TOOL), "--brain", str(self.brain), "archive", "--today", "2026-10-12", *args],
-            env=env or self.env, cwd=self.work, capture_output=True, text=True,
+            env=env or self.env, cwd=self.work, capture_output=True, text=True, encoding="utf-8",
         )
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
         return result
@@ -241,7 +241,7 @@ class ArchiveActionsTest(unittest.TestCase):
 
     def test_env_override_for_today(self) -> None:
         env = {**self.env, "ARCHIVE_TODAY": "2026-09-14"}
-        result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), "archive", "--quiet"], env=env, cwd=self.work, capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), "archive", "--quiet"], env=env, cwd=self.work, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Total archive: 4 action(s)", result.stdout)  # cutoff 2026-08-15: AAA-011 (same day) stays
 
@@ -298,7 +298,7 @@ class ActionCommandTest(unittest.TestCase):
 
     def act(self, *args: str, code: int = 0, now: str | None = None) -> dict | list:
         env = {**self.env, **({"ACTION_NOW": now} if now else {})}
-        result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), *args], env=env, capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), *args], env=env, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
         try:
             return json.loads(result.stdout)
@@ -476,7 +476,7 @@ class ActionCommandTest(unittest.TestCase):
             "details_version": version(f"{line}\n    - source: s"),
         }
         result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), "show", "GAM-001"], env=self.env, capture_output=True,
-                                text=True, check=False)
+                                text=True, encoding="utf-8", check=False)
         self.assertEqual(result.stdout, json.dumps(expected, ensure_ascii=False, indent=2) + "\n")  # the bytes tasks-web reads
 
     def test_list_due_before_and_limit(self) -> None:
@@ -649,7 +649,7 @@ class ActionGroupTest(unittest.TestCase):
         self.act("update", "GAM-001", "--state", "x", "--closed-on", "2026-01-05")
         self.assertIn("## Done\n- [x] **GAM-001** — Jane — Existante #group/lot-un 📅 2026-10-20 ✅ 2026-01-05", self.text())
         result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), "archive", "--write", "--today", "2026-10-13"],
-                                env=self.env, capture_output=True, text=True)
+                                env=self.env, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         archive = (self.folder / "state/actions-archive-2026.md").read_text(encoding="utf-8")
         self.assertIn("Existante #group/lot-un 📅 2026-10-20 ✅ 2026-01-05", archive)
@@ -980,7 +980,7 @@ class ActionUpdatedStampTest(unittest.TestCase):
 
     def git(self, *args: str) -> str:
         result = subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", *args],
-                                cwd=self.brain, env=self.env, capture_output=True, text=True)
+                                cwd=self.brain, env=self.env, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
@@ -1200,7 +1200,7 @@ class DefaultBrainTest(unittest.TestCase):
 
     def listed(self, **env: str) -> subprocess.CompletedProcess:
         return subprocess.run([sys.executable, str(TOOL), "list", "--project", "acme/gamma"], env={**self.env, **env},
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, encoding="utf-8")
 
     def ids(self, **env: str) -> list[str]:
         result = self.listed(**env)
@@ -1226,7 +1226,7 @@ class DefaultBrainTest(unittest.TestCase):
         self.set_default("brain-initech")
         self.assertEqual(self.ids(BRAIN_DIR=str(self.work / "brain")), ["GAM-001"])
         result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.work / "brain"), "list", "--project", "acme/gamma"],
-                                env=self.env, capture_output=True, text=True)
+                                env=self.env, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual([item["id"] for item in json.loads(result.stdout)], ["GAM-001"])
 
     def test_invalid_setting_is_reported_not_a_traceback(self) -> None:
@@ -1240,7 +1240,7 @@ class DefaultBrainTest(unittest.TestCase):
     def test_the_work_relative_path_of_a_register_names_the_brain_folder(self) -> None:
         path = "brain-initech/projects/clients/acme/missions/gamma/state/actions.md"
         result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.work / "brain-initech"), "list", "--project", path],
-                                env=self.env, capture_output=True, text=True)
+                                env=self.env, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual([item["id"] for item in json.loads(result.stdout)], ["INI-001"], result.stderr)
 
 
@@ -1387,7 +1387,7 @@ class ActionArchivedProjectTest(unittest.TestCase):
     def test_sweep_and_archive_skip_archived_projects(self) -> None:
         def maintain(*args: str) -> str:
             result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), *args, "--today", "2026-10-13"],
-                                    env=self.env, capture_output=True, text=True)
+                                    env=self.env, capture_output=True, text=True, encoding="utf-8")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             return result.stdout
 

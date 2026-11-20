@@ -492,7 +492,7 @@ class TasksWebTest(unittest.TestCase):
 
         def git(*args):
             return subprocess.run(["git", "-C", str(self.brain), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", *args],
-                                  env=environment, check=True, capture_output=True, text=True)
+                                  env=environment, check=True, capture_output=True, text=True, encoding="utf-8")
 
         for args in (("init", "-q"), ("add", "-A"), ("commit", "-q", "-m", "test: register")):
             git(*args)
@@ -1835,7 +1835,7 @@ class GitViewTest(unittest.TestCase):
         self.addCleanup(patcher.stop)
         text = "[user]\n    useConfigOnly = true\n"
         for name, boundary in (("brain-acme", "acme"), ("brain-globex", "globex"), ("brain-local", "acme"), ("brain-plain", "acme")):
-            text += f'[includeIf "gitdir:{self.work}/{name}/"]\n    path = {self.home}/.gitconfig-{boundary}\n'
+            text += f'[includeIf "gitdir:{self.work.as_posix()}/{name}/"]\n    path = {self.home.as_posix()}/.gitconfig-{boundary}\n'
             (self.home / f".gitconfig-{boundary}").write_text(f"[user]\n    name = {boundary.title()} Person\n    email = ada@{boundary}.example\n", encoding="utf-8")
         (self.home / ".gitconfig").write_text(text, encoding="utf-8")
         self.acme = self.make_brain("brain-acme", "acme", self.ACME)
@@ -1849,7 +1849,7 @@ class GitViewTest(unittest.TestCase):
     # --- fixtures
 
     def git(self, repo, *args, check=True):
-        result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+        result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8")
         if check:
             self.assertEqual(result.returncode, 0, f"git {' '.join(args)}: {result.stdout}{result.stderr}")
         return result.stdout
@@ -1868,7 +1868,7 @@ class GitViewTest(unittest.TestCase):
     def make_brain(self, name, boundary, files, remote=True):
         """A brain created from the seed (hooks installed after its first commit, as bootstrap.sh does), pushed to a local bare remote."""
         result = subprocess.run([sys.executable, str(REPO / "tools/brain/new-brain.py"), name, "--scope", "employer", "--description", "Fictitious brain.",
-                                 "--remote", f"*/remotes/{name}.git", "--email", f"*@{boundary}.example"], capture_output=True, text=True)
+                                 "--remote", f"*/remotes/{name}.git", "--email", f"*@{boundary}.example"], capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stderr)
         brain = self.work / name
         for relative, text in files.items():
@@ -1889,7 +1889,7 @@ class GitViewTest(unittest.TestCase):
         return self.git(brain, "rev-parse", "HEAD").strip()
 
     def remote_head(self, name="brain-acme"):
-        return subprocess.run(["git", "--git-dir", str(self.remotes / f"{name}.git"), "rev-parse", "refs/heads/main"], capture_output=True, text=True).stdout.strip()
+        return subprocess.run(["git", "--git-dir", str(self.remotes / f"{name}.git"), "rev-parse", "refs/heads/main"], capture_output=True, text=True, encoding="utf-8").stdout.strip()
 
     def other_clone_pushes(self, name="brain-acme"):
         """Another computer adds a commit to the online copy; the brain only learns about it at its next fetch."""
@@ -2741,7 +2741,7 @@ class GitViewPageTest(unittest.TestCase):
     def test_the_script_parses(self):
         self.assertTrue(app_scripts())
         for path in app_scripts():
-            done = subprocess.run(["node", "--check", str(path)], capture_output=True, text=True, timeout=30)
+            done = subprocess.run(["node", "--check", str(path)], capture_output=True, text=True, encoding="utf-8", timeout=30)
             self.assertEqual(done.returncode, 0, done.stderr)
 
     def test_the_page_has_cards_and_two_dialogs_and_nothing_of_the_old_view(self):
@@ -3138,7 +3138,7 @@ class NoteDeleteTest(unittest.TestCase):
         self.link_pages()
         data = self.request("GET", f"/api/notes/backlinks?id={quote(self.NOTE, safe='')}")[1]
         (self.brain / self.NOTE).unlink()
-        done = subprocess.run([sys.executable, str(REPO / "tools/brain/check-links.py")], capture_output=True, text=True, timeout=60,
+        done = subprocess.run([sys.executable, str(REPO / "tools/brain/check-links.py")], capture_output=True, text=True, encoding="utf-8", timeout=60,
                               env={**os.environ, "BRAIN_DIR": str(self.brain), "WORK_DIR": str(self.brain.parent)})
         self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
         reported = set(re.findall(r"^ {7}(\S.*)$", done.stdout, re.MULTILINE))
@@ -4326,7 +4326,7 @@ class MarkdownToolbarTest(unittest.TestCase):
             return out.value.slice(0, out.start) + '«' + out.value.slice(out.start, out.end) + '»' + out.value.slice(out.end);
           })));
         """
-        done = subprocess.run(["node", "-e", script, str(self.STATIC / "md-edit.js")], input=json.dumps(self.EDITS), capture_output=True, text=True, timeout=30)
+        done = subprocess.run(["node", "-e", script, str(self.STATIC / "md-edit.js")], input=json.dumps(self.EDITS), capture_output=True, text=True, encoding="utf-8", timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
         for (tool, before, expected), got in zip(self.EDITS, json.loads(done.stdout), strict=True):
             with self.subTest(tool=tool, before=before):
@@ -4339,7 +4339,7 @@ class MarkdownToolbarTest(unittest.TestCase):
           const out = edits.apply('a b', edits.edit('arrow', 'a b', 1, 1, '⇒'));
           process.stdout.write(JSON.stringify([out.value, edits.tools]));
         """
-        done = subprocess.run(["node", "-e", script, str(self.STATIC / "md-edit.js")], capture_output=True, text=True, timeout=30)
+        done = subprocess.run(["node", "-e", script, str(self.STATIC / "md-edit.js")], capture_output=True, text=True, encoding="utf-8", timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
         value, tools = json.loads(done.stdout)
         self.assertEqual(value, "a⇒ b")
@@ -4542,7 +4542,7 @@ class BrainSwipeTest(unittest.TestCase):
 
     def run_cases(self, cases):
         done = subprocess.run(["node", "-e", self.SCRIPT, str(self.STATIC / "brain-swipe.js")], input=json.dumps(cases),
-                              capture_output=True, text=True, timeout=30)
+                              capture_output=True, text=True, encoding="utf-8", timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
         return json.loads(done.stdout)
 
@@ -4619,7 +4619,7 @@ class BrainSwipeTest(unittest.TestCase):
 
 def node_json(script, payload=None):
     """Run `script` under node (the module path is `process.argv[1]`, the payload is JSON on stdin) and return its JSON output."""
-    done = subprocess.run(["node", "-e", script, str(TOOL.parent / "static/timeline-view.js")], input=json.dumps(payload), capture_output=True, text=True, timeout=30)
+    done = subprocess.run(["node", "-e", script, str(TOOL.parent / "static/timeline-view.js")], input=json.dumps(payload), capture_output=True, text=True, encoding="utf-8", timeout=30)
     if done.returncode:
         raise AssertionError(done.stderr)
     return json.loads(done.stdout)
@@ -5689,7 +5689,7 @@ class UpdateRoutesTest(unittest.TestCase):
     NOTES = "Highlights\n\n- add the thing\n\n<script>alert(1)</script>"  # no "#" line: git strips them from a message given with -m
 
     def git(self, cwd, *args):
-        return subprocess.run(["git", *args], cwd=cwd, env=os.environ, check=True, capture_output=True, text=True).stdout.strip()
+        return subprocess.run(["git", *args], cwd=cwd, env=os.environ, check=True, capture_output=True, text=True, encoding="utf-8").stdout.strip()
 
     def commit(self, repo, name, text, message):
         (repo / name).write_text(text, encoding="utf-8")
