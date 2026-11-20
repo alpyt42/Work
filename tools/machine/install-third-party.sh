@@ -1,51 +1,43 @@
 #!/usr/bin/env bash
 # Install the enabled third-party skills of the work configuration into .agents/skills with
 # `npx skills experimental_install` (from skills-lock.json, written by `work_config.py lock`).
-# Does nothing when no third-party skill is enabled. Run by bootstrap.sh (always installs) and update.sh.
-# With --if-changed, skips npx when skills-lock.json is the one recorded after the last successful install and
-# every enabled third-party skill is installed. The recorded hash lives in .agents/third-party-lock.hash
-# (ignored, outside .agents/skills/, so no skill listing or check sees it).
+# Does nothing when no third-party skill is enabled. bootstrap.sh runs it without a flag (always installs).
+# update.sh passes --missing-only: it installs only the skills whose SKILL.md is missing, because a full
+# `npx skills experimental_install` can re-download every installed skill (and clone each source with its
+# submodules), which takes minutes. New versions of installed skills are applied by running this script
+# without a flag, or bootstrap.sh.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-if_changed=0
+missing_only=0
 case "${1:-}" in
   "") ;;
-  --if-changed) if_changed=1 ;;
-  *) echo "Usage: install-third-party.sh [--if-changed]" >&2; exit 2 ;;
+  --missing-only) missing_only=1 ;;
+  *) echo "Usage: install-third-party.sh [--missing-only]" >&2; exit 2 ;;
 esac
 
 third_party="$(uv run tools/machine/work_config.py list-third-party)"
 [[ -n "$third_party" ]] || exit 0
 
-HASH_FILE=".agents/third-party-lock.hash"
-lock_hash=""
-[[ -f skills-lock.json ]] && lock_hash="$(git hash-object --no-filters skills-lock.json 2>/dev/null || true)"
-
-all_installed() {
+if [[ $missing_only -eq 1 ]]; then
+  # A skill set aside in .agents/skills-disabled/ counts as installed: link-skills.sh puts it back without network.
+  absent=""
   while IFS= read -r skill; do
-    [[ -f ".agents/skills/$skill/SKILL.md" ]] || return 1
+    [[ -f ".agents/skills/$skill/SKILL.md" || -f ".agents/skills-disabled/$skill/SKILL.md" ]] || absent+="${absent:+ }$skill"
   done <<< "$third_party"
-}
-
-record_hash() {
-  if [[ -n "$lock_hash" ]]; then
-    mkdir -p .agents
-    printf '%s\n' "$lock_hash" > "$HASH_FILE"
+  if [[ -z "$absent" ]]; then
+    echo "Third-party skills already installed: nothing to download."
+    exit 0
   fi
-}
-
-if [[ $if_changed -eq 1 && -n "$lock_hash" && -f "$HASH_FILE" && "$(cat "$HASH_FILE")" == "$lock_hash" ]] && all_installed; then
-  echo "Third-party skills unchanged: install skipped."
-  exit 0
+  echo "Installing missing third-party skills: $absent"
 fi
 
 command -v npx >/dev/null || { echo "Node.js (npx) is required for third-party skills" >&2; exit 1; }
 
 status=0
 npx --yes skills experimental_install || status=$?
-if [[ $status -eq 0 ]]; then record_hash; exit 0; fi
+[[ $status -eq 0 ]] && exit 0
 
 # On Windows the installer can fail after installing every skill, while it removes the copy it made for
 # another agent ("OpenCode: ENOENT ... unlink ...SKILL.md"). Accept that there only when every enabled
@@ -63,4 +55,3 @@ if [[ -n "$missing" ]]; then
   exit "$status"
 fi
 echo "Warning: npx skills exited with status $status, but every enabled third-party skill is installed: continuing." >&2
-record_hash

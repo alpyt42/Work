@@ -60,6 +60,10 @@ MAX_NOTE_LINES = 20
 MAX_COMMITS = 15
 TAIL_LINES = 15
 MARKER_RE = re.compile(r"^::progress (\d+)/(\d+) (.+)$")
+# Terminal control sequences (colours, cursor moves) and the box-drawing art some installers print are kept out of
+# `output_tail`, which the local app shows as plain text.
+ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])")
+FRAME_CHARS = "".join(chr(code) for code in range(0x2500, 0x25A0)) + "|"
 TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 STALE_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX", "GIT_OBJECT_DIRECTORY",
              "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH")
@@ -241,6 +245,12 @@ def update_script() -> Path:
     return path if path.is_absolute() else ROOT / path
 
 
+def output_line(raw: str) -> str | None:
+    """One line of update.sh output as plain text; None when nothing readable is left (banner art, frames, blanks)."""
+    text = "".join(char for char in ANSI_RE.sub("", raw) if char.isprintable()).strip().strip(FRAME_CHARS).strip()
+    return text if any(char.isalnum() for char in text) else None
+
+
 def run_update_script(progress: Progress | None = None) -> dict:
     script = update_script()
     res = {"ran": False, "skipped": None, "exit_code": None, "output_tail": []}
@@ -265,8 +275,8 @@ def run_update_script(progress: Progress | None = None) -> dict:
             marker = MARKER_RE.match(line)
             if marker:
                 progress.script_marker(int(marker[1]), int(marker[2]), marker[3].strip())
-            else:
-                lines.append(line)
+            elif (text := output_line(line)) is not None:
+                lines.append(text)
 
     reader = threading.Thread(target=read, daemon=True)
     reader.start()
@@ -276,7 +286,7 @@ def run_update_script(progress: Progress | None = None) -> dict:
         proc.kill()
         proc.wait()
         code = 124
-        lines.append("timeout")
+        lines.append(f"update.sh stopped after {SCRIPT_TIMEOUT} seconds (timeout)")
     reader.join(5)
     res.update(ran=True, exit_code=code, output_tail=[ln for ln in "\n".join(lines).strip().splitlines()][-TAIL_LINES:])
     return res

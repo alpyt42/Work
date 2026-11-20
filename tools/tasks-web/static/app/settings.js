@@ -540,7 +540,7 @@ async function confirmUpdate() {
   ids.updateConfirm.removeAttribute('aria-busy');
   ids.updateWhat.textContent = '';
   updateSetError(!back ? `Updated to ${version}, but the app did not come back within 60 seconds. Open it again from the Dock.` :
-    `Updated to ${version}, but a final step of the update failed. Ask your agent to finish it.${script.output_tail?.length ? ` ${script.output_tail.join(' | ')}` : ''}`);
+    `Updated to ${version}, but a final step of the update failed. Ask your agent to finish it.${script.output_tail?.length ? `\n\n${script.output_tail.slice(-6).join('\n')}` : ''}`);
   updateReloadOnClose = true;
 }
 ids.updateButton.addEventListener('click', openUpdateDialog);
