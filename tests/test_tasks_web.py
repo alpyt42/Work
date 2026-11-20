@@ -487,7 +487,7 @@ class TasksWebTest(unittest.TestCase):
     def test_noop_and_return_to_synced_state_keep_the_previous_updated_stamp(self):
         self.register.write_text(self.register.read_text(encoding="utf-8").replace(
             "    - source: note initiale\n", "    - source: note initiale\n    - created: 2026-10-01 09:00\n    - updated: 2026-10-20 16:24\n"),
-            encoding="utf-8")
+            encoding="utf-8", newline="\n")  # the bytes the server writes back, on Windows too
         environment = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 
         def git(*args):
@@ -1040,6 +1040,19 @@ class NotesTest(unittest.TestCase):
         self.assertEqual(self.request("PATCH", "/api/notes", patch_payload, token=False)[0], 403)
         self.assertEqual(self.request("PATCH", "/api/notes", patch_payload, origin=False)[0], 403)
         self.assertFalse(list(self.brain.glob(f"notes/{self.today}-*")))
+
+    def test_a_refusal_reaches_the_client_whatever_is_left_of_the_body(self):
+        """A refusal answers without reading the body: closing on that unread body would reset the connection and lose the 403."""
+        port = self.server.server_port
+        body = json.dumps({"id": f"{self.CLIENT}/notes/2026-10-01-existante.md", "version": "x", "content": "y" * 140000}).encode()
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as client:
+            client.sendall(f"PATCH /api/notes HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: {self.base}\r\nContent-Type: application/json\r\n"
+                           f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+            answer = b""
+            while chunk := client.recv(65536):
+                answer += chunk
+        self.assertTrue(answer.startswith(b"HTTP/1.0 403 "), answer[:80])
+        self.assertTrue(answer.endswith(b'{"error": "Invalid local token."}'), answer[-80:])
 
     def test_patch_replaces_whole_file_and_detects_stale_version(self):
         note_id = f"{self.CLIENT}/notes/2026-10-01-existante.md"
@@ -3141,7 +3154,7 @@ class NoteDeleteTest(unittest.TestCase):
         done = subprocess.run([sys.executable, str(REPO / "tools/brain/check-links.py")], capture_output=True, text=True, encoding="utf-8", timeout=60,
                               env={**os.environ, "BRAIN_DIR": str(self.brain), "WORK_DIR": str(self.brain.parent)})
         self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
-        reported = set(re.findall(r"^ {7}(\S.*)$", done.stdout, re.MULTILINE))
+        reported = {Path(line).as_posix() for line in re.findall(r"^ {7}(\S.*)$", done.stdout, re.MULTILINE)}  # the tool prints the OS separator
         self.assertEqual(reported, {page["id"] for page in data["pages"]}, done.stdout)
 
     def test_unknown_notes_have_no_backlinks_to_ask_for(self):
@@ -3157,13 +3170,14 @@ class NoteDeleteTest(unittest.TestCase):
         path = self.brain / self.NOTE
         path.write_bytes(raw)
         path.chmod(0o640)
+        mode = path.stat().st_mode & 0o777  # 0o640; 0o666 on Windows, where chmod only sets or clears read-only
         self.assertEqual(self.delete(self.NOTE)[0], 200)
         shutil.rmtree(self.brain / f"{self.CLIENT}/notes")  # even the folder may be gone by then
         status, data = self.undo()
         self.assertEqual(status, 200, data)
         self.assertEqual((data["undone"], data["action_id"], data["restored"], data["undo"]["available"]), ('note "2026-10-01-kickoff" deleted', self.NOTE, True, False))  # the first line carries a BOM: no title
         self.assertEqual(path.read_bytes(), raw)
-        self.assertEqual(path.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(path.stat().st_mode & 0o777, mode)
         self.assertIn(self.NOTE, [item["id"] for item in self.request("GET", "/api/notes")[1]["notes"]])
         self.assertEqual(self.request("GET", f"/api/docs/render?id={quote(self.NOTE, safe='')}")[0], 200)
 
@@ -6166,10 +6180,10 @@ class PrioritiesTest(unittest.TestCase):
     def test_version_follows_the_bytes(self):
         stamp = self.now().isoformat(timespec="seconds")
         text = f"---\ntype: priorities\ngenerated: {stamp}\n---\n\n## Now\n- **A**\n"
-        self.put("brain", text)
+        path = self.put("brain", text)
         first = self.request("GET", "/api/priorities")[1]["version"]
         self.assertEqual(first, self.request("GET", "/api/priorities")[1]["version"])
-        self.assertEqual(first, hashlib.sha256(text.encode()).hexdigest()[:16])
+        self.assertEqual(first, hashlib.sha256(path.read_bytes()).hexdigest()[:16])  # the bytes on disk: CRLF lines on Windows
         self.put("brain", text + "- **B**\n")
         self.assertNotEqual(first, self.request("GET", "/api/priorities")[1]["version"])
 
