@@ -1,5 +1,8 @@
 """Regression checks for the Claude Code Bash guard hook: direct Python, artifacts/ protection, Git hook bypass."""
 
+import contextlib
+import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -8,8 +11,15 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HOOK = Path(__file__).resolve().parents[1] / "tools/machine/hooks/claude-bash-guard.py"
+
+
+def shell(path: Path | str) -> str:
+    """A path as a command line spells it: `str(path)` on POSIX, `C:/Users/...` on Windows (an unquoted
+    backslash is an escape for bash, so `str(path)` would not name the folder in a Git Bash command)."""
+    return Path(path).as_posix()
 
 PYTHON_MESSAGE = "Direct Python is not allowed"
 ARTIFACTS_MESSAGE = "artifacts/ is protected"
@@ -346,7 +356,7 @@ class GuardTestCase(unittest.TestCase):
         self.assertEqual(result.stdout, "")
 
     def fill(self, command: str) -> str:
-        return command.replace("@WORK@", str(self.work))
+        return command.replace("@WORK@", shell(self.work))
 
 
 class NoDirectPythonTest(GuardTestCase):
@@ -406,9 +416,9 @@ class ArtifactsProtectionTest(GuardTestCase):
 
     def test_claude_project_dir_defines_the_work_root(self) -> None:
         elsewhere = self.home / "elsewhere"
-        absolute = f"rm -rf {self.work}/artifacts/acme-report"
+        absolute = f"rm -rf {shell(self.work)}/artifacts/acme-report"
         self.assert_blocked(absolute, ARTIFACTS_MESSAGE, cwd=elsewhere, project_dir=self.work)
-        self.assert_blocked(f"cd {self.work} && rm -rf artifacts", ARTIFACTS_MESSAGE, cwd=elsewhere, project_dir=self.work)
+        self.assert_blocked(f"cd {shell(self.work)} && rm -rf artifacts", ARTIFACTS_MESSAGE, cwd=elsewhere, project_dir=self.work)
         self.assert_blocked("rm -rf $CLAUDE_PROJECT_DIR/artifacts/x", ARTIFACTS_MESSAGE, cwd=elsewhere, project_dir=self.work)
         # Relative to a cwd that is not the Work root, `artifacts` is another folder.
         self.assert_allowed("rm -rf artifacts/x", cwd=elsewhere, project_dir=self.work)
@@ -418,8 +428,8 @@ class ArtifactsProtectionTest(GuardTestCase):
     def test_claude_project_dir_wins_over_the_parent_search(self) -> None:
         other = self.home / "other-work"
         (other / "artifacts").mkdir(parents=True)
-        self.assert_allowed(f"rm -rf {other}/artifacts", cwd=self.work / "repos/demo", project_dir=self.work)
-        self.assert_blocked(f"rm -rf {other}/artifacts", ARTIFACTS_MESSAGE, cwd=self.work / "repos/demo", project_dir=other)
+        self.assert_allowed(f"rm -rf {shell(other)}/artifacts", cwd=self.work / "repos/demo", project_dir=self.work)
+        self.assert_blocked(f"rm -rf {shell(other)}/artifacts", ARTIFACTS_MESSAGE, cwd=self.work / "repos/demo", project_dir=other)
 
     def test_outside_any_work_root_nothing_is_protected(self) -> None:
         for command in ARTIFACTS_OUTSIDE_WORK:
@@ -433,9 +443,36 @@ class ArtifactsProtectionTest(GuardTestCase):
         (self.home / "synced-artifacts").mkdir()
         (work / "artifacts").symlink_to(self.home / "synced-artifacts")
         self.assert_blocked("rm -rf artifacts/x", ARTIFACTS_MESSAGE, cwd=work)
-        self.assert_blocked(f"rm -rf {self.home}/synced-artifacts/x", ARTIFACTS_MESSAGE, cwd=work)
+        self.assert_blocked(f"rm -rf {shell(self.home)}/synced-artifacts/x", ARTIFACTS_MESSAGE, cwd=work)
         self.assert_blocked("rm -rf ~/linked-work", ARTIFACTS_MESSAGE, cwd=work)
         self.assert_allowed("rm -rf repos/x", cwd=work)
+
+    @unittest.skipUnless(os.name == "nt", "C:\\x, C:/x, /c/x and 8.3 short names spell one folder only on Windows")
+    def test_windows_spellings_are_protected(self) -> None:
+        native, posix = str(self.work), shell(self.work)
+        msys = "/" + posix[0].lower() + posix[2:]
+        commands = [
+            f"rm -rf '{native}\\artifacts\\acme-report'",
+            f'rm -rf "{native}\\artifacts"',
+            f"rm -rf {posix.lower()}/ARTIFACTS",
+            f"rm -rf {msys}/artifacts/acme-report",
+            f"rm -rf /cygdrive{msys}/artifacts",
+            f"cd {msys}/repos && rm -rf ../artifacts",
+            "/usr/bin/rm.exe -rf artifacts",
+            "RM -rf artifacts",
+            f"rsync -a --delete src/ {posix}/artifacts/",
+        ]
+        import ctypes
+
+        buffer = ctypes.create_unicode_buffer(1024)
+        if ctypes.windll.kernel32.GetShortPathNameW(native, buffer, 1024) and buffer.value != native:
+            commands.append(f"rm -rf {shell(buffer.value)}/artifacts")  # 8.3 short form, e.g. RUNNER~1
+            self.assert_blocked("rm -rf artifacts", ARTIFACTS_MESSAGE, cwd=buffer.value)
+        for command in commands:
+            with self.subTest(command=command):
+                self.assert_blocked(command, ARTIFACTS_MESSAGE)
+        self.assert_allowed(f"rm -rf {msys}/repos/demo")
+        self.assert_allowed(f"mv {msys}/artifacts/acme-report '{native}\\artifacts\\archive'")
 
 
 class RelocatedArtifactsTest(GuardTestCase):
@@ -456,27 +493,27 @@ class RelocatedArtifactsTest(GuardTestCase):
         moved = self.home / "synced-globex"
         (moved / "acme-report").mkdir(parents=True)
         work = self.work_root("moved-work", str(moved))
-        self.assert_blocked(f"rm -rf {moved}/acme-report", ARTIFACTS_MESSAGE, cwd=work)
-        self.assert_blocked(f"mv {moved}/acme-report /tmp/y", ARTIFACTS_MESSAGE, cwd=work)
-        self.assert_blocked("cd %s && rm -rf *" % moved, ARTIFACTS_MESSAGE, cwd=work)
-        self.assert_blocked(f"rm -rf {moved}", ARTIFACTS_MESSAGE, cwd=work)
-        self.assert_allowed(f"mv {moved}/acme-report {moved}/archive/", cwd=work)
+        self.assert_blocked(f"rm -rf {shell(moved)}/acme-report", ARTIFACTS_MESSAGE, cwd=work)
+        self.assert_blocked(f"mv {shell(moved)}/acme-report /tmp/y", ARTIFACTS_MESSAGE, cwd=work)
+        self.assert_blocked("cd %s && rm -rf *" % shell(moved), ARTIFACTS_MESSAGE, cwd=work)
+        self.assert_blocked(f"rm -rf {shell(moved)}", ARTIFACTS_MESSAGE, cwd=work)
+        self.assert_allowed(f"mv {shell(moved)}/acme-report {shell(moved)}/archive/", cwd=work)
         self.assert_blocked("rm -rf artifacts/x", ARTIFACTS_MESSAGE, cwd=work)
         self.assert_allowed("rm -rf repos/x", cwd=work)
 
     def test_relative_and_tilde_settings(self) -> None:
         work = self.work_root("relative-work", "../globex-store")
-        self.assert_blocked(f"rm -rf {self.home}/globex-store/x", ARTIFACTS_MESSAGE, cwd=work)
+        self.assert_blocked(f"rm -rf {shell(self.home)}/globex-store/x", ARTIFACTS_MESSAGE, cwd=work)
         tilde = self.work_root("tilde-work", "~/acme-sync")
-        self.assert_blocked(f"rm -rf {self.home}/acme-sync/x", ARTIFACTS_MESSAGE, cwd=tilde)
+        self.assert_blocked(f"rm -rf {shell(self.home)}/acme-sync/x", ARTIFACTS_MESSAGE, cwd=tilde)
         self.assert_blocked("rm -rf ~/acme-sync", ARTIFACTS_MESSAGE, cwd=tilde)
-        self.assert_allowed(f"rm -rf {self.home}/acme-other/x", cwd=tilde)
+        self.assert_allowed(f"rm -rf {shell(self.home)}/acme-other/x", cwd=tilde)
 
     def test_the_setting_is_read_at_each_run(self) -> None:
         work = self.work_root("rereading-work")
-        self.assert_allowed(f"rm -rf {self.home}/initech-store/x", cwd=work)
+        self.assert_allowed(f"rm -rf {shell(self.home)}/initech-store/x", cwd=work)
         (work / "work-config.local.json").write_text(json.dumps({"version": 1, "artifactsDir": str(self.home / "initech-store")}), encoding="utf-8")
-        self.assert_blocked(f"rm -rf {self.home}/initech-store/x", ARTIFACTS_MESSAGE, cwd=work)
+        self.assert_blocked(f"rm -rf {shell(self.home)}/initech-store/x", ARTIFACTS_MESSAGE, cwd=work)
 
     def test_an_unreadable_setting_falls_back_to_the_default_folder(self) -> None:
         cases = {"broken-json": "{not json", "wrong-type": json.dumps({"artifactsDir": 3}), "empty": json.dumps({"artifactsDir": ""}), "list": "[1]"}
@@ -569,6 +606,129 @@ class RobustnessTest(GuardTestCase):
             self.assertEqual(self.run_hook(command).returncode, 0)
         elapsed = time.perf_counter() - start
         self.assertLess(elapsed / 100, 0.1, f"{elapsed / 100 * 1000:.0f} ms per run")
+
+
+def load_guard(windows: bool):
+    """A private copy of the hook with the Windows path rules switched on or off, whatever the platform."""
+    spec = importlib.util.spec_from_file_location(f"claude_bash_guard_{'windows' if windows else 'posix'}", HOOK)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.WINDOWS = windows
+    return module
+
+
+# Run in-process with the Windows rules, Work root C:\Users\acme\Work, HOME C:\Users\acme.
+WINDOWS_BLOCKED = [
+    "rm -rf artifacts/acme-report",
+    "rm -rf C:/Users/acme/Work/artifacts/acme-report",
+    "rm -rf c:/users/ACME/work/Artifacts",
+    "rm -rf 'C:\\Users\\acme\\Work\\artifacts\\acme-report'",
+    'rm -rf "C:\\Users\\acme\\Work\\artifacts"',
+    "rm -rf C:\\\\Users\\\\acme\\\\Work\\\\artifacts",
+    "rm -rf /c/Users/acme/Work/artifacts/acme-report",
+    "rm -rf /cygdrive/c/Users/acme/Work/artifacts",
+    "rm -rf C:/Users/acme/Work/repos/../artifacts",
+    "rm -rf ~/Work/artifacts",
+    "rm -rf $HOME/Work",
+    "rm -rf C:/Users/acme/*",
+    "rm -rf C:/",
+    "rm -rf C:",
+    "rm -rf /c",
+    "rm -rf /",
+    "rm -rf /*",
+    "rm -rf /?",
+    "cd /c/Users/acme/Work && rm -rf artifacts",
+    "cd 'C:\\Users\\acme\\Work\\repos' && rm -rf '..\\artifacts'",
+    "cd / && rm -rf c/Users",
+    "/usr/bin/rm.exe -rf artifacts",
+    "RM -rf artifacts",
+    "'C:\\Program Files\\Git\\usr\\bin\\rm.exe' -rf artifacts",
+    "mv /c/Users/acme/Work/artifacts/acme-report D:/backup/",
+    "git -C C:/Users/acme/Work clean -fdx",
+    "find /c/Users/acme/Work/artifacts -delete",
+    "rsync -a --delete src/ C:/Users/acme/Work/artifacts/",
+    "rsync -a --delete src/ 'C:\\Users\\acme\\Work\\artifacts'",
+]
+WINDOWS_ALLOWED = [
+    "rm -rf C:/Users/acme/Work/repos/demo",
+    "rm -rf /c/Users/acme/Work/agents/x",
+    "rm -rf 'C:\\Users\\acme\\Work\\artifacts-old'",
+    "rm -rf D:/Users/acme/Work/artifacts",
+    "rm -rf /d/Users/acme/Work/artifacts",
+    "rm -rf /tmp/acme",
+    "mv C:/Users/acme/Work/artifacts/acme-report /c/Users/acme/Work/artifacts/archive/",
+    "mv 'C:\\Users\\acme\\Work\\artifacts\\acme-report' 'c:\\users\\acme\\work\\artifacts\\archive\\'",
+    "rsync -a src/ C:/Users/acme/Work/artifacts/",
+    "cd /c/Users/acme/Work/repos/demo && rm -rf build",
+]
+
+
+class WindowsPathRulesTest(unittest.TestCase):
+    """The Windows path rules on every platform, in a private copy of the hook (no file system needed)."""
+
+    WORK = "C:\\Users\\acme\\Work"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.guard = load_guard(windows=True)
+
+    def env(self, home: str = "C:\\Users\\acme"):
+        return mock.patch.dict(os.environ, {"HOME": home, "CLAUDE_PROJECT_DIR": self.WORK})
+
+    def hits(self, command: str, cwd: str = WORK, home: str = "C:\\Users\\acme") -> dict[str, str]:
+        with self.env(home):
+            ctx = self.guard.Context(self.guard.start_dir(cwd))
+            ctx.analyze(command, ctx.cwd)
+        return ctx.hits
+
+    def test_every_spelling_of_a_folder_is_one_path(self) -> None:
+        g = self.guard
+        for text in ("C:\\Users\\acme\\Work", "C:/Users/acme/Work", "c:/Users/acme/Work/", "C:\\Users\\acme/Work", "/c/Users/acme/Work", "/C/Users/acme/Work", "/cygdrive/c/Users/acme/Work", "\\\\?\\C:\\Users\\acme\\Work", "C:/Users/acme/repos/../Work/."):
+            with self.subTest(text=text):
+                self.assertEqual(g.norm(g.slashed(text)), "C:/Users/acme/Work")
+        for text in ("C:", "C:\\", "c:/", "/c", "/c/", "/cygdrive/c"):
+            with self.subTest(root=text):
+                self.assertEqual(g.norm(g.slashed(text)), "C:/")
+        self.assertEqual(g.parts("C:/Users/acme"), ["c:", "users", "acme"])
+        self.assertTrue(g.is_abs("C:/x") and g.is_abs("/tmp/x"))
+        self.assertFalse(g.is_abs("C:x") or g.is_abs("x/y"))
+        self.assertEqual(g.start_dir("/c/Users/acme/Work/"), "C:/Users/acme/Work")
+
+    def test_deletions_in_artifacts_are_blocked_in_every_spelling(self) -> None:
+        for command in WINDOWS_BLOCKED:
+            with self.subTest(command=command):
+                self.assertIn("artifacts", self.hits(command))
+        self.assertIn("artifacts", self.hits("rm -rf ~/Work/artifacts", home="/c/Users/acme"))
+        self.assertIn("artifacts", self.hits("rm deck.pptx", cwd="/c/Users/acme/Work/artifacts/acme-report"))
+
+    def test_other_folders_and_moves_into_archive_are_allowed(self) -> None:
+        for command in WINDOWS_ALLOWED:
+            with self.subTest(command=command):
+                self.assertEqual(self.hits(command), {})
+
+    def test_unlinked_writes_name_the_configured_folder(self) -> None:
+        configured = staticmethod(lambda work: ["D:/Sync/acme-artifacts"])
+        with mock.patch.object(self.guard.Context, "configured_artifacts", configured):
+            for command in ("cp a.txt artifacts/a.txt", "cp a.txt 'C:\\Users\\acme\\Work\\artifacts\\a.txt'", "echo hi > /c/Users/acme/Work/artifacts/a.txt"):
+                with self.subTest(command=command):
+                    self.assertEqual(self.hits(command).get("unlinked"), "D:/Sync/acme-artifacts/a.txt")
+            self.assertNotIn("unlinked", self.hits("cp a.txt D:/Sync/acme-artifacts/a.txt"))
+            with self.env(), contextlib.redirect_stderr(io.StringIO()) as err:
+                code = self.guard.check_file_tool({"tool_name": "Write", "cwd": self.WORK}, {"file_path": "c:\\users\\acme\\work\\artifacts\\a.md"})
+            self.assertEqual(code, 2)
+            self.assertIn("write to D:/Sync/acme-artifacts/a.md instead", err.getvalue())
+
+
+class PosixPathRulesTest(unittest.TestCase):
+    """With the POSIX rules a backslash is part of a name and `/c/x`, `C:/x` are ordinary paths."""
+
+    def test_paths_are_left_alone(self) -> None:
+        g = load_guard(windows=False)
+        for text in ("/c/Users/acme", "C:\\Users\\acme", "C:/Users/acme", "/cygdrive/c/x"):
+            with self.subTest(text=text):
+                self.assertEqual(g.slashed(text), text)
+        self.assertFalse(g.is_abs("C:/Users/acme"))
+        self.assertEqual(g.parts(g.norm("/c/Users/acme/../globex")), ["c", "users", "globex"])
 
 
 if __name__ == "__main__":
