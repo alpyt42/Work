@@ -431,6 +431,10 @@
       <div id="updateNotes" class="markdown-body update-notes" hidden></div>
       <ul id="updateList" class="git-confirm-list" hidden></ul>
       <p id="updateWhat" class="dialog-intro"></p>
+      <div id="updateProgress" class="update-progress" hidden>
+        <div id="updateBar" class="update-bar" role="progressbar" aria-label="Update progress" aria-valuemin="0" aria-valuemax="100"><span id="updateBarFill" class="update-bar-fill"></span></div>
+        <p class="update-progress-line"><span id="updateStep" class="update-step" aria-live="polite"></span><span id="updateElapsed" class="update-elapsed"></span></p>
+      </div>
       <p id="updateError" class="form-error" role="alert" hidden></p>
       <div class="dialog-actions"><button id="updateCancel" class="button" type="submit" value="cancel" autofocus>Cancel</button><button id="updateRecheck" class="button" type="button" hidden>Check again</button><button id="updateConfirm" class="button button-primary" type="button">Update</button></div>
     </form>

@@ -349,6 +349,8 @@ function loadSettings() {
 // when a newer release exists. The update itself (`POST /api/update/apply`) fast-forwards Work, runs update.sh and restarts this server.
 const UPDATE_CHECK_EVERY = 6 * 60 * 60 * 1000;
 const UPDATE_RESTART_WAIT = 60 * 1000;
+const UPDATE_POLL_EVERY = 700;
+const UPDATE_DONE_KEY = 'work-update-done-v1'; // {version, seconds}: set just before the reload that follows an update, read once after it
 const UPDATE_WHAT = 'Installs version VERSION of the workspace, then restarts the app. Your brains and your work are not changed.';
 function updateNewer(info) {
   return Boolean(info && (info.state === 'available' || info.state === 'blocked') && info.latest && info.latest !== info.current);
@@ -433,6 +435,62 @@ async function waitForRestart() {
   }
   return false;
 }
+function updateClock(seconds) {
+  const whole = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+}
+// The step bar of a running update: determinate when GET /api/update/progress knows the total, an indeterminate stripe until then.
+function paintUpdateProgress(step, seconds, restarting) {
+  const known = restarting || Boolean(step && step.total && step.index);
+  ids.updateBar.classList.toggle('is-determinate', known);
+  ids.updateBar.setAttribute('aria-valuemax', known && !restarting ? String(step.total) : '100');
+  if (known) {
+    ids.updateBar.setAttribute('aria-valuenow', restarting ? '100' : String(step.index));
+    ids.updateBarFill.style.width = restarting ? '100%' : `${Math.min(100, Math.round(step.index / step.total * 100))}%`;
+  } else {
+    ids.updateBar.removeAttribute('aria-valuenow');
+    ids.updateBarFill.style.width = '';
+  }
+  const label = restarting ? 'Restarting…' : step && step.label ? (known ? `Step ${step.index} of ${step.total} · ${step.label}` : step.label) : 'Updating…';
+  if (ids.updateStep.textContent !== label) ids.updateStep.textContent = label;
+  ids.updateElapsed.textContent = updateClock(seconds);
+}
+function startUpdateProgress() {
+  const began = Date.now();
+  let step = null, restarting = false, stopped = false, busy = false;
+  const paint = () => paintUpdateProgress(step, (Date.now() - began) / 1000, restarting);
+  const tick = async () => {
+    if (busy || stopped || restarting) { if (!stopped) paint(); return; }
+    busy = true;
+    try {
+      const response = await fetch('/api/update/progress', {cache: 'no-store'});
+      const data = response.ok ? await response.json() : null;
+      if (data && data.running && !stopped) step = data;
+    } catch { /* a failed poll only skips one refresh */ }
+    busy = false;
+    if (!stopped) paint();
+  };
+  ids.updateWhat.hidden = true;
+  ids.updateProgress.hidden = false;
+  paint();
+  const timer = setInterval(tick, UPDATE_POLL_EVERY);
+  return {
+    seconds: () => (Date.now() - began) / 1000,
+    restarting() { restarting = true; paint(); },
+    stop() { stopped = true; clearInterval(timer); ids.updateProgress.hidden = true; ids.updateWhat.hidden = false; },
+  };
+}
+// After the reload that follows an update: the one toast saying how long it took.
+function showUpdatedToast() {
+  let done = null;
+  try {
+    done = JSON.parse(sessionStorage.getItem(UPDATE_DONE_KEY));
+    sessionStorage.removeItem(UPDATE_DONE_KEY);
+  } catch { /* storage unavailable: no toast */ }
+  if (done && typeof done.version === 'string' && /^v\d+\.\d+\.\d+$/.test(done.version) && Number.isFinite(done.seconds)) {
+    showToast(`Updated to ${done.version} in ${updateClock(done.seconds)}`);
+  }
+}
 async function confirmUpdate() {
   if (updateBusy || !updateNewer(updateInfo) || updateInfo.state !== 'available') return;
   const version = updateInfo.latest;
@@ -441,11 +499,12 @@ async function confirmUpdate() {
   ids.updateConfirm.setAttribute('aria-busy', 'true');
   ids.updateCancel.disabled = true;
   updateSetError('');
-  ids.updateWhat.textContent = 'Updating…';
+  const progress = startUpdateProgress();
   let report;
   try {
     report = await updatePost('/api/update/apply', {version});
   } catch (error) {
+    progress.stop();
     updateBusy = false;
     ids.updateConfirm.disabled = false;
     ids.updateConfirm.removeAttribute('aria-busy');
@@ -455,18 +514,25 @@ async function confirmUpdate() {
     checkUpdate({force: true}); // the state may have changed under the page
     return;
   }
+  if (report.timings) console.info('Update timings', report.timings);
   if (!report.restarting) { // already up to date: nothing was changed
+    progress.stop();
     updateBusy = false;
     ids.updateDialog.close();
     updateInfo = null;
     checkUpdate({force: true});
     return;
   }
-  ids.updateWhat.textContent = 'Restarting…';
+  progress.restarting();
   const back = await waitForRestart();
   const script = report.update_script;
   const scriptFailed = script && script.ran && script.exit_code !== 0;
-  if (back && !scriptFailed) { location.reload(); return; }
+  if (back && !scriptFailed) {
+    try { sessionStorage.setItem(UPDATE_DONE_KEY, JSON.stringify({version, seconds: Math.round(progress.seconds())})); } catch { /* no toast then */ }
+    location.reload();
+    return;
+  }
+  progress.stop();
   updateBusy = false;
   ids.updateCancel.disabled = false;
   ids.updateCancel.textContent = 'Reload';

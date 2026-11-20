@@ -9,7 +9,7 @@ Usage:
   work.py version [--json]
   work.py update --check [--no-fetch] [--json]
   work.py update --dry-run [--no-fetch] [--json]
-  work.py update --apply [--to vX.Y.Z] [--no-fetch] [--json]
+  work.py update --apply [--to vX.Y.Z] [--no-fetch] [--progress] [--json]
   work.py release --next | --notes [--json]
 
 A release is a Git tag `v<major>.<minor>.<patch>` on the upstream remote of the current branch. The current
@@ -30,6 +30,11 @@ Conventional Commits since the last release tag reachable from HEAD (`!` after t
 footer: major; else `feat`: minor; else any commit: patch; no tag yet: v0.1.0; no new commit: `next` null) and
 `--notes` prints the Markdown release notes of the same range. It never fetches and never creates or pushes a tag.
 
+`--progress` (with --apply) writes one JSON object per line to stderr as each phase starts, for a caller that
+shows a progress bar: {"label", "index", "total"} (`total` is null until update.sh announces its own phases with
+`::progress <i>/<n> <label>` lines on stdout; those lines are kept out of `output_tail`). The final report of
+--apply has `timings`: [{"label", "seconds"}, ...] for every phase, then "Total".
+
 Exit status: 0 success or nothing to do, 1 refused or failed, 2 usage error. Environment: WORK_DIR selects
 another workspace; WORK_UPDATE_SCRIPT another update script (absolute, or relative to the workspace).
 """
@@ -43,6 +48,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 ROOT = Path(os.environ.get("WORK_DIR", Path(__file__).resolve().parents[2])).resolve()
@@ -52,6 +59,7 @@ SCRIPT_TIMEOUT = 600
 MAX_NOTE_LINES = 20
 MAX_COMMITS = 15
 TAIL_LINES = 15
+MARKER_RE = re.compile(r"^::progress (\d+)/(\d+) (.+)$")
 TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 STALE_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX", "GIT_OBJECT_DIRECTORY",
              "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH")
@@ -70,6 +78,41 @@ def run(cmd: list[str], timeout: int = GIT_TIMEOUT, cwd: Path | None = None) -> 
     except OSError as exc:
         return 127, str(exc)
     return proc.returncode, proc.stdout
+
+
+class Progress:
+    """The phases of an apply: their timings and, when enabled, one JSON event per phase on stderr."""
+
+    def __init__(self, enabled: bool = False, own: int = 1) -> None:
+        self.enabled = enabled
+        self.own = own  # phases of work.py itself, counted before update.sh's own
+        self.total: int | None = None
+        self.phases: list[tuple[str, float]] = []
+        self.label: str | None = None
+        self.began = 0.0
+        self.t0 = time.monotonic()
+        self.count = 0
+
+    def _close(self) -> None:
+        if self.label is not None:
+            self.phases.append((self.label, time.monotonic() - self.began))
+            self.label = None
+
+    def start(self, label: str, index: int | None = None) -> None:
+        self._close()
+        self.count = index if index is not None else self.count + 1
+        self.label, self.began = label, time.monotonic()
+        if self.enabled:
+            print(json.dumps({"index": self.count, "total": self.total, "label": label}), file=sys.stderr, flush=True)
+
+    def script_marker(self, index: int, total: int, label: str) -> None:
+        self.total = self.own + total
+        self.start(label, self.own + index)
+
+    def timings(self) -> list[dict]:
+        self._close()
+        rows = [{"label": label, "seconds": round(seconds, 1)} for label, seconds in self.phases]
+        return rows + [{"label": "Total", "seconds": round(time.monotonic() - self.t0, 1)}]
 
 
 def git(*args: str, timeout: int = GIT_TIMEOUT) -> tuple[int, str]:
@@ -198,21 +241,48 @@ def update_script() -> Path:
     return path if path.is_absolute() else ROOT / path
 
 
-def run_update_script() -> dict:
+def run_update_script(progress: Progress | None = None) -> dict:
     script = update_script()
     res = {"ran": False, "skipped": None, "exit_code": None, "output_tail": []}
     bash = shutil.which("bash")
     if not script.is_file():
         res["skipped"] = "update script not found"
-    elif not bash:
+        return res
+    if not bash:
         res["skipped"] = "bash not found: run tools/machine/update.sh yourself (Git Bash or WSL)"
-    else:
-        rc, text = run([bash, str(script)], SCRIPT_TIMEOUT)
-        res.update(ran=True, exit_code=rc, output_tail=text.strip().splitlines()[-TAIL_LINES:])
+        return res
+    progress = progress or Progress()
+    lines: list[str] = []
+    try:
+        proc = subprocess.Popen([bash, str(script)], cwd=ROOT, env=ENV, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return {**res, "ran": True, "exit_code": 127, "output_tail": [str(exc)]}
+
+    def read() -> None:
+        for raw in proc.stdout:
+            line = raw.rstrip("\r\n")
+            marker = MARKER_RE.match(line)
+            if marker:
+                progress.script_marker(int(marker[1]), int(marker[2]), marker[3].strip())
+            else:
+                lines.append(line)
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    try:
+        code = proc.wait(timeout=SCRIPT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        code = 124
+        lines.append("timeout")
+    reader.join(5)
+    res.update(ran=True, exit_code=code, output_tail=[ln for ln in "\n".join(lines).strip().splitlines()][-TAIL_LINES:])
     return res
 
 
-def apply(rep: dict, to: str | None) -> tuple[dict, int]:
+def apply(rep: dict, to: str | None, progress: Progress | None = None) -> tuple[dict, int]:
     rep = {**rep, "applied": False, "from": rep["current"], "to": None, "update_script": None}
     if rep["state"] == "error" or rep["state"] == "blocked":
         return rep, 1
@@ -222,6 +292,8 @@ def apply(rep: dict, to: str | None) -> tuple[dict, int]:
         rep["state"] = "blocked"
         rep["reasons"] = [f"--to {to} is not the latest available release ({rep['latest']}): check again"]
         return rep, 1
+    progress = progress or Progress()
+    progress.start(f"Moving to {rep['latest']}")
     rc, text = git("merge", "--ff-only", f"refs/tags/{rep['latest']}^{{commit}}")
     if rc != 0:
         rep["state"] = "error"
@@ -229,7 +301,7 @@ def apply(rep: dict, to: str | None) -> tuple[dict, int]:
         rep["reasons"] = [rep["error"]]
         return rep, 1
     rep.update(applied=True, to=rep["latest"], head=out("rev-parse", "--short", "HEAD"))
-    rep["update_script"] = run_update_script()
+    rep["update_script"] = run_update_script(progress)
     ok = rep["update_script"]["exit_code"] in (None, 0)
     return rep, 0 if ok else 1
 
@@ -352,13 +424,17 @@ def cmd_version(args) -> int:
 
 
 def cmd_update(args) -> int:
+    progress = Progress(args.progress, own=1 if args.no_fetch else 2)
+    if args.apply and not args.no_fetch:
+        progress.start("Fetching the releases")
     rep = report(fetch=not args.no_fetch)
     code = 1 if rep["state"] == "error" else 0
     if args.dry_run:
         rep["plan"] = plan_for(rep, "tools/machine/update.sh")
         rep["would_apply"] = rep["state"] == "available"
     elif args.apply:
-        rep, code = apply(rep, args.to)
+        rep, code = apply(rep, args.to, progress)
+        rep["timings"] = progress.timings()
     if args.json:
         print(json.dumps(rep, indent=2))
     else:
@@ -378,6 +454,7 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--apply", action="store_true", help="fast-forward to the latest release and run update.sh")
     u.add_argument("--to", metavar="vX.Y.Z", help="with --apply: the release the caller showed (must be the latest)")
     u.add_argument("--no-fetch", action="store_true", help="use the tags already fetched")
+    u.add_argument("--progress", action="store_true", help="with --apply: one JSON event per phase on stderr")
     u.add_argument("--json", action="store_true")
     r = sub.add_parser("release", help="next version and release notes from Conventional Commits (read-only, CI)")
     what = r.add_mutually_exclusive_group(required=True)
@@ -387,6 +464,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "release":
         return cmd_release(args)
+    if args.command == "update" and args.progress and not args.apply:
+        parser.error("--progress goes with --apply")
     if args.command == "update" and args.to and not args.apply:
         parser.error("--to goes with --apply")
     if args.command == "update" and args.to and not parse_tag(args.to):

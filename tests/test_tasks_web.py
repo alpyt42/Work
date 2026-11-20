@@ -7,6 +7,7 @@
 """Local task manager checks against a temporary brain, never the real registers."""
 
 import hashlib
+import http.client
 import importlib.util
 import io
 import json
@@ -18,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta
@@ -4450,9 +4452,17 @@ class PixelLookTest(unittest.TestCase):
         licences = self.STATIC / "licenses"
         self.assertIn("ISC License", (licences / "Lucide-ISC.txt").read_text(encoding="utf-8"))
         self.assertFalse((licences / "Material-Symbols-Apache-2.0.txt").exists())
-        readme = (TOOL.parent / "README.md").read_text(encoding="utf-8")
+        readme = (TOOL.parent / "REFERENCE.md").read_text(encoding="utf-8")
         self.assertIn("Lucide (ISC License", readme)
         self.assertNotIn("Material Symbols", readme + script)
+
+    def test_the_screenshots_of_the_readmes_exist(self):
+        root = TOOL.parents[2]
+        for readme in (root / "README.md", TOOL.parent / "README.md"):
+            images = re.findall(r"!\[[^\]]*\]\(([^)\s]+\.png)\)", readme.read_text(encoding="utf-8"))
+            self.assertTrue(images, readme)
+            for image in images:
+                self.assertTrue((readme.parent / image).is_file(), f"{readme.name}: {image}")
 
     def test_the_sidebar_is_grouped_like_a_shadcn_sidebar_with_a_footer_list(self):
         sidebar = self.page[self.page.index('<aside id="sidebar"'):self.page.index("</aside>")]
@@ -5866,6 +5876,69 @@ class UpdateRoutesTest(unittest.TestCase):
         self.assertFalse(self.thread.is_alive())
         self.assertTrue(self.server.restart_requested)
 
+    def test_progress_route_is_idle_without_an_apply_and_checks_the_host_only(self):
+        self.assertEqual(self.request("GET", "/api/update/progress"),
+                         (200, {"running": False, "label": None, "index": None, "total": None, "elapsed": 0, "step_elapsed": 0}))
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
+        connection.request("GET", "/api/update/progress", headers={"Host": "evil.example"})
+        self.assertEqual(connection.getresponse().status, 403)
+        connection.close()
+
+    def test_progress_route_follows_a_running_apply_and_returns_to_idle(self):
+        self.release_two()
+        Path(self.temp.name, "stub-update.sh").write_text("#!/bin/bash\necho '::progress 1/2 Slow phase'\nsleep 2.5\necho '::progress 2/2 Last phase'\n", encoding="utf-8")
+        result = {}
+        post = Request(self.base + "/api/update/apply", data=b'{"version": "v0.2.0"}', method="POST",
+                       headers={"X-Tasks-Token": self.server.token, "Origin": self.base, "Content-Type": "application/json"})
+
+        def apply():
+            with urlopen(post, timeout=60) as response:
+                result.update(status=response.status, data=json.loads(response.read()))
+
+        worker = threading.Thread(target=apply)
+        worker.start()
+        seen = None
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and not (seen and seen["label"] == "Slow phase"):
+            seen = self.request("GET", "/api/update/progress")[1]
+            time.sleep(0.1)
+        self.assertTrue(seen["running"], seen)
+        self.assertEqual((seen["label"], seen["index"], seen["total"]), ("Slow phase", 3, 4))
+        self.assertGreaterEqual(seen["elapsed"], seen["step_elapsed"])
+        worker.join(timeout=30)
+        self.assertEqual(result["status"], 200, result)
+        self.assertEqual([t["label"] for t in result["data"]["timings"]][-3:], ["Slow phase", "Last phase", "Total"])
+        self.thread.join(timeout=5)  # the server restarts itself after an applied update: ask the state directly
+        self.assertFalse(self.server.update.progress_public()["running"])
+
+    def test_apply_skips_its_own_fetch_only_after_a_fresh_checked_fetch(self):
+        self.release_two()
+        calls = []
+        real = tasks_web.run_update
+        with patch.object(web_update, "run_update", side_effect=lambda *args, **kwargs: calls.append(args[1]) or real(*args, **kwargs)):
+            state = self.server.update
+            self.assertFalse(state.fetched_recently())
+            self.assertEqual(self.request("POST", "/api/update/check", {})[1]["state"], "available")
+            self.assertTrue(state.fetched_recently())
+            self.assertFalse(state.fetched_recently(clock=lambda: state.fetched_stamp + 601))
+            state.fetched_stamp -= 601  # the last fetch is now too old
+            self.assertEqual(self.request("POST", "/api/update/apply", {"version": "v0.2.0"})[0], 200)
+        self.assertEqual(calls[-1], ["--apply", "--to", "v0.2.0"])
+        self.thread.join(timeout=5)
+
+    def test_apply_after_a_fresh_check_passes_no_fetch(self):
+        self.release_two()
+        calls = []
+        real = tasks_web.run_update
+        with patch.object(web_update, "run_update", side_effect=lambda *args, **kwargs: calls.append(args[1]) or real(*args, **kwargs)):
+            self.request("POST", "/api/update/check", {})
+            status, data = self.request("POST", "/api/update/apply", {"version": "v0.2.0"})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(calls[-1], ["--apply", "--to", "v0.2.0", "--no-fetch"])
+        self.assertEqual(self.git(self.work, "describe", "--tags"), "v0.2.0")
+        self.assertIn("Total", [t["label"] for t in data["timings"]])
+        self.thread.join(timeout=5)
+
     def test_main_restarts_the_process_after_an_update_and_not_otherwise(self):
         brain = self.work / "brain-acme"
         with socket.socket() as probe:
@@ -5935,6 +6008,43 @@ class UpdateRoutesTest(unittest.TestCase):
             caught.exception.close()
         self.assertEqual(self.git(self.work, "describe", "--tags"), "v0.1.0")
         self.assertFalse(self.server.restart_requested)
+
+class UpdateProgressUiTest(unittest.TestCase):
+    """The Update dialog's step bar, read from the page's sources (no browser)."""
+
+    def setUp(self):
+        self.page = (STATIC / "index.html").read_text(encoding="utf-8")
+        self.script = app_script()
+        self.styles = (STATIC / "app.css").read_text(encoding="utf-8")
+
+    def test_the_dialog_has_an_accessible_progress_bar_with_a_polite_step_line(self):
+        dialog = self.page[self.page.index('<dialog id="updateDialog"'):]
+        dialog = dialog[:dialog.index("</dialog>")]
+        self.assertRegex(dialog, r'<div id="updateBar" class="update-bar" role="progressbar" aria-label="[^"]+" aria-valuemin="0" aria-valuemax="100">')
+        self.assertRegex(dialog, r'<span id="updateStep" class="update-step" aria-live="polite"></span>')
+        self.assertIn('id="updateElapsed"', dialog)
+        for name in ("updateProgress", "updateBar", "updateBarFill", "updateStep", "updateElapsed"):
+            self.assertIn(f"'{name}'", self.script)
+
+    def test_the_bar_is_determinate_only_when_the_total_is_known_and_still_when_motion_is_reduced(self):
+        self.assertIn("removeAttribute('aria-valuenow')", self.script)
+        self.assertIn("`Step ${step.index} of ${step.total} · ${step.label}`", self.script)
+        self.assertIn("'Restarting…'", self.script)
+        self.assertRegex(self.styles, r"@media \(prefers-reduced-motion: no-preference\) \{\n  \.update-bar:not\(\.is-determinate\) \.update-bar-fill \{ animation: update-slide")
+
+    def test_confirming_polls_the_progress_route_while_the_apply_is_pending(self):
+        self.assertIn("fetch('/api/update/progress'", self.script)
+        self.assertIn("UPDATE_POLL_EVERY = 700", self.script)
+        self.assertLess(self.script.index("const progress = startUpdateProgress();"), self.script.index("await updatePost('/api/update/apply'"))
+        self.assertIn("console.info('Update timings', report.timings)", self.script)
+        self.assertNotIn("ids.updateWhat.textContent = 'Updating…'", self.script)
+
+    def test_the_duration_toast_goes_through_session_storage_once(self):
+        self.assertIn("sessionStorage.setItem(UPDATE_DONE_KEY, JSON.stringify({version, seconds", self.script)
+        self.assertIn("sessionStorage.removeItem(UPDATE_DONE_KEY)", self.script)
+        self.assertIn("showToast(`Updated to ${done.version} in ${updateClock(done.seconds)}`)", self.script)
+        self.assertLess(self.script.index("sessionStorage.setItem(UPDATE_DONE_KEY"), self.script.index("location.reload();\n    return;"))
+
 
 class TaskBoxTest(unittest.TestCase):
     """Task lists: rendered as boxes everywhere, ticked in working notes only."""

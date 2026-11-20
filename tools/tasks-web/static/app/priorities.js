@@ -1,7 +1,7 @@
 'use strict';
 
 // ---------- Priorities ----------
-// The file `priorities/<brain>.md` written by the /priorities skill, parsed by GET /api/priorities (see "Priorities file" in the README).
+// The file `priorities/<brain>.md` written by the /priorities skill, parsed by GET /api/priorities (see "Priorities file" in REFERENCE.md).
 let prioData = null; // the last answer for this brain: {exists, sections, version, stale, ...}
 let prioRequest = 0;
 let prioError = '';

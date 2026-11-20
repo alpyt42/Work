@@ -4,15 +4,26 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
+# Each phase announces itself with a `::progress <i>/<n> <label>` line that work.py update --progress reads.
+STEPS=7
+step() { echo "::progress $1/$STEPS $2"; }
+
+step 1 "Checking the configuration"
 uv run tools/machine/work_config.py check
 uv run tools/machine/work_config.py lock
-./tools/machine/install-third-party.sh
+step 2 "Installing third-party skills"
+./tools/machine/install-third-party.sh --if-changed
 
+step 3 "Copying the house skills"
 uv run tools/machine/sync-house-skills.py
+step 4 "Linking the skills"
 ./tools/machine/link-skills.sh
+step 5 "Checking the links"
 ./tools/machine/check-links.sh
+step 6 "Recording the configuration"
 uv run tools/machine/work_config.py stamp
 
+step 7 "Reading the Git state"
 repos=("$ROOT")
 while IFS= read -r brain; do
   if [[ -n "$brain" ]]; then repos+=("$ROOT/$brain"); fi
