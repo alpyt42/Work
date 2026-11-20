@@ -2394,7 +2394,7 @@ class GitViewTest(unittest.TestCase):
 
     def test_a_check_that_takes_too_long_is_stopped_and_changes_nothing(self):
         hook = self.acme / ".git/hooks/pre-commit"
-        hook.write_text("#!/bin/sh\nsleep 60\n", encoding="utf-8")
+        hook.write_text("#!/bin/sh\nsleep 60\n", encoding="utf-8", newline="\n")  # no CR for sh, on Windows too
         hook.chmod(0o755)
         self.write(self.acme, f"{self.NOTES}/2026-10-04-risks.md", "# Risks\n")
         before = self.snapshot(self.acme)
@@ -2560,9 +2560,10 @@ class GitViewTest(unittest.TestCase):
     def test_a_command_with_no_end_is_killed_with_its_children(self):
         started = self.root / "started"
         script = self.root / "slow.sh"
-        script.write_text(f"#!/bin/sh\ntouch {started}\nsleep 60 &\nwait\n", encoding="utf-8")
+        # Paths with / only: the shell reads a backslash as an escape (Git runs the alias through sh, on Windows too).
+        script.write_text(f"#!/bin/sh\ntouch '{started.as_posix()}'\nsleep 60 &\nwait\n", encoding="utf-8", newline="\n")
         script.chmod(0o755)
-        self.git(self.acme, "config", "--local", "alias.slow", f"!{script}")
+        self.git(self.acme, "config", "--local", "alias.slow", f"!'{script.as_posix()}'")
         # The limit must leave Git and the shell time to start the alias: one second is enough on a quiet machine, not
         # always on a busy one, so a longer limit is tried only when the alias had not started.
         for limit in (1, 3, 10):

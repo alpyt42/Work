@@ -267,7 +267,7 @@ class SshTest(PreflightCase):
         stub_dir.mkdir(exist_ok=True)
         (stub_dir / "banner.txt").write_text(banner, encoding="utf-8")
         stub = stub_dir / "ssh-stub"
-        stub.write_text(f'#!/usr/bin/env bash\ndir="$(cd "$(dirname "$0")" && pwd)"\nprintf "%s\\n" "$@" > "$dir/args.txt"\ncat "$dir/banner.txt" >&{stream}\nexit {exit_code}\n', encoding="utf-8")
+        stub.write_text(f'#!/usr/bin/env bash\ndir="$(cd "$(dirname "$0")" && pwd)"\nprintf "%s\\n" "$@" > "$dir/args.txt"\ncat "$dir/banner.txt" >&{stream}\nexit {exit_code}\n', encoding="utf-8", newline="\n")
         stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
         # Git reads a backslash as an escape in its config and runs the command through sh: a path with / only.
         self.write_boundary("acme", "ada@acme.example", f"{stub.as_posix()} -o IdentitiesOnly=yes")
@@ -335,7 +335,7 @@ class SshTest(PreflightCase):
 
     def test_a_silent_ssh_that_hangs_is_cut_after_the_timeout(self) -> None:
         sleeper = self.root / "sleeper"
-        sleeper.write_text("#!/usr/bin/env bash\nsleep 30\n", encoding="utf-8")
+        sleeper.write_text("#!/usr/bin/env bash\nsleep 30\n", encoding="utf-8", newline="\n")  # no CR for bash, on Windows too
         sleeper.chmod(sleeper.stat().st_mode | stat.S_IXUSR)
         account, reason = load_module().ssh_probe(sleeper.as_posix(), "git", "host.example", None, timeout=1)
         self.assertIsNone(account)
