@@ -4168,8 +4168,9 @@ class BrainSwitchTest(unittest.TestCase):
         caught.exception.close()
         with urlopen(self.base + "/?brain=brain-perso", timeout=3) as response:
             page = response.read().decode("utf-8")
-        for fragment in ('id="brainSwitch"', 'id="brainButton"', 'id="brainMenu"', 'id="brainStatic"'):
+        for fragment in ('id="brainSwitch"', 'id="brainButton"', 'id="brainMenu"'):
             self.assertIn(fragment, page)
+        self.assertNotIn("brainStatic", page)  # the switcher is always a button, even with one brain
 
     def test_scope_is_a_tooltip_of_the_brain_entry_not_a_second_line(self):
         with urlopen(self.base + "/", timeout=3) as response:
@@ -4301,7 +4302,7 @@ class MarkdownToolbarTest(unittest.TestCase):
         self.assertEqual(len(tools), 11)
         for _id, label, icon, _key, _shift in tools:
             self.assertTrue(label)
-            self.assertRegex(icons, rf"\n  {icon}: (?:'<|ms\(')")  # stroked markup, or a filled Material Symbol
+            self.assertRegex(icons, rf"\n  {icon}: '<")  # the inner markup of a Lucide icon
         shortcuts = {(key, bool(shift)) for _id, _label, _icon, key, shift in tools if key}
         self.assertEqual(shortcuts, {("b", False), ("i", False), ("u", False), ("x", True), ("k", False)})
         # The app's own shortcuts with a modifier (⌘ Z, ⌘ Enter) differ from them; its single keys are ignored while typing.
@@ -4388,35 +4389,134 @@ class PixelLookTest(unittest.TestCase):
         for gone in ("brain-marker", "--accent-bright", "--accent-pale", "--accent-deep", "mask: var(--logo)"):
             self.assertNotIn(gone, self.styles + self.page)
 
-    def test_the_sidebar_is_light_and_its_icons_are_pixel_stickers(self):
+    def test_the_sidebar_is_light_and_the_apps_icons_are_lucide_line_icons(self):
         light, dark = self.styles.split("@media (prefers-color-scheme: dark)", 1)
         for token in ("--bg-sidebar:", "--sticker-edge:"):
             self.assertIn(token, light.split("/* Brain accents")[0])
             self.assertIn(token, dark.split("/* Brain accents")[0])
         self.assertIn("background: var(--bg-sidebar);", self.styles)
         self.assertNotIn("color-scheme: dark;", self.styles)  # the sidebar follows the system like the rest of the page
-        sidebar = self.page[self.page.index('<aside id="sidebar"'):self.page.index("</aside>")]
-        icons = re.findall(r'<svg class="(nav-icon px-icon|px-icon)" viewBox="0 0 12 12" aria-hidden="true">((?:<path [^>]+/>)+)</svg>', sidebar)
-        self.assertEqual(len(icons), 12)  # six views, the update button, four in the footer and the ⋯ button
-        self.assertEqual(sum(kind == "nav-icon px-icon" for kind, _markup in icons), sidebar.count('class="nav-icon'))
-        # Every colour is a tone class: the ink, white paper, neutral greys, and the brain's hue in four tones, which every icon but ⋯ carries.
-        tones = {"i", "w", "pa", "s1", "s2", "s3", "s4", "k1", "k2", "k3", "k4", "c1", "c2", "c3", "c4"}
-        for kind, markup in icons:
-            self.assert_pixel_sticker(markup, 12, markup[:40], path=re.compile(r'<path class="([a-z0-9]+)" d="([^"]+)"/>'), ink="i")
-            used = set(re.findall(r'class="([a-z0-9]+)"', markup))
-            self.assertLessEqual(used, tones)
-            if kind == "nav-icon px-icon":
-                self.assertTrue(used & {"c2", "c3", "c4"}, markup[:40])
-        for tone in tones:
-            self.assertIn(f".px-icon .{tone} {{ fill: ", self.styles)
-        self.assertIn(".px-icon .c4 { fill: var(--hue); }", self.styles)
         # The hue is the brain's accent of light mode, set once per accent and kept in dark mode.
         for accent in ("steel", "plum", "teal", "olive", "rust", "slate"):
             self.assertRegex(self.styles, r'\[data-accent="' + accent + r'"\]\s+\{ --accent: (#[0-9A-F]{6}); [^}]*--hue: \1; \}')
         self.assertNotIn("--hue", dark.split("/* Each brain's logo")[0].split("@media (prefers-color-scheme: dark)")[-1])
-        self.assertIn("svg.px-icon { fill: none; stroke: none; shape-rendering: crispEdges; filter: var(--sticker-edge); }", self.styles)
-        self.assertIn(".nav-item .nav-icon { width: 24px; height: 24px; }", self.styles)
-        self.assertIn(".update-button .nav-icon { width: 12px; height: 12px; }", self.styles)
+        # Every icon of the app is a Lucide line icon, inlined on its 24 grid: no pixel sticker, no Material Symbol, no hand-drawn icon of
+        # the old 16 grid (the status and priority pictograms apart, which are not icons of a set). One rule draws them all.
+        script = app_script()
+        for text in (self.page, self.styles, script):
+            self.assertNotIn("px-icon", text)
+            self.assertNotIn('class="ms"', text)
+            self.assertNotIn("-960", text)
+        self.assertNotIn("function ms(", script)
+        self.assertNotIn(".ms {", self.styles)
+        self.assertEqual(set(re.findall(r'<svg[^>]*viewBox="([^"]+)"', self.page)), {"0 0 24 24"})
+        self.assertEqual(len(re.findall(r"<svg\b", self.page)), len(re.findall(r'<svg class="lucide[ "]', self.page)))
+        self.assertIn(".lucide { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }", self.styles)
+        self.assertIn("function svgIcon(markup, className = '', viewBox = '0 0 24 24') {", script)
+        sidebar = self.page[self.page.index('<aside id="sidebar"'):self.page.index("</aside>")]
+        self.assertEqual(sidebar.count("<svg"), 14)  # the caret, the close cross, six views, the update button, four in the footer and the ⋯ button
+        self.assertEqual(sidebar.count('class="lucide nav-icon"'), 11)
+        # The licence of the set ships with the app, the former one is gone.
+        licences = self.STATIC / "licenses"
+        self.assertIn("ISC License", (licences / "Lucide-ISC.txt").read_text(encoding="utf-8"))
+        self.assertFalse((licences / "Material-Symbols-Apache-2.0.txt").exists())
+        readme = (TOOL.parent / "README.md").read_text(encoding="utf-8")
+        self.assertIn("Lucide (ISC License", readme)
+        self.assertNotIn("Material Symbols", readme + script)
+
+    def test_the_sidebar_is_grouped_like_a_shadcn_sidebar_with_a_footer_list(self):
+        sidebar = self.page[self.page.index('<aside id="sidebar"'):self.page.index("</aside>")]
+        self.assertIn('<h2 id="viewsHeading" class="sidebar-heading">Views</h2>', sidebar)
+        self.assertIn('<h2 id="projectsHeading" class="sidebar-heading">Projects</h2>', sidebar)
+        # Priorities … Docs under "Views"; the footer is a list of the same entries, the Update button first, then the meta line.
+        views = re.findall(r'<button id="(\w+)" class="nav-item"', sidebar[:sidebar.index('<section class="projects"')])
+        self.assertEqual(views, ["prioButton", "todayButton", "listButton", "boardButton", "timelineButton", "docsButton"])
+        footer = sidebar[sidebar.index('<div class="sidebar-footer">'):]
+        order = [footer.index(marker) for marker in ('id="updateButton"', 'id="archivesButton"', 'id="toolsButton"', 'id="gitButton"', 'id="settingsButton"', 'class="footer-meta"')]
+        self.assertEqual(order, sorted(order))
+        self.assertNotIn("footer-nav", self.page + self.styles)
+        self.assertNotIn("nav-compact", self.page + self.styles)
+        self.assertRegex(self.styles, r"\.nav-item \{\n  position: relative; display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 8px;")
+        self.assertIn("font-size: 14px;", self.styles[self.styles.index(".nav-item {"):self.styles.index(".nav-item:hover")])
+
+    def test_the_collapsed_sidebar_is_an_icon_rail(self):
+        script = app_script()
+        self.assertIn("--sidebar-rail-w: 48px;", self.styles)
+        self.assertIn("--sidebar-w: var(--sidebar-full-w);", self.styles)
+        self.assertNotIn(".app.sidebar-collapsed .sidebar { display: none; }", self.styles)
+        rail = self.styles[self.styles.index("/* ---------- Icon rail ---------- */"):self.styles.index("/* ---------- Dialogs, toast ---------- */")]
+        self.assertIn("@media (min-width: 901px) {", rail)  # under 900 px the drawer shows the full sidebar
+        self.assertIn(".app.sidebar-collapsed { --sidebar-w: var(--sidebar-rail-w); }", rail)
+        self.assertIn(".app.sidebar-collapsed .sidebar-heading, .app.sidebar-collapsed .projects { display: none; }", rail.replace(".app.sidebar-collapsed .brain-caret, ", ""))
+        self.assertIn(".app.sidebar-collapsed .nav-item:has(.nav-count:not(:empty))::after {", rail)  # a count shows as a dot
+        self.assertIn("width: 32px; height: 32px;", rail)
+        self.assertIn(".app.sidebar-collapsed .brain-menu {", rail)
+        self.assertIn(".app.sidebar-collapsed .more-menu {", rail)
+        self.assertIn("left: calc(100% + 16px);", rail)
+        # The grid, the more menu and the panel follow the current width; the width eases only for the toggle and never under reduced motion.
+        self.assertIn("grid-template-columns: var(--sidebar-w) minmax(0, 1fr);", self.styles)
+        self.assertIn("width: calc(var(--sidebar-w) - 12px);", self.styles)
+        self.assertIn(".app.is-sliding { transition: grid-template-columns 200ms", self.styles[self.styles.index("@media (prefers-reduced-motion: no-preference)"):])
+        self.assertIn("ids.app.classList.add('is-sliding');", script)
+        self.assertIn("@media (prefers-reduced-motion: reduce) {\n  *, *::before, *::after { animation: none !important; transition: none !important;", self.styles)
+        # The tooltip: a fixed bubble to the right of the entry on hover and keyboard focus, with the label and the count.
+        self.assertIn('<div id="railTip" class="rail-tip" aria-hidden="true" hidden></div>', self.page)
+        self.assertIn(".rail-tip {\n  position: fixed;", self.styles)
+        for fragment in ("const RAIL_ITEMS = '.nav-item, .update-button, .brain-button, #moreButton';", "ids.railTip.style.left = `${Math.round(box.right + 8)}px`;",
+                         "ids.sidebar.addEventListener('mouseover'", "ids.sidebar.addEventListener('focusin'", "matches(`${RAIL_ITEMS}:focus-visible`)", "'rail-tip-count'"):
+            self.assertIn(fragment, script)
+        # The toggle: same key, same storage, 'collapsed' now meaning the rail, and labels that say collapse and expand.
+        self.assertIn("const SIDEBAR_KEY = 'actions-brain-sidebar-v1';", script)
+        self.assertIn("localStorage.setItem(SIDEBAR_KEY, collapsed ? 'collapsed' : 'open')", script)
+        self.assertIn("open ? 'Collapse the sidebar' : 'Expand the sidebar'", script)
+        self.assertIn("ids.sidebarToggle.title = `${label} ([)`;", script)
+        self.assertIn('aria-expanded="true" aria-label="Collapse the sidebar" title="Collapse the sidebar ([)"', self.page)
+        self.assertNotIn("Hide the sidebar", self.page + script)
+
+    def test_the_brain_switcher_is_always_a_menu_with_add_brain(self):
+        script = app_script()
+        self.assertIn('<button id="brainButton" class="brain-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="brainMenu">', self.page)
+        self.assertIn('<span class="brain-logo" aria-hidden="true"></span>', self.page)
+        self.assertIn('<ul id="brainMenu" class="brain-menu" role="menu" aria-label="Brains" tabindex="-1" hidden></ul>', self.page)
+        self.assertNotIn("listbox", self.page + script)
+        self.assertNotIn("brainStatic", self.page + script)
+        self.assertNotIn("hidden>\n            <span class=\"brain-text\">", self.page)  # the button is never hidden
+        options = script[script.index("function brainOption(brain, index)"):script.index("function brainMenuOpen()")]
+        for fragment in ("option.setAttribute('role', 'menuitemradio');", "option.setAttribute('aria-checked', String(brain.name === currentBrain));", "option.title = brainTitle(brain);",
+                         "option.setAttribute('role', 'menuitem');", "'Add brain'", "'brain-add-icon'", "element('li', 'menu-heading', 'Brains')", "separator.setAttribute('role', 'separator');",
+                         "ids.brainMenu.replaceChildren(heading, ...brains.map(brainOption), separator, brainAddOption());"):
+            self.assertIn(fragment, options)
+        self.assertNotIn("brains.length < 2", script[script.index("function openBrainMenu()"):script.index("function closeBrainMenu(")])
+        self.assertIn(".brain-add-icon { flex: none; display: grid; place-items: center; width: 24px; height: 24px;", self.styles)
+        self.assertIn("border: 1px solid var(--line-strong); border-radius: 6px;", self.styles[self.styles.index(".brain-add-icon"):])
+        self.assertIn('.brain-option[aria-checked="true"] .brain-check { visibility: visible; }', self.styles)
+        # Arrows, Home, End, Enter and Space, type-ahead, Esc (back to the button) and Tab, over the entries (the heading is not one).
+        keys = (TOOL.parent / "static" / "app" / "main.js").read_text(encoding="utf-8")
+        for fragment in ("if (key === 'ArrowDown') setBrainActive(brainMenuIndex + 1);", "else if (key === 'End') setBrainActive(items.length - 1);",
+                         "else if (key === 'Enter' || key === ' ') activateBrainItem(items[brainMenuIndex]);", "else if (key === 'Escape') { event.stopPropagation(); closeBrainMenu(); }"):
+            self.assertIn(fragment, keys)
+        self.assertIn("if (item.dataset.action === 'add') openAddBrain(); else chooseBrain(item.dataset.brain);", script)
+        self.assertIn("function brainMenuItems() { return [...ids.brainMenu.querySelectorAll('[role=\"menuitemradio\"], [role=\"menuitem\"]')]; }", script)
+
+    def test_add_brain_dialog_posts_to_the_brains_route(self):
+        script = app_script()
+        dialog = self.page[self.page.index('<dialog id="addBrainDialog"'):]
+        dialog = dialog[:dialog.index("</dialog>")]
+        for fragment in ('class="dialog dialog-small"', 'aria-labelledby="addBrainHeading"', 'class="dialog-head"', 'id="closeAddBrain"', '>brain-</span>',
+                         'id="addBrainName" maxlength="58" required', 'id="addBrainDescription" maxlength="300" required', 'id="addBrainScope" maxlength="60" list="addBrainScopes"',
+                         "What goes in this brain. Agents read it to choose where to file things.",
+                         '<option value="personal">', '<option value="employer">', '<option value="client">',
+                         'id="addBrainError" class="form-error" role="alert" hidden', 'id="cancelAddBrain"', 'id="saveAddBrain" class="button button-primary" type="submit">Create brain'):
+            self.assertIn(fragment, dialog)
+        create = script[script.index("async function createBrain(event)"):]
+        create = create[:create.index("\n}\n") + 3]
+        for fragment in ("request('/api/brains', {", "method: 'POST', headers: {'Content-Type': 'application/json', 'X-Tasks-Token': token}",
+                         "JSON.stringify({name: `brain-${rest}`, description, scope})", "ids.saveAddBrain.disabled = true;", "ids.addBrainDialog.close();",
+                         "await loadBrains();", "await chooseBrain(name);", "setAddBrainError(error.message);"):
+            self.assertIn(fragment, create)
+        self.assertIn("const BRAIN_NAME_PART = /^[a-z0-9][a-z0-9-]*$/;", script)
+        self.assertIn("ids.addBrainError.hidden = !message;", script)  # an error stays in the dialog, the typed values are kept
+        self.assertIn("ids.addBrainForm.addEventListener('submit', createBrain);", (TOOL.parent / "static" / "app" / "main.js").read_text(encoding="utf-8"))
 
 
 class BrainSwipeTest(unittest.TestCase):
@@ -5226,8 +5326,10 @@ class ActionViewsPageTest(unittest.TestCase):
         self.assertIn(".app.has-panel .main { margin-right: var(--panel-w); }", self.styles)
         narrow = self.styles[self.styles.index("@media (max-width: 1243px) {"):self.styles.index(".panel-form {")]
         self.assertIn(".app.has-panel:not(.sidebar-collapsed) .panel { left: var(--sidebar-w); width: auto; }", narrow)
-        self.assertIn(".app.has-panel.sidebar-collapsed .panel { left: 0; width: auto; }", narrow)
-        self.assertIn(".app.has-panel .panel, .app.has-panel:not(.sidebar-collapsed) .panel { left: 0; width: auto; }", narrow)
+        # The rail is narrower: the panel takes the whole view from 48 + 560 + 420 px, and stays beside the rail (the current width).
+        self.assertIn("@media (max-width: 1027px) {", narrow)
+        self.assertIn(".app.has-panel.sidebar-collapsed .panel { left: var(--sidebar-w); width: auto; }", narrow)
+        self.assertIn(".app.has-panel .panel, .app.has-panel:not(.sidebar-collapsed) .panel, .app.has-panel.sidebar-collapsed .panel { left: 0; width: auto; }", narrow)
 
     def test_touch_targets_are_36_px_without_changing_the_desktop(self):
         start = self.styles.index("@media (pointer: coarse), (max-width: 700px) {")

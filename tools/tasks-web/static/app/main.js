@@ -82,6 +82,10 @@ ids.docArticle.addEventListener('click', event => {
   if (docCurrent && id === docCurrent.id) { if (anchor) scrollDocAnchor(anchor); return; }
   openDoc(id, {nav: 'link', anchor});
 });
+ids.addBrainForm.addEventListener('submit', createBrain);
+ids.addBrainName.addEventListener('input', () => { ids.addBrainName.value = ids.addBrainName.value.toLowerCase(); });
+ids.closeAddBrain.addEventListener('click', () => ids.addBrainDialog.close());
+ids.cancelAddBrain.addEventListener('click', () => ids.addBrainDialog.close());
 ids.newNoteForm.addEventListener('submit', createNote);
 ids.newNoteProject.addEventListener('change', updateNewNoteWhere);
 ids.closeNewNote.addEventListener('click', () => ids.newNoteDialog.close());
@@ -124,18 +128,19 @@ ids.brainButton.addEventListener('keydown', event => {
 });
 ids.brainMenu.addEventListener('keydown', event => {
   const key = event.key;
+  const items = brainMenuItems();
   if (key === 'ArrowDown') setBrainActive(brainMenuIndex + 1);
   else if (key === 'ArrowUp') setBrainActive(brainMenuIndex - 1);
   else if (key === 'Home') setBrainActive(0);
-  else if (key === 'End') setBrainActive(brains.length - 1);
-  else if (key === 'Enter' || key === ' ') chooseBrain(ids.brainMenu.children[brainMenuIndex]?.dataset.brain);
+  else if (key === 'End') setBrainActive(items.length - 1);
+  else if (key === 'Enter' || key === ' ') activateBrainItem(items[brainMenuIndex]);
   else if (key === 'Escape') { event.stopPropagation(); closeBrainMenu(); }
   else if (key === 'Tab') closeBrainMenu(false);
   else if (key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
-    // Type-ahead: the next brain whose name starts with the typed letter.
+    // Type-ahead: the next entry whose name starts with the typed letter.
     const letter = key.toLocaleLowerCase(LOCALE);
-    const ordered = [...brains.keys()].map(offset => (brainMenuIndex + 1 + offset) % brains.length);
-    const next = ordered.find(position => (brains[position].label || brains[position].name).toLocaleLowerCase(LOCALE).startsWith(letter));
+    const ordered = [...items.keys()].map(offset => (brainMenuIndex + 1 + offset) % items.length);
+    const next = ordered.find(position => items[position].textContent.trim().toLocaleLowerCase(LOCALE).startsWith(letter));
     if (next !== undefined) setBrainActive(next);
     return;
   } else return;

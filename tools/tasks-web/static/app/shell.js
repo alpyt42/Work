@@ -17,7 +17,9 @@ ids.toast.addEventListener('focusin', () => clearTimeout(toastTimer));
 ids.toast.addEventListener('mouseleave', () => { clearTimeout(toastTimer); toastTimer = setTimeout(hideToast, 2500); });
 ids.toastAction.addEventListener('click', () => { ids.toastAction.hidden = true; hideToast(); undoLast(); });
 
-// ---------- Sidebar, drawer and the "More options" menu ----------
+// ---------- Sidebar (full or icon rail), drawer and the "More options" menu ----------
+// 'collapsed' is the icon rail (the sidebar column shrinks to --sidebar-rail-w, only the icons stay); under 900 px the drawer always shows
+// the full sidebar.
 const SIDEBAR_KEY = 'actions-brain-sidebar-v1';
 const narrowQuery = window.matchMedia('(max-width: 900px)');
 function readSidebarCollapsed() {
@@ -27,7 +29,7 @@ function updateSidebarToggle() {
   const narrow = narrowQuery.matches;
   const open = narrow ? ids.app.classList.contains('drawer-open') : !ids.app.classList.contains('sidebar-collapsed');
   ids.sidebarToggle.setAttribute('aria-expanded', String(open));
-  const label = narrow ? (open ? 'Close menu' : 'Open menu') : open ? 'Hide the sidebar' : 'Show the sidebar';
+  const label = narrow ? (open ? 'Close menu' : 'Open menu') : open ? 'Collapse the sidebar' : 'Expand the sidebar';
   ids.sidebarToggle.setAttribute('aria-label', label);
   ids.sidebarToggle.title = `${label} ([)`;
   ids.mainContent.inert = narrow && open;
@@ -45,19 +47,67 @@ function closeDrawer(refocus = true) {
   updateSidebarToggle();
   if (refocus) ids.sidebarToggle.focus();
 }
+let slideTimer = 0;
 function toggleSidebar() {
   if (narrowQuery.matches) {
     if (ids.app.classList.contains('drawer-open')) closeDrawer(); else openDrawer();
     return;
   }
+  closeMoreMenu(false);
+  closeBrainMenu(false);
+  hideRailTip();
+  ids.app.classList.add('is-sliding'); // eases the width between full and rail (CSS), only for this change
+  clearTimeout(slideTimer);
+  slideTimer = setTimeout(() => ids.app.classList.remove('is-sliding'), 260);
   const collapsed = ids.app.classList.toggle('sidebar-collapsed');
   try { localStorage.setItem(SIDEBAR_KEY, collapsed ? 'collapsed' : 'open'); } catch { /* Not remembered. */ }
   updateSidebarToggle();
 }
-narrowQuery.addEventListener('change', () => { closeDrawer(false); updateSidebarToggle(); });
+narrowQuery.addEventListener('change', () => { closeDrawer(false); hideRailTip(); updateSidebarToggle(); });
+
+// In the rail the labels are visually hidden (still read by screen readers), so each entry shows its label, and its count when it has
+// one, in a small bubble to its right on hover and keyboard focus. The bubble is fixed to the page: the sidebar scrolls and would clip it.
+const RAIL_ITEMS = '.nav-item, .update-button, .brain-button, #moreButton';
+let railTipItem = null;
+function railActive() { return !narrowQuery.matches && ids.app.classList.contains('sidebar-collapsed'); }
+function railTipParts(item) {
+  if (item === ids.brainButton) return [ids.brainName.textContent.trim(), ''];
+  if (item === ids.moreButton) return [item.getAttribute('aria-label') || '', ''];
+  const label = (item.querySelector('.nav-label') || item.querySelector('#updateButtonLabel'))?.textContent.trim() || '';
+  return [label, item.querySelector('.nav-count')?.textContent.trim() || ''];
+}
+function hideRailTip() {
+  ids.railTip.hidden = true;
+  if (railTipItem?.dataset.title) { railTipItem.title = railTipItem.dataset.title; delete railTipItem.dataset.title; }
+  railTipItem = null;
+}
+function showRailTip(item) {
+  if (!railActive() || !item || item === railTipItem || brainMenuOpen() || !ids.moreMenu.hidden) return;
+  hideRailTip();
+  const [label, count] = railTipParts(item);
+  if (!label) return;
+  ids.railTip.replaceChildren(element('span', '', label), ...(count ? [element('span', 'rail-tip-count', count)] : []));
+  ids.railTip.hidden = false;
+  const box = item.getBoundingClientRect();
+  const tip = ids.railTip.getBoundingClientRect();
+  ids.railTip.style.left = `${Math.round(box.right + 8)}px`;
+  ids.railTip.style.top = `${Math.round(Math.max(4, Math.min(box.top + (box.height - tip.height) / 2, innerHeight - tip.height - 4)))}px`;
+  if (item.title) { item.dataset.title = item.title; item.removeAttribute('title'); } // no second, native tooltip
+  railTipItem = item;
+}
+ids.sidebar.addEventListener('mouseover', event => {
+  const item = event.target instanceof Element ? event.target.closest(RAIL_ITEMS) : null;
+  if (item) showRailTip(item); else hideRailTip();
+});
+ids.sidebar.addEventListener('mouseleave', hideRailTip);
+ids.sidebar.addEventListener('focusin', event => { if (event.target instanceof Element && event.target.matches(`${RAIL_ITEMS}:focus-visible`)) showRailTip(event.target); });
+ids.sidebar.addEventListener('focusout', hideRailTip);
+ids.sidebar.addEventListener('click', hideRailTip);
+ids.sidebar.querySelector('.sidebar-scroll').addEventListener('scroll', hideRailTip, {passive: true});
 function moreItems() { return [...ids.moreMenu.querySelectorAll('.menu-item')]; }
 function openMoreMenu() {
   closePopover(false);
+  hideRailTip();
   ids.moreMenu.hidden = false;
   ids.moreButton.setAttribute('aria-expanded', 'true');
   moreItems()[0].focus();

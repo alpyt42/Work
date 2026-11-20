@@ -89,7 +89,7 @@ The rule README files in `repos/`, `artifacts/`, and `agents/` are tracked. Thei
 2. Clone this repository as `Work/` (or copy it with a fresh history) using the Git identity meant for your personal tooling.
 3. Get your private brain: create a blank one with `uv run tools/brain/new-brain.py brain` (from `kit/brain/seed/`) and give it a private remote yourself, or clone an existing one into `brain/` (bootstrap does it when `BRAIN_REMOTE=<private-brain-git-url>` is set). Other brains are created the same way (see [Brains](#brains-and-trust-boundaries)).
 4. Run `./tools/machine/bootstrap.sh` from `Work/` (with `BRAIN_REMOTE` set when `brain/` is not cloned yet), then check that each brain is the intended private repository and that `./tools/machine/check-links.sh` passes.
-5. Clone each other brain listed under `brains` in the default brain's `.data/local-paths.json` yourself, with the identity of its own boundary; bootstrap clones only `brain/`, and only when no brain exists yet. Run `bootstrap.sh` again to install the Git hooks in it.
+5. Clone each other brain listed under `brains` in the default brain's `.data/local-paths.json` yourself, with the identity of its own boundary; bootstrap clones only `brain/`, and only when no brain exists yet. Run `bootstrap.sh` again to install the Git hooks in a brain cloned by hand (`new-brain.py` installs them in a brain it creates).
 6. Adjust the input folders in the default brain's `.data/local-paths.json` (relative to the home directory) if this machine stores transcripts or recordings elsewhere.
 7. Restore `artifacts/` from your own backup if you need past deliverables.
 8. Run `uv run tools/machine/doctor.py`: it reports, read-only and without network access, missing commands and brains, repositories without upstream or with unpushed commits, brains whose remote or e-mail leaves their declared boundary, a skill configuration changed since the last update, skills not adopted or not installed, broken skill links, missing input folders, unreadable `.data/*.json` states, and the number of files in the unbacked `artifacts/`.
@@ -108,7 +108,7 @@ uv run tools/brain/new-brain.py brain-perso \
   --email '<personal-address>'
 ```
 
-The new folder is a copy of `kit/brain/seed/` with a fresh Git repository on `main`, no commit and no remote; an existing folder is never touched, and `--no-git` skips `git init`. Add a private remote yourself before the first push. The boundary lives in the brain's `.data/brain.json`:
+The new folder is a copy of `kit/brain/seed/` with a fresh Git repository on `main`, no commit and no remote, and the brain's Git hooks already installed (the same as `bootstrap.sh`); an existing folder is never touched, and `--no-git` skips `git init` and the hooks (the local app can also create a brain). Add a private remote yourself before the first push. The boundary lives in the brain's `.data/brain.json`:
 
 - `scope` and `description`: what the brain holds and must never hold. Agents read them (`uv run tools/brain/brain-state.py brains`) to choose the brain where new content goes, and ask when two brains fit or none does.
 - `remote` and `email`: `fnmatch` patterns that the clone's `origin` URL and effective `user.email` must match, checked by `doctor.py`.

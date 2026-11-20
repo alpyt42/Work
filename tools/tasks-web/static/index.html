@@ -35,42 +35,42 @@
     <aside id="sidebar" class="sidebar" aria-label="Navigation">
       <div class="sidebar-top">
         <div id="brainSwitch" class="brain-switch">
-          <span class="brain-logo" aria-hidden="true"></span>
-          <div id="brainStatic" class="brain-static"><span id="brainStaticName" class="brain-name">Brain</span></div>
-          <button id="brainButton" class="brain-button" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="brainMenu" hidden>
+          <button id="brainButton" class="brain-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="brainMenu">
+            <span class="brain-logo" aria-hidden="true"></span>
             <span class="brain-text"><span class="sr-only">Brain: </span><span id="brainName" class="brain-name"></span></span>
-            <svg class="brain-caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 6.5 8 9.5l3-3"/></svg>
+            <svg class="lucide brain-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
           </button>
-          <ul id="brainMenu" class="brain-menu" role="listbox" aria-label="Choose the brain" tabindex="-1" hidden></ul>
+          <ul id="brainMenu" class="brain-menu" role="menu" aria-label="Brains" tabindex="-1" hidden></ul>
         </div>
         <button id="sidebarClose" class="icon-button sidebar-close" type="button" aria-label="Close menu" title="Close menu">
-          <svg viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="m249-207-42-42 231-231-231-231 42-42 231 231 231-231 42 42-231 231 231 231-42 42-231-231-231 231Z"/></svg>
+          <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
         </button>
       </div>
       <div class="sidebar-scroll">
-        <nav class="nav" aria-label="Views">
+        <nav class="nav" aria-labelledby="viewsHeading">
+          <h2 id="viewsHeading" class="sidebar-heading">Views</h2>
           <button id="prioButton" class="nav-item" type="button" data-view="priorities" title="Priorities (0)">
-            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M2 0h1v1h-1zM1 1h1v1h-1zM3 1h7v1h-7zM1 2h1v1h-1zM10 2h1v1h-1zM1 3h1v1h-1zM10 3h1v1h-1zM1 4h1v1h-1zM9 4h1v1h-1zM1 5h1v1h-1zM10 5h1v1h-1zM1 6h1v1h-1zM10 6h1v1h-1zM1 7h1v1h-1zM3 7h7v1h-7zM1 8h1v1h-1zM3 8h1v1h-1zM1 9h1v1h-1zM3 9h1v1h-1zM1 10h1v1h-1zM3 10h1v1h-1zM2 11h1v1h-1z"/><path class="s1" d="M2 1h1v1h-1z"/><path class="s3" d="M2 2h1v1h-1zM2 3h1v1h-1zM2 4h1v1h-1zM2 5h1v1h-1zM2 6h1v1h-1zM2 7h1v1h-1zM2 8h1v1h-1zM2 9h1v1h-1z"/><path class="c1" d="M3 2h1v1h-1z"/><path class="c2" d="M4 2h6v1h-6zM9 5h1v1h-1z"/><path class="c3" d="M3 3h6v1h-6zM3 4h6v1h-6zM3 5h6v1h-6z"/><path class="c4" d="M9 3h1v1h-1zM3 6h7v1h-7z"/><path class="s4" d="M2 10h1v1h-1z"/></svg>
+            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg>
             <span class="nav-label">Priorities</span><span id="prioCount" class="nav-count"></span>
           </button>
           <button id="todayButton" class="nav-item" type="button" data-view="today" title="Today (1)">
-            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M3 0h1v1h-1zM8 0h1v1h-1zM1 1h2v1h-2zM4 1h4v1h-4zM9 1h2v1h-2zM0 2h1v1h-1zM11 2h1v1h-1zM0 3h1v1h-1zM11 3h1v1h-1zM1 4h10v1h-10zM0 5h1v1h-1zM11 5h1v1h-1zM0 6h1v1h-1zM11 6h1v1h-1zM0 7h1v1h-1zM11 7h1v1h-1zM0 8h1v1h-1zM11 8h1v1h-1zM0 9h1v1h-1zM11 9h1v1h-1zM0 10h1v1h-1zM11 10h1v1h-1zM1 11h10v1h-10z"/><path class="s3" d="M3 1h1v1h-1zM8 1h1v1h-1zM6 6h1v1h-1zM8 6h1v1h-1zM3 8h1v1h-1zM5 8h1v1h-1zM7 8h1v1h-1z"/><path class="c1" d="M1 2h1v1h-1z"/><path class="c2" d="M2 2h9v1h-9zM3 6h2v1h-2z"/><path class="c4" d="M1 3h10v1h-10zM3 7h2v1h-2z"/><path class="w" d="M1 5h10v1h-10zM1 6h2v1h-2zM5 6h1v1h-1zM7 6h1v1h-1zM9 6h2v1h-2zM1 7h2v1h-2zM6 7h1v1h-1zM8 7h3v1h-3zM1 8h2v1h-2zM4 8h1v1h-1zM6 8h1v1h-1zM8 8h3v1h-3zM1 9h10v1h-10z"/><path class="pa" d="M5 7h1v1h-1zM7 7h1v1h-1zM1 10h10v1h-10z"/></svg>
+            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/></svg>
             <span class="nav-label">Today</span><span id="todayCount" class="nav-count"></span>
           </button>
           <button id="listButton" class="nav-item" type="button" data-view="list" title="Actions (2)">
-            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M1 0h10v1h-10zM0 1h1v1h-1zM11 1h1v1h-1zM0 2h1v1h-1zM11 2h1v1h-1zM0 3h1v1h-1zM11 3h1v1h-1zM0 4h1v1h-1zM11 4h1v1h-1zM0 5h1v1h-1zM11 5h1v1h-1zM0 6h1v1h-1zM11 6h1v1h-1zM0 7h1v1h-1zM11 7h1v1h-1zM0 8h1v1h-1zM11 8h1v1h-1zM0 9h1v1h-1zM11 9h1v1h-1zM0 10h1v1h-1zM11 10h1v1h-1zM1 11h10v1h-10z"/><path class="w" d="M1 1h10v1h-10zM1 2h1v1h-1zM4 2h1v1h-1zM10 2h1v1h-1zM1 3h1v1h-1zM4 3h7v1h-7zM1 4h4v1h-4zM10 4h1v1h-1zM1 5h1v1h-1zM4 5h1v1h-1zM10 5h1v1h-1zM1 6h1v1h-1zM4 6h7v1h-7zM1 7h4v1h-4zM10 7h1v1h-1zM1 8h1v1h-1zM4 8h1v1h-1zM10 8h1v1h-1zM1 9h1v1h-1zM4 9h7v1h-7zM2 10h2v1h-2z"/><path class="c2" d="M2 2h2v1h-2zM2 5h2v1h-2z"/><path class="s3" d="M5 2h5v1h-5zM5 5h5v1h-5zM5 8h5v1h-5z"/><path class="c4" d="M2 3h2v1h-2zM2 6h2v1h-2z"/><path class="pa" d="M5 4h5v1h-5zM5 7h5v1h-5zM1 10h1v1h-1zM4 10h7v1h-7z"/><path class="s2" d="M2 8h2v1h-2z"/><path class="s4" d="M2 9h2v1h-2z"/></svg>
+            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>
             <span class="nav-label">Actions</span><span id="openCount" class="nav-count"></span>
           </button>
           <button id="boardButton" class="nav-item" type="button" data-view="board" title="Board (3)">
-            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M1 0h10v1h-10zM0 1h1v1h-1zM11 1h1v1h-1zM0 2h1v1h-1zM11 2h1v1h-1zM0 3h1v1h-1zM11 3h1v1h-1zM0 4h1v1h-1zM11 4h1v1h-1zM0 5h1v1h-1zM11 5h1v1h-1zM0 6h1v1h-1zM11 6h1v1h-1zM0 7h1v1h-1zM11 7h1v1h-1zM0 8h1v1h-1zM11 8h1v1h-1zM0 9h1v1h-1zM11 9h1v1h-1zM0 10h1v1h-1zM11 10h1v1h-1zM1 11h10v1h-10z"/><path class="w" d="M1 1h10v1h-10zM1 2h1v1h-1zM4 2h1v1h-1zM7 2h1v1h-1zM10 2h1v1h-1zM1 3h1v1h-1zM4 3h1v1h-1zM7 3h1v1h-1zM10 3h1v1h-1zM1 4h10v1h-10zM1 5h1v1h-1zM4 5h1v1h-1zM7 5h4v1h-4zM1 6h1v1h-1zM4 6h1v1h-1zM7 6h4v1h-4zM1 7h10v1h-10zM1 8h1v1h-1zM4 8h7v1h-7zM1 9h1v1h-1zM4 9h7v1h-7zM2 10h2v1h-2z"/><path class="c2" d="M2 2h2v1h-2zM5 2h2v1h-2zM8 2h2v1h-2zM2 5h2v1h-2zM5 5h2v1h-2zM2 8h2v1h-2z"/><path class="c4" d="M2 3h2v1h-2zM5 3h2v1h-2zM8 3h2v1h-2zM2 6h2v1h-2zM5 6h2v1h-2zM2 9h2v1h-2z"/><path class="pa" d="M1 10h1v1h-1zM4 10h7v1h-7z"/></svg>
+            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 7v7"/><path d="M12 7v4"/><path d="M16 7v9"/></svg>
             <span class="nav-label">Board</span>
           </button>
           <button id="timelineButton" class="nav-item" type="button" data-view="timeline" title="Timeline (4)">
-            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M1 1h5v1h-5zM0 2h1v1h-1zM6 2h1v1h-1zM0 3h1v1h-1zM6 3h1v1h-1zM1 4h8v1h-8zM2 5h1v1h-1zM9 5h1v1h-1zM2 6h1v1h-1zM9 6h1v1h-1zM3 7h8v1h-8zM5 8h1v1h-1zM11 8h1v1h-1zM5 9h1v1h-1zM11 9h1v1h-1zM6 10h5v1h-5z"/><path class="c1" d="M1 2h1v1h-1zM3 5h1v1h-1zM6 8h1v1h-1z"/><path class="c2" d="M2 2h4v1h-4zM4 5h5v1h-5zM7 8h4v1h-4z"/><path class="c4" d="M1 3h5v1h-5zM3 6h6v1h-6zM6 9h5v1h-5z"/></svg>
+            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6h8"/><path d="M12 16h6"/><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M8 11h7"/></svg>
             <span class="nav-label">Timeline</span>
           </button>
           <button id="docsButton" class="nav-item" type="button" data-view="docs" title="Docs (5)">
-            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M2 0h6v1h-6zM1 1h1v1h-1zM8 1h2v1h-2zM1 2h1v1h-1zM10 2h1v1h-1zM1 3h1v1h-1zM10 3h1v1h-1zM1 4h1v1h-1zM10 4h1v1h-1zM1 5h1v1h-1zM10 5h1v1h-1zM1 6h1v1h-1zM10 6h1v1h-1zM1 7h1v1h-1zM10 7h1v1h-1zM1 8h1v1h-1zM10 8h1v1h-1zM1 9h1v1h-1zM10 9h1v1h-1zM1 10h1v1h-1zM10 10h1v1h-1zM2 11h8v1h-8z"/><path class="w" d="M2 1h5v1h-5zM2 2h6v1h-6zM2 3h8v1h-8zM2 4h1v1h-1zM9 4h1v1h-1zM2 5h1v1h-1zM9 5h1v1h-1zM2 6h8v1h-8zM2 7h1v1h-1zM9 7h1v1h-1zM2 8h8v1h-8zM2 9h1v1h-1zM7 9h3v1h-3zM3 10h4v1h-4z"/><path class="s2" d="M7 1h1v1h-1zM8 2h2v1h-2z"/><path class="pa" d="M3 4h6v1h-6zM2 10h1v1h-1zM7 10h3v1h-3z"/><path class="c3" d="M3 5h6v1h-6zM3 7h6v1h-6zM3 9h4v1h-4z"/></svg>
+            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
             <span class="nav-label">Docs</span>
           </button>
         </nav>
@@ -81,32 +81,32 @@
       </div>
       <div class="sidebar-footer">
         <button id="updateButton" class="update-button" type="button" hidden>
-          <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M5 0h2v1h-2zM4 1h1v1h-1zM7 1h1v1h-1zM3 2h1v1h-1zM8 2h1v1h-1zM2 3h1v1h-1zM9 3h1v1h-1zM1 4h1v1h-1zM10 4h1v1h-1zM2 5h3v1h-3zM7 5h3v1h-3zM4 6h1v1h-1zM7 6h1v1h-1zM4 7h1v1h-1zM7 7h1v1h-1zM2 8h8v1h-8zM1 9h1v1h-1zM10 9h1v1h-1zM2 10h8v1h-8z"/><path class="c1" d="M5 1h1v1h-1z"/><path class="c2" d="M6 1h1v1h-1zM4 2h1v1h-1zM7 2h1v1h-1zM3 3h1v1h-1zM8 3h1v1h-1zM2 4h1v1h-1zM9 4h1v1h-1z"/><path class="c3" d="M5 2h2v1h-2zM4 3h4v1h-4zM5 4h2v1h-2zM5 5h2v1h-2zM5 6h2v1h-2z"/><path class="c4" d="M3 4h2v1h-2zM7 4h2v1h-2zM5 7h2v1h-2z"/><path class="s1" d="M2 9h1v1h-1z"/><path class="s2" d="M3 9h7v1h-7z"/></svg>
+          <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4"/><path d="M12 16V8"/></svg>
           <span id="updateButtonLabel">Update</span>
         </button>
-        <div class="footer-nav">
-          <button id="archivesButton" class="nav-item nav-compact" type="button" data-view="archives" title="The archived clients, missions and projects, read-only; unarchive one to work on it again.">
-            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M1 1h10v1h-10zM0 2h1v1h-1zM11 2h1v1h-1zM0 3h1v1h-1zM11 3h1v1h-1zM1 4h10v1h-10zM1 5h1v1h-1zM10 5h1v1h-1zM1 6h1v1h-1zM10 6h1v1h-1zM1 7h1v1h-1zM5 7h2v1h-2zM10 7h1v1h-1zM1 8h1v1h-1zM10 8h1v1h-1zM1 9h1v1h-1zM10 9h1v1h-1zM2 10h8v1h-8z"/><path class="c1" d="M1 2h1v1h-1zM2 5h1v1h-1z"/><path class="c2" d="M2 2h9v1h-9zM3 5h7v1h-7zM5 8h2v1h-2z"/><path class="c4" d="M1 3h10v1h-10zM5 6h2v1h-2zM2 9h8v1h-8z"/><path class="c3" d="M2 6h3v1h-3zM7 6h3v1h-3zM2 7h3v1h-3zM7 7h3v1h-3zM2 8h3v1h-3zM7 8h3v1h-3z"/></svg>
+        <nav class="nav footer-list" aria-label="Archives, tools, sync and settings">
+          <button id="archivesButton" class="nav-item" type="button" data-view="archives" title="The archived clients, missions and projects, read-only; unarchive one to work on it again.">
+            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>
             <span class="nav-label">Archives</span>
           </button>
-          <button id="toolsButton" class="nav-item nav-compact" type="button" data-view="tools" title="Workspace commands: nothing is sent to an external service, and those that change the brain ask for confirmation.">
-            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M1 1h10v1h-10zM0 2h1v1h-1zM11 2h1v1h-1zM0 3h1v1h-1zM11 3h1v1h-1zM0 4h1v1h-1zM11 4h1v1h-1zM0 5h1v1h-1zM11 5h1v1h-1zM0 6h1v1h-1zM11 6h1v1h-1zM0 7h1v1h-1zM11 7h1v1h-1zM0 8h1v1h-1zM11 8h1v1h-1zM0 9h1v1h-1zM11 9h1v1h-1zM1 10h10v1h-10z"/><path class="s1" d="M1 2h1v1h-1z"/><path class="s2" d="M2 2h9v1h-9z"/><path class="s4" d="M1 3h1v1h-1zM3 3h1v1h-1zM5 3h1v1h-1zM7 3h4v1h-4z"/><path class="c3" d="M2 3h1v1h-1zM4 3h1v1h-1zM6 3h1v1h-1zM2 5h1v1h-1zM3 6h1v1h-1zM2 7h1v1h-1z"/><path class="k1" d="M1 4h1v1h-1z"/><path class="k2" d="M2 4h9v1h-9zM2 6h1v1h-1zM3 7h1v1h-1zM2 8h1v1h-1zM5 8h3v1h-3z"/><path class="k3" d="M1 5h1v1h-1zM4 5h7v1h-7zM1 6h1v1h-1zM4 6h1v1h-1zM8 6h3v1h-3zM1 7h1v1h-1zM4 7h1v1h-1zM8 7h3v1h-3zM1 8h1v1h-1zM3 8h2v1h-2zM8 8h3v1h-3z"/><path class="k4" d="M3 5h1v1h-1zM5 6h3v1h-3zM1 9h10v1h-10z"/><path class="w" d="M5 7h3v1h-3z"/></svg>
+          <button id="toolsButton" class="nav-item" type="button" data-view="tools" title="Workspace commands: nothing is sent to an external service, and those that change the brain ask for confirmation.">
+            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>
             <span class="nav-label">Tools</span>
           </button>
-          <button id="gitButton" class="nav-item nav-compact" type="button" data-view="git" title="Save the changes of each brain and send them to its online copy. Nothing is saved or sent until you click.">
-            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M3 0h1v1h-1zM2 1h1v1h-1zM4 1h1v1h-1zM8 1h1v1h-1zM1 2h1v1h-1zM5 2h1v1h-1zM7 2h1v1h-1zM9 2h1v1h-1zM0 3h1v1h-1zM6 3h2v1h-2zM9 3h1v1h-1zM1 4h2v1h-2zM4 4h2v1h-2zM7 4h1v1h-1zM9 4h1v1h-1zM2 5h1v1h-1zM4 5h1v1h-1zM7 5h1v1h-1zM9 5h1v1h-1zM2 6h1v1h-1zM4 6h1v1h-1zM6 6h2v1h-2zM9 6h2v1h-2zM2 7h1v1h-1zM4 7h2v1h-2zM11 7h1v1h-1zM2 8h1v1h-1zM4 8h1v1h-1zM6 8h1v1h-1zM10 8h1v1h-1zM2 9h1v1h-1zM4 9h1v1h-1zM7 9h1v1h-1zM9 9h1v1h-1zM3 10h1v1h-1zM8 10h1v1h-1z"/><path class="c1" d="M3 1h1v1h-1zM8 2h1v1h-1z"/><path class="c2" d="M2 2h1v1h-1zM4 2h1v1h-1zM1 3h1v1h-1zM5 3h1v1h-1zM6 7h2v1h-2zM9 7h2v1h-2z"/><path class="c3" d="M3 2h1v1h-1zM3 3h1v1h-1zM8 3h1v1h-1zM3 4h1v1h-1zM8 4h1v1h-1zM3 5h1v1h-1zM8 5h1v1h-1zM3 6h1v1h-1zM8 6h1v1h-1zM3 7h1v1h-1zM8 7h1v1h-1zM3 8h1v1h-1zM8 8h1v1h-1z"/><path class="c4" d="M2 3h1v1h-1zM4 3h1v1h-1zM7 8h1v1h-1zM9 8h1v1h-1zM3 9h1v1h-1zM8 9h1v1h-1z"/></svg>
+          <button id="gitButton" class="nav-item" type="button" data-view="git" title="Save the changes of each brain and send them to its online copy. Nothing is saved or sent until you click.">
+            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="m21 8-4-4-4 4"/><path d="M17 4v16"/></svg>
             <span class="nav-label">Sync</span><span id="gitCount" class="nav-count"></span>
           </button>
-          <button id="settingsButton" class="nav-item nav-compact" type="button" data-view="settings" title="See what is left to set up in your workspace, and change your settings.">
-            <svg class="nav-icon px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M5 0h2v1h-2zM2 1h3v1h-3zM7 1h3v1h-3zM1 2h1v1h-1zM4 2h1v1h-1zM7 2h1v1h-1zM10 2h1v1h-1zM1 3h1v1h-1zM10 3h1v1h-1zM1 4h2v1h-2zM5 4h2v1h-2zM9 4h2v1h-2zM0 5h1v1h-1zM4 5h1v1h-1zM7 5h1v1h-1zM11 5h1v1h-1zM0 6h1v1h-1zM4 6h1v1h-1zM7 6h1v1h-1zM11 6h1v1h-1zM1 7h2v1h-2zM5 7h2v1h-2zM9 7h2v1h-2zM1 8h1v1h-1zM10 8h1v1h-1zM1 9h1v1h-1zM4 9h1v1h-1zM7 9h1v1h-1zM10 9h1v1h-1zM2 10h3v1h-3zM7 10h3v1h-3zM5 11h2v1h-2z"/><path class="c1" d="M5 1h1v1h-1z"/><path class="c2" d="M6 1h1v1h-1zM2 2h2v1h-2zM8 2h2v1h-2zM4 3h1v1h-1zM7 3h1v1h-1zM1 5h2v1h-2zM9 5h2v1h-2zM4 7h1v1h-1zM7 7h1v1h-1zM2 8h1v1h-1zM5 8h2v1h-2zM9 8h1v1h-1z"/><path class="c3" d="M5 2h2v1h-2zM3 3h1v1h-1zM8 3h1v1h-1zM3 4h1v1h-1zM8 4h1v1h-1zM3 5h1v1h-1zM8 5h1v1h-1zM3 6h1v1h-1zM8 6h1v1h-1zM3 7h1v1h-1zM8 7h1v1h-1zM3 8h1v1h-1zM8 8h1v1h-1zM5 9h2v1h-2z"/><path class="c4" d="M2 3h1v1h-1zM5 3h2v1h-2zM9 3h1v1h-1zM4 4h1v1h-1zM7 4h1v1h-1zM1 6h2v1h-2zM9 6h2v1h-2zM4 8h1v1h-1zM7 8h1v1h-1zM2 9h2v1h-2zM8 9h2v1h-2zM5 10h2v1h-2z"/></svg>
+          <button id="settingsButton" class="nav-item" type="button" data-view="settings" title="See what is left to set up in your workspace, and change your settings.">
+            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
             <span class="nav-label">Settings</span>
           </button>
-        </div>
+        </nav>
         <div class="footer-meta">
           <span id="lastSync" class="last-sync" aria-live="polite">Loading…</span>
           <div class="more">
             <button id="moreButton" class="icon-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="moreMenu" aria-label="More options" title="More options">
-              <svg class="px-icon" viewBox="0 0 12 12" aria-hidden="true"><path class="i" d="M1 4h2v1h-2zM5 4h2v1h-2zM9 4h2v1h-2zM0 5h1v1h-1zM3 5h2v1h-2zM7 5h2v1h-2zM11 5h1v1h-1zM0 6h1v1h-1zM3 6h2v1h-2zM7 6h2v1h-2zM11 6h1v1h-1zM1 7h2v1h-2zM5 7h2v1h-2zM9 7h2v1h-2z"/><path class="s2" d="M1 5h2v1h-2zM5 5h2v1h-2zM9 5h2v1h-2z"/><path class="s4" d="M1 6h2v1h-2zM5 6h2v1h-2zM9 6h2v1h-2z"/></svg>
+              <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
             </button>
             <div id="moreMenu" class="menu more-menu" role="menu" aria-labelledby="moreButton" hidden>
               <button id="refreshButton" class="menu-item" type="button" role="menuitem">Refresh</button>
@@ -120,17 +120,18 @@
       </div>
     </aside>
     <div id="scrim" class="scrim" hidden></div>
+    <div id="railTip" class="rail-tip" aria-hidden="true" hidden></div>
     <main id="mainContent" class="main" tabindex="-1">
       <header class="view-header">
         <div class="view-bar">
-          <button id="sidebarToggle" class="icon-button sidebar-toggle" type="button" aria-controls="sidebar" aria-expanded="true" aria-label="Hide the sidebar" title="Sidebar ([)">
-            <svg viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M663-344v-272L527-480l136 136ZM180-120q-24.75 0-42.37-17.63Q120-155.25 120-180v-600q0-24.75 17.63-42.38Q155.25-840 180-840h600q24.75 0 42.38 17.62Q840-804.75 840-780v600q0 24.75-17.62 42.37Q804.75-120 780-120H180Zm207-60h393v-600H387v600Z"/></svg>
+          <button id="sidebarToggle" class="icon-button sidebar-toggle" type="button" aria-controls="sidebar" aria-expanded="true" aria-label="Collapse the sidebar" title="Collapse the sidebar ([)">
+            <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
             <span id="brainMini" class="brain-mini" aria-hidden="true"></span>
           </button>
           <div class="view-heading">
             <h1 id="viewTitle">Today</h1>
             <span id="syncInfo" class="info info-title" hidden>
-              <button id="syncInfoButton" class="info-button" type="button" aria-label="About Sync" aria-describedby="syncInfoTip"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.75"/><path d="M8 7.2v3.6M8 5.2h.01"/></svg></button>
+              <button id="syncInfoButton" class="info-button" type="button" aria-label="About Sync" aria-describedby="syncInfoTip"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></button>
               <span id="syncInfoTip" class="info-tip" role="tooltip"><span class="info-tip-box"><span class="info-tip-line">Each brain is a Git repository. Save and send records the changed notes and sends them to the brain's online copy.</span></span></span>
             </span>
             <span id="resultCount" class="result-count" tabindex="-1"></span>
@@ -138,16 +139,16 @@
           </div>
           <div class="view-actions">
             <div id="searchField" class="search-field">
-              <svg class="search-icon" viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M796-121 533-384q-30 26-70 40.5T378-329q-108 0-183-75t-75-181q0-106 75-181t182-75q106 0 180.5 75T632-585q0 43-14 83t-42 75l264 262-44 44ZM377-389q81 0 138-57.5T572-585q0-81-57-138.5T377-781q-82 0-139.5 57.5T180-585q0 81 57.5 138.5T377-389Z"/></svg>
+              <svg class="lucide search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
               <input id="searchInput" type="search" placeholder="Search actions and documents" aria-label="Search the actions and the documents of the brain (words or &quot;exact phrase&quot;)" autocomplete="off" spellcheck="false">
               <kbd class="search-kbd" aria-hidden="true">/</kbd>
             </div>
             <button id="newNoteButton" class="button" type="button" title="New note" aria-label="New note">
-              <svg viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M450-234h60v-129h130v-60H510v-130h-60v130H320v60h130v129ZM220-80q-24 0-42-18t-18-42v-680q0-24 18-42t42-18h361l219 219v521q0 24-18 42t-42 18H220Zm331-554h189L551-820v186Z"/></svg>
+              <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M9 15h6"/><path d="M12 18v-6"/></svg>
               <span class="button-label">New note</span>
             </button>
             <button id="newButton" class="button button-primary" type="button" title="New action (n)" aria-label="New action">
-              <svg viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M450-450H200v-60h250v-250h60v250h250v60H510v250h-60v-250Z"/></svg>
+              <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               <span class="button-label">New action</span>
             </button>
           </div>
@@ -155,7 +156,7 @@
         <div id="filters" class="filter-row" role="group" aria-label="Filters">
           <span id="projectChip" class="chip chip-project" hidden>
             <span class="chip-key">Project</span><span id="projectChipValue" class="chip-value"></span>
-            <button id="projectChipClear" class="chip-clear" type="button" aria-label="Remove the project filter" title="Remove the project filter"><svg viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="m249-207-42-42 231-231-231-231 42-42 231 231 231-231 42 42-231 231 231 231-42 42-231-231-231 231Z"/></svg></button>
+            <button id="projectChipClear" class="chip-clear" type="button" aria-label="Remove the project filter" title="Remove the project filter"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
           </span>
           <button id="archiveScopeButton" class="link-button" type="button" hidden>Archive…</button>
           <label id="ownerChip" class="chip chip-select"><span class="chip-key">Owner</span><span class="chip-value" aria-hidden="true"></span>
@@ -190,9 +191,9 @@
               <button class="tl-seg-button" type="button" data-range="quarter" aria-pressed="false" title="Thirteen weeks, from Monday of last week">Quarter</button>
             </div>
             <div class="tl-nav">
-              <button id="timelineBack" class="icon-button tl-step" type="button" aria-label="Back one week" title="Back one week" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.75 4.5 6.25 8l3.5 3.5"/></svg></button>
+              <button id="timelineBack" class="icon-button tl-step" type="button" aria-label="Back one week" title="Back one week" hidden><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button>
               <button id="timelineToday" class="button button-small" type="button" title="Bring today into view">Today</button>
-              <button id="timelineForward" class="icon-button tl-step" type="button" aria-label="Forward one week" title="Forward one week" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.25 4.5 9.75 8l-3.5 3.5"/></svg></button>
+              <button id="timelineForward" class="icon-button tl-step" type="button" aria-label="Forward one week" title="Forward one week" hidden><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button>
             </div>
             <span id="timelineScale" class="tl-scale"></span>
             <button id="timelineLate" class="tl-late-jump" type="button" title="Go to the first overdue action" hidden></button>
@@ -204,7 +205,7 @@
             <section id="timelineTray" class="tl-tray" aria-labelledby="timelineTrayTitle" hidden>
               <div class="tl-tray-head">
                 <h2 id="timelineTrayTitle" class="tl-tray-title">
-                  <button id="timelineTrayToggle" class="tl-tray-toggle" type="button" aria-expanded="true" aria-controls="timelineTrayBody"><svg class="fold-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.25 8 9.75l3.5-3.5"/></svg><span>No deadline</span><span id="timelineTrayCount" class="section-count"></span><span id="timelineTrayMore" class="tl-tray-more"></span></button>
+                  <button id="timelineTrayToggle" class="tl-tray-toggle" type="button" aria-expanded="true" aria-controls="timelineTrayBody"><svg class="lucide fold-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg><span>No deadline</span><span id="timelineTrayCount" class="section-count"></span><span id="timelineTrayMore" class="tl-tray-more"></span></button>
                 </h2>
                 <span id="timelineTrayHint" class="tl-tray-hint">Drag a row onto a day to plan it.</span>
                 <label class="tl-tray-search"><span class="sr-only">Search the actions without a deadline</span><input id="timelineTraySearch" type="search" placeholder="Search" autocomplete="off" spellcheck="false"></label>
@@ -248,7 +249,7 @@
               </div>
               <div class="doc-pane-actions">
                 <button id="docEdit" class="button" type="button" hidden>Edit</button>
-                <button id="docDelete" class="button button-danger" type="button" hidden title="Delete this note"><svg viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M261-120q-24 0-42-18t-18-42v-570h-41v-60h188v-30h264v30h188v60h-41v570q0 24-18 42t-42 18H261Zm106-146h60v-399h-60v399Zm166 0h60v-399h-60v399Z"/></svg>Delete</button>
+                <button id="docDelete" class="button button-danger" type="button" hidden title="Delete this note"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>Delete</button>
                 <button id="docCancel" class="button" type="button" hidden>Cancel</button>
                 <button id="docSave" class="button button-primary" type="button" hidden title="Save (⌘ Enter)">Save</button>
               </div>
@@ -285,7 +286,7 @@
             <p id="editorHint" class="panel-hint"></p>
           </div>
           <button id="closeEditor" class="icon-button" type="button" aria-label="Close the panel" title="Close (Esc)">
-            <svg viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="m249-207-42-42 231-231-231-231 42-42 231 231 231-231 42 42-231 231 231 231-42 42-231-231-231 231Z"/></svg>
+            <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
           </button>
         </div>
         <div class="panel-body">
@@ -318,7 +319,7 @@
             <div id="subtaskForm" class="subtask-form">
               <label class="subtask-add"><span class="sr-only">New subtask</span><input id="subtaskInput" maxlength="300" autocomplete="off" spellcheck="true" placeholder="Add a subtask" aria-describedby="subtaskHint"></label>
               <button id="submitSubtask" class="icon-button" type="button" aria-label="Add the subtask" title="Add the subtask (Enter)">
-                <svg viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M450-450H200v-60h250v-250h60v250h250v60H510v250h-60v-250Z"/></svg>
+                <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               </button>
             </div>
             <p id="subtaskHint" class="field-hint subtask-hint"></p>
@@ -328,7 +329,7 @@
             <div class="history-head">
               <h3 id="editorHistoryTitle">History and notes</h3><span id="editorHistoryCount" class="history-count"></span>
               <button id="addNoteButton" class="icon-button" type="button" aria-label="Add a note" title="Add a note" aria-controls="noteForm" aria-expanded="false">
-                <svg viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M450-450H200v-60h250v-250h60v250h250v60H510v250h-60v-250Z"/></svg>
+                <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M12 7v6"/><path d="M9 10h6"/></svg>
               </button>
             </div>
             <div id="noteForm" class="note-form" hidden>
@@ -344,7 +345,7 @@
         <p id="editorError" class="form-error panel-error" role="alert" hidden></p>
         <div class="panel-foot">
           <button id="deleteEditor" class="button button-danger" type="button" hidden>
-            <svg viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="M261-120q-24 0-42-18t-18-42v-570h-41v-60h188v-30h264v30h188v60h-41v570q0 24-18 42t-42 18H261Zm106-146h60v-399h-60v399Zm166 0h60v-399h-60v399Z"/></svg>Delete
+            <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>Delete
           </button>
           <span class="panel-foot-spacer"></span>
           <button id="cancelEditor" class="button" type="button">Cancel</button>
@@ -356,7 +357,7 @@
   <div id="popover" class="popover" hidden></div>
   <dialog id="newNoteDialog" class="dialog" aria-labelledby="newNoteHeading">
     <form id="newNoteForm" method="dialog" novalidate>
-      <div class="dialog-head"><h2 id="newNoteHeading">New note</h2><button id="closeNewNote" class="icon-button" type="button" aria-label="Close"><svg viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="m249-207-42-42 231-231-231-231 42-42 231 231 231-231 42 42-231 231 231 231-42 42-231-231-231 231Z"/></svg></button></div>
+      <div class="dialog-head"><h2 id="newNoteHeading">New note</h2><button id="closeNewNote" class="icon-button" type="button" aria-label="Close"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></div>
       <p id="newNoteIntro" class="dialog-intro">Saved as Markdown in the <code>notes/</code> folder of the project, or in <code>inbox/</code> for a note to triage later.</p>
       <div class="dialog-body">
         <label class="field"><span class="field-label">Title</span><input id="newNoteTitle" maxlength="150" required autocomplete="off" placeholder="Note title"></label>
@@ -370,6 +371,31 @@
       </div>
       <p id="newNoteError" class="form-error" role="alert" hidden></p>
       <div class="dialog-actions"><button id="cancelNewNote" class="button" type="button">Cancel</button><button id="saveNewNote" class="button button-primary" type="submit">Create note</button></div>
+    </form>
+  </dialog>
+  <dialog id="addBrainDialog" class="dialog dialog-small" aria-labelledby="addBrainHeading">
+    <form id="addBrainForm" method="dialog" novalidate>
+      <div class="dialog-head"><h2 id="addBrainHeading">Add brain</h2><button id="closeAddBrain" class="icon-button" type="button" aria-label="Close"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></div>
+      <p class="dialog-intro">A new brain is a folder next to the others in your Work, with its own Git repository. Nothing is sent online.</p>
+      <div class="dialog-body">
+        <div class="field">
+          <label class="field-label" for="addBrainName">Name</label>
+          <div class="input-prefix"><span class="input-prefix-text" aria-hidden="true">brain-</span><input id="addBrainName" maxlength="58" required autocomplete="off" spellcheck="false" placeholder="acme" aria-describedby="addBrainNameHint"></div>
+          <small id="addBrainNameHint" class="field-hint">Lowercase letters, digits and hyphens, starting with a letter or a digit.</small>
+        </div>
+        <div class="field">
+          <label class="field-label" for="addBrainDescription">Description</label>
+          <input id="addBrainDescription" maxlength="300" required autocomplete="off" aria-describedby="addBrainDescriptionHint">
+          <small id="addBrainDescriptionHint" class="field-hint">What goes in this brain. Agents read it to choose where to file things.</small>
+        </div>
+        <div class="field">
+          <label class="field-label" for="addBrainScope">Scope (optional)</label>
+          <input id="addBrainScope" maxlength="60" list="addBrainScopes" autocomplete="off">
+          <datalist id="addBrainScopes"><option value="personal"></option><option value="employer"></option><option value="client"></option></datalist>
+        </div>
+      </div>
+      <p id="addBrainError" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button id="cancelAddBrain" class="button" type="button">Cancel</button><button id="saveAddBrain" class="button button-primary" type="submit">Create brain</button></div>
     </form>
   </dialog>
   <dialog id="deleteNoteDialog" class="dialog dialog-small" aria-labelledby="deleteNoteHeading" aria-describedby="deleteNoteText">
@@ -412,7 +438,7 @@
   <dialog id="gitChangesDialog" class="dialog dialog-wide" aria-labelledby="gitChangesTitle">
     <div class="git-changes-head">
       <div class="git-changes-heading"><h2 id="gitChangesTitle">See changes</h2><p id="gitChangesMeta" class="git-changes-meta"></p></div>
-      <button id="gitChangesClose" class="icon-button" type="button" aria-label="Close" title="Close (Esc)"><svg viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="m249-207-42-42 231-231-231-231 42-42 231 231 231-231 42 42-231 231 231 231-42 42-231-231-231 231Z"/></svg></button>
+      <button id="gitChangesClose" class="icon-button" type="button" aria-label="Close" title="Close (Esc)"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
     </div>
     <div id="gitChangesBody" class="git-changes-body" tabindex="0" aria-label="Changes of this note"></div>
   </dialog>
@@ -425,7 +451,7 @@
   </dialog>
   <dialog id="shortcutsDialog" class="dialog dialog-small" aria-labelledby="shortcutsHeading">
     <form method="dialog">
-      <div class="dialog-head"><h2 id="shortcutsHeading">Keyboard shortcuts</h2><button class="icon-button" type="submit" aria-label="Close"><svg viewBox="0 -960 960 960" aria-hidden="true"><path class="ms" d="m249-207-42-42 231-231-231-231 42-42 231 231 231-231 42 42-231 231 231 231-42 42-231-231-231 231Z"/></svg></button></div>
+      <div class="dialog-head"><h2 id="shortcutsHeading">Keyboard shortcuts</h2><button class="icon-button" type="submit" aria-label="Close"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></div>
       <dl class="shortcuts">
         <div><dt><kbd>/</kbd></dt><dd>Search the actions and the documents</dd></div>
         <div><dt><kbd>n</kbd></dt><dd>New action</dd></div>
@@ -440,7 +466,7 @@
         <div><dt><kbd>⌘</kbd> <kbd>Enter</kbd></dt><dd>Save the panel or the note</dd></div>
         <div><dt><kbd>⌘</kbd> <kbd>Z</kbd></dt><dd>Undo the last write (outside a field)</dd></div>
         <div><dt><kbd>⌘</kbd> <kbd>B</kbd> <kbd>I</kbd> <kbd>U</kbd> <kbd>K</kbd></dt><dd>In a note: bold, italic, underline, link (<kbd>⇧</kbd> <kbd>X</kbd>: strikethrough)</dd></div>
-        <div><dt><kbd>[</kbd></dt><dd>Show or hide the sidebar</dd></div>
+        <div><dt><kbd>[</kbd></dt><dd>Collapse the sidebar to its icons, or expand it</dd></div>
         <div><dt><kbd>?</kbd></dt><dd>This help</dd></div>
       </dl>
       <p class="dialog-intro">Single-key shortcuts do not apply while you type. On Windows and Linux, <kbd>Ctrl</kbd> replaces <kbd>⌘</kbd>.</p>

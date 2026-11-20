@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .common import ARCHIVE_VERBS, ASSETS, NOTE_REQUEST_LIMIT, SUBTASKS_ROUTE, SUBTASK_ROUTE, TOOL_LOCK, TaskError, WORK, WRITE_LOCK
 from .tools import run_tool, tool_catalog
-from .brains import brain_boundary, brain_label, discover_brains
+from .brains import brain_boundary, brain_label, create_brain, discover_brains, validate_new_brain
 from .settings import SETTINGS_VALUE_LIMIT, settings_apply, settings_snapshot
 from .update import UPDATE_VERSION_RE, UpdateState, update_apply
 from .git_sync import GIT_LOCK, GIT_VERSION_RE, git_changes, git_overview, git_save_and_send
@@ -360,6 +360,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/tools/run":
             self._tool_request()
             return
+        if path == "/api/brains":
+            self._brain_create_request()
+            return
         if path in {"/api/update/check", "/api/update/apply"}:
             self._update_request(path)
             return
@@ -424,6 +427,28 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 TOOL_LOCK.release()
             self._json(HTTPStatus.OK, result)
+        except TaskError as error:
+            self._json(error.status, {"error": error.message})
+        except (ValueError, UnicodeDecodeError):
+            self._json(HTTPStatus.BAD_REQUEST, {"error": "Invalid JSON."})
+
+    def _brain_create_request(self) -> None:
+        """`POST /api/brains` with {"name": N, "description": D, "scope": S}: create a blank brain with tools/brain/new-brain.py, answer with its entry."""
+        if not self._write_allowed():
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 2048:
+                raise TaskError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Request too large.")
+            payload = json.loads(self.rfile.read(length))
+            if not isinstance(payload, dict):
+                raise TaskError(HTTPStatus.BAD_REQUEST, "JSON object required.")
+            name, description, scope = validate_new_brain(payload)
+            create_brain(self.server.work, name, description, scope)
+            created = next((brain for brain in self.server.brain_list()["brains"] if brain["name"] == name), None)
+            if created is None:
+                raise TaskError(HTTPStatus.INTERNAL_SERVER_ERROR, f"{name} was created but is not recognised as a brain.")
+            self._json(HTTPStatus.CREATED, {"brain": created})
         except TaskError as error:
             self._json(error.status, {"error": error.message})
         except (ValueError, UnicodeDecodeError):
