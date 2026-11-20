@@ -8,7 +8,8 @@ holding an AGENTS.md and a .data/ folder) is a trust boundary that can hold:
   empty `.install-as-copy` file is installed as a real copy instead of a link;
 - its configuration, `<brain>/.data/work-config.json`:
   `{"version": 1, "skills": {"thirdParty": {"<name>": {"source": ..., "sourceType": ...,
-  "skillPath": ..., "computedHash": ...}}, "disabled": []}}`.
+  "skillPath": ..., "computedHash": ...}}, "disabled": []}}`, where `computedHash` is the
+  skills CLI hash of the installed skill folder (lock version 2, see `skill_folder_hash`).
 
 Layers, the later one wins: (1) `work-config.example.json` (public defaults),
 (2) each brain's work-config.json, the default brain first then the others by name,
@@ -32,10 +33,12 @@ configured folder exists and is a directory. `artifacts-dir` prints the resolved
 a symlink to it).
 
 Commands: check, list-brains, default-brain, artifacts-dir, list-own, list-third-party, list-catalog,
-lock, adopt, stamp, status. `default-brain` prints the folder name of the default brain
-(nothing and exit 1 when there is none). `lock` writes the ignored skills-lock.json and refuses to overwrite
-entries that no layer knows (installed with `npx skills add`): `adopt` records them
-in a brain first. `stamp` writes .work-state.json with a hash of the resolved
+lock, adopt, rehash, stamp, status. `default-brain` prints the folder name of the default brain
+(nothing and exit 1 when there is none). `lock` writes the ignored skills-lock.json (lock version 2) and refuses
+to overwrite entries that no layer knows (installed with `npx skills add`): `adopt` records them
+in a brain first. `rehash` sets the `computedHash` of each enabled third-party skill installed in
+.agents/skills/ to the hash of its installed folder, in the brain config that defines it, so that
+`npx skills experimental_install` sees it as installed. `stamp` writes .work-state.json with a hash of the resolved
 configuration (third-party entries, disabled names, own skills with brain and mode);
 `status` tells whether it changed since. Set WORK_DIR to use another workspace.
 """
@@ -56,6 +59,8 @@ ROOT = Path(os.environ.get("WORK_DIR", Path(__file__).resolve().parents[2])).res
 EXAMPLE = ROOT / "work-config.example.json"
 LOCAL = ROOT / "work-config.local.json"
 LOCK = ROOT / "skills-lock.json"
+LOCK_VERSION = 2  # skills CLI 1.9.0 lock format: `computedHash` is the hash of `skill_folder_hash`
+INSTALLED = ROOT / ".agents/skills"
 STATE = ROOT / ".work-state.json"
 DEFAULT_BRAIN = "brain"
 ARTIFACTS = "artifacts"
@@ -331,6 +336,58 @@ def config_hash(config: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
+HASH_SKIPPED_FILES = frozenset({"metadata.json"})
+HASH_SKIPPED_DIRS = frozenset({".git", "__pycache__", "__pypackages__"})
+
+
+def skill_folder_hash(folder: Path) -> str:
+    """The `computedHash` that the skills CLI 1.9.0 records for a skill folder in a version-2 skills-lock.json.
+
+    Reproduces `computeSkillFolderHash` of that CLI: `npx skills experimental_install` treats an installed skill
+    as installed only when this hash of `.agents/skills/<name>/` equals the lock's `computedHash`. Files named
+    `metadata.json` and folders named `.git`, `__pycache__` or `__pypackages__` are skipped; a symbolic link is
+    followed only when its target lies inside the folder. Files are sorted by the UTF-8 bytes of their
+    `/`-separated relative path; the content of a file without a NUL byte has its CRLF turned into LF. The
+    SHA-256 covers, for each file, `path NUL length NUL content`, the length in decimal.
+    """
+    root = os.path.realpath(folder)
+    files: list[tuple[bytes, bytes]] = []
+
+    def collect(directory: str, prefix: str, ancestors: frozenset[str]) -> None:
+        real = os.path.realpath(directory)
+        if real in ancestors:
+            return
+        branch = ancestors | {real}
+        for item in os.scandir(directory):
+            is_dir = item.is_dir(follow_symlinks=False)
+            if item.name in HASH_SKIPPED_FILES or (is_dir and item.name in HASH_SKIPPED_DIRS):
+                continue
+            if item.is_symlink():
+                try:
+                    target = str(Path(item.path).resolve(strict=True))
+                except OSError:
+                    continue
+                if target != root and not target.startswith(root + os.sep):
+                    continue
+                is_dir = os.path.isdir(target)
+                if is_dir and item.name in HASH_SKIPPED_DIRS:
+                    continue
+            elif not is_dir and not item.is_file(follow_symlinks=False):
+                continue
+            if is_dir:
+                collect(item.path, f"{prefix}{item.name}/", branch)
+            else:
+                files.append((f"{prefix}{item.name}".encode("utf-8"), Path(item.path).read_bytes()))
+
+    collect(str(folder), "", frozenset())
+    digest = hashlib.sha256()
+    for path, content in sorted(files):
+        if b"\0" not in content:
+            content = content.replace(b"\r\n", b"\n")
+        digest.update(path + b"\0" + str(len(content)).encode("ascii") + b"\0" + content)
+    return digest.hexdigest()
+
+
 def lock_entries() -> dict[str, Any]:
     """Skills listed by the existing skills-lock.json (none when it is absent)."""
     if not LOCK.is_file():
@@ -355,7 +412,7 @@ def lock(config: dict[str, Any]) -> None:
             f"or remove these entries from {rel(LOCK)}"
         )
     skills = enabled_third_party(config)
-    write_json(LOCK, {"version": 1, "skills": skills})
+    write_json(LOCK, {"version": LOCK_VERSION, "skills": skills})
     print(f"{rel(LOCK)} written: {len(skills)} third-party skill(s)")
 
 
@@ -384,6 +441,50 @@ def adopt(config: dict[str, Any], brain_name: str | None) -> None:
     write_json(path, data)
     for name in sorted(unknown):
         print(f"Adopted {name} into {rel(path)}")
+
+
+def rehash(config: dict[str, Any], brain_name: str | None) -> None:
+    """Set each installed third-party skill's `computedHash` to the hash of its folder in `.agents/skills/`.
+
+    Acts on the `.data/work-config.json` of every brain, or of the brain named. An entry is left as it is when
+    the skill is disabled, not installed (no SKILL.md), or overridden by work-config.local.json (this command
+    never writes that file nor work-config.example.json). Only `computedHash` changes; a config that needs
+    no change is not rewritten.
+    """
+    brains = discover_brains(ROOT)
+    if brain_name is not None:
+        found = ", ".join(brain.name for brain in brains) or "none"
+        brains = [brain for brain in brains if brain.name == brain_name]
+        if not brains:
+            raise ConfigError(f"no brain named {brain_name} (found: {found})")
+    enabled = enabled_third_party(config)
+    for brain in brains:
+        path = brain / ".data/work-config.json"
+        if not path.is_file():
+            continue
+        data = read_json(path)
+        third_party, _ = parse_layer(data, rel(path))
+        changed = unchanged = absent = 0
+        for name, entry in sorted(third_party.items()):
+            if name not in enabled:
+                continue
+            if enabled[name] != entry:
+                print(f"{name}: left as it is, {LOCAL.name} overrides it")
+                continue
+            folder = INSTALLED / name
+            if not (folder / "SKILL.md").is_file():
+                absent += 1
+                continue
+            digest = skill_folder_hash(folder)
+            if digest == entry["computedHash"]:
+                unchanged += 1
+                continue
+            print(f"{name}: {entry['computedHash'][:12]} -> {digest[:12]}")
+            entry["computedHash"] = digest
+            changed += 1
+        if changed:
+            write_json(path, data)
+        print(f"{rel(path)}: {changed} hash(es) updated, {unchanged} unchanged, {absent} not installed")
 
 
 def stamp_state(config: dict[str, Any]) -> str:
@@ -418,7 +519,7 @@ def main() -> int:
         ("list-own", "enabled own skills: name, brain, link|copy"),
         ("list-third-party", "enabled third-party skills"),
         ("list-catalog", "every known third-party skill, enabled or not"),
-        ("lock", "write skills-lock.json from the resolved third-party skills"),
+        ("lock", f"write skills-lock.json (version {LOCK_VERSION}) from the resolved third-party skills"),
         ("stamp", "record the resolved configuration in .work-state.json"),
         ("status", "exit 1 when the configuration changed since the last stamp"),
     ):
@@ -427,6 +528,10 @@ def main() -> int:
     artifacts_parser.add_argument("--check", action="store_true", help="also verify it exists and say where it is (exit 1 on a problem)")
     adopt_parser = sub.add_parser("adopt", help="record the skills of skills-lock.json unknown to every layer")
     adopt_parser.add_argument("--brain", default=None, help="brain that receives them (default: the default brain)")
+    rehash_parser = sub.add_parser(
+        "rehash", help="set the computedHash of the installed third-party skills to the hash of their folder in .agents/skills"
+    )
+    rehash_parser.add_argument("--brain", default=None, help="brain config to update (default: every brain)")
     args = parser.parse_args()
 
     try:
@@ -470,6 +575,8 @@ def main() -> int:
             lock(config)
         elif args.command == "adopt":
             adopt(config, args.brain)
+        elif args.command == "rehash":
+            rehash(config, args.brain)
         elif args.command == "stamp":
             write_json(STATE, {"configHash": config_hash(config)})
             print(f"{rel(STATE)} written")

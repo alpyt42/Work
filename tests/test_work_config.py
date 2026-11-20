@@ -403,7 +403,7 @@ class LockAndAdoptTest(WorkConfigTestCase):
         self.make_brain("brain", conf=config({"b-skill": entry("b-skill"), "a-skill": entry("a-skill")}, ["b-skill"]))
         self.ok("lock")
         first = (self.root / "skills-lock.json").read_bytes()
-        expected = {"version": 1, "skills": {"a-skill": entry("a-skill")}}
+        expected = {"version": 2, "skills": {"a-skill": entry("a-skill")}}  # the skills CLI 1.9.0 lock version
         self.assertEqual(first.decode(), json.dumps(expected, indent=2, sort_keys=True) + "\n")
         self.ok("lock")
         self.assertEqual((self.root / "skills-lock.json").read_bytes(), first)
@@ -450,6 +450,15 @@ class LockAndAdoptTest(WorkConfigTestCase):
         self.ok("adopt")
         self.assertEqual(self.read_json("brain/.data/work-config.json")["skills"]["disabled"], ["old"])
 
+    def test_adopt_copies_a_lock_entry_written_by_the_skills_cli_as_it_is(self) -> None:
+        self.make_brain("brain", conf=config({"a-skill": entry("a-skill")}))
+        added = {**entry("added", "f" * 64), "ref": "main", "commit": "0" * 40, "sourceUrl": "https://example.com/added.git"}
+        self.write_json("skills-lock.json", {"version": 2, "skills": {"a-skill": {**entry("a-skill"), "computedHash": ""}, "added": added}})
+        self.assertIn("Adopted added into brain/.data/work-config.json", self.ok("adopt"))
+        self.assertEqual(self.read_json("brain/.data/work-config.json")["skills"]["thirdParty"]["added"], added)
+        self.ok("lock")
+        self.assertEqual(self.read_json("skills-lock.json"), {"version": 2, "skills": {"a-skill": entry("a-skill"), "added": added}})
+
     def test_adopt_rejects_an_unknown_brain_and_invalid_lock_entries(self) -> None:
         self.make_brain("brain")
         self.write_json("skills-lock.json", {"version": 1, "skills": {"added": entry("added")}})
@@ -457,6 +466,149 @@ class LockAndAdoptTest(WorkConfigTestCase):
         self.write_json("skills-lock.json", {"version": 1, "skills": {"added": {"source": "x"}}})
         self.assertIn("needs a non-empty string", self.fails("adopt"))
         self.assertFalse((self.root / "brain/.data/work-config.json").exists())
+
+
+def load_tool():
+    spec = importlib.util.spec_from_file_location("work_config_under_test", TOOL)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class SkillFolderHashTest(unittest.TestCase):
+    """`skill_folder_hash` must give the `computedHash` of the skills CLI 1.9.0 (lock version 2)."""
+
+    tool = load_tool()
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.folder = Path(self._tmp.name) / "acme-skill"
+        (self.folder / "references").mkdir(parents=True)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def write(self, name: str, content: bytes) -> None:
+        path = self.folder / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+
+    def digest(self) -> str:
+        return self.tool.skill_folder_hash(self.folder)
+
+    def test_pinned_digest_of_a_tiny_folder(self) -> None:
+        # SKILL.md sorts before references/ by bytes ('S' < 'r'), and the CRLF of notes.md counts as LF.
+        self.write("SKILL.md", b"# acme\n")
+        self.write("references/notes.md", b"one\r\ntwo\n")
+        self.assertEqual(self.digest(), "b529367d955b10b46ded8256d231526fcc021c52e924b6bf73951d3bf8019e7c")
+
+    def test_metadata_json_git_and_pycache_are_ignored(self) -> None:
+        self.write("SKILL.md", b"# acme\n")
+        self.write("references/notes.md", b"one\n")
+        before = self.digest()
+        self.write("metadata.json", b"{}")
+        self.write("references/metadata.json", b"{}")
+        self.write(".git/config", b"[core]\n")
+        self.write("__pycache__/tool.cpython-312.pyc", b"\0")
+        self.write("scripts/__pycache__/run.cpython-312.pyc", b"\0")
+        self.assertEqual(self.digest(), before)
+        self.write("scripts/run.py", b"print('acme')\n")
+        self.assertNotEqual(self.digest(), before)
+
+    def test_crlf_and_lf_give_the_same_hash_except_in_binary_files(self) -> None:
+        self.write("SKILL.md", b"# acme\r\nline\r\n")
+        crlf = self.digest()
+        self.write("SKILL.md", b"# acme\nline\n")
+        self.assertEqual(self.digest(), crlf)
+        self.write("references/data.bin", b"\0a\r\nb")
+        binary_crlf = self.digest()
+        self.write("references/data.bin", b"\0a\nb")
+        self.assertNotEqual(self.digest(), binary_crlf)
+
+
+class RehashTest(WorkConfigTestCase):
+    tool = load_tool()
+
+    def install(self, name: str, text: str = "# installed\n") -> Path:
+        folder = self.root / ".agents/skills" / name
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "SKILL.md").write_text(text, encoding="utf-8")
+        return folder
+
+    def third_party(self, brain: str = "brain") -> dict:
+        return self.read_json(f"{brain}/.data/work-config.json")["skills"]["thirdParty"]
+
+    def test_rehash_updates_only_installed_skills_and_only_their_hash(self) -> None:
+        pinned = {**entry("acme-skill"), "commit": "0" * 40, "ref": "main"}
+        self.make_brain("brain", conf=config(
+            {"acme-skill": pinned, "globex-skill": entry("globex-skill"), "initech-skill": entry("initech-skill")},
+            ["initech-skill"],
+        ))
+        digest = self.tool.skill_folder_hash(self.install("acme-skill"))
+        self.install("initech-skill")  # disabled: left as it is
+        output = self.ok("rehash")
+        self.assertIn(f"acme-skill: abc -> {digest[:12]}", output)
+        self.assertNotIn("globex-skill", output)
+        self.assertNotIn("initech-skill", output)
+        self.assertIn("brain/.data/work-config.json: 1 hash(es) updated, 0 unchanged, 1 not installed", output)
+        self.assertEqual(self.third_party(), {
+            "acme-skill": {**pinned, "computedHash": digest},
+            "globex-skill": entry("globex-skill"),
+            "initech-skill": entry("initech-skill"),
+        })
+        self.ok("lock")
+        self.assertEqual(self.read_json("skills-lock.json")["skills"]["acme-skill"]["computedHash"], digest)
+
+    def test_rehash_is_idempotent(self) -> None:
+        self.make_brain("brain", conf=config({"acme-skill": entry("acme-skill")}))
+        self.install("acme-skill")
+        self.ok("rehash")
+        first = (self.root / "brain/.data/work-config.json").read_bytes()
+        output = self.ok("rehash")
+        self.assertEqual(output, "brain/.data/work-config.json: 0 hash(es) updated, 1 unchanged, 0 not installed\n")
+        self.assertEqual((self.root / "brain/.data/work-config.json").read_bytes(), first)
+
+    def test_rehash_never_writes_the_local_or_example_layer(self) -> None:
+        self.make_brain("brain", conf=config({"acme-skill": entry("acme-skill"), "globex-skill": entry("globex-skill")}))
+        self.write_json("work-config.example.json", config({"initech-skill": entry("initech-skill")}))
+        self.write_json("work-config.local.json", config({"globex-skill": entry("globex-skill", "local")}))
+        for name in ("acme-skill", "globex-skill", "initech-skill"):
+            self.install(name)
+        example = (self.root / "work-config.example.json").read_bytes()
+        local = (self.root / "work-config.local.json").read_bytes()
+        output = self.ok("rehash")
+        self.assertIn("globex-skill: left as it is, work-config.local.json overrides it", output)
+        self.assertIn("1 hash(es) updated", output)
+        self.assertEqual(self.third_party()["globex-skill"], entry("globex-skill"))
+        self.assertEqual((self.root / "work-config.example.json").read_bytes(), example)
+        self.assertEqual((self.root / "work-config.local.json").read_bytes(), local)
+
+    def test_rehash_brain_keeps_to_the_brain_named(self) -> None:
+        self.make_brain("brain", conf=config({"acme-skill": entry("acme-skill")}))
+        self.make_brain("brain-perso", conf=config({"globex-skill": entry("globex-skill")}))
+        self.install("acme-skill")
+        digest = self.tool.skill_folder_hash(self.install("globex-skill"))
+        output = self.ok("rehash", "--brain", "brain-perso")
+        self.assertNotIn("brain/.data", output)
+        self.assertEqual(self.third_party("brain-perso")["globex-skill"]["computedHash"], digest)
+        self.assertEqual(self.third_party("brain")["acme-skill"], entry("acme-skill"))
+        self.assertIn("no brain named brain-nope", self.fails("rehash", "--brain", "brain-nope"))
+
+
+class DocsTest(unittest.TestCase):
+    """The rows that document work_config.py name the lock version and the rehash command."""
+
+    REPO = Path(__file__).resolve().parents[1]
+
+    def test_both_readme_rows_name_rehash_and_the_lock_version(self) -> None:
+        version = f"version {load_tool().LOCK_VERSION}"
+        for readme in ("tools/README.md", "tools/machine/README.md"):
+            with self.subTest(readme=readme):
+                rows = [line for line in (self.REPO / readme).read_text(encoding="utf-8").splitlines()
+                        if line.startswith("| `") and "work_config.py <command>" in line]
+                self.assertEqual(len(rows), 1)
+                self.assertIn("rehash", rows[0])
+                self.assertIn(version, rows[0])
 
 
 class StampTest(WorkConfigTestCase):
