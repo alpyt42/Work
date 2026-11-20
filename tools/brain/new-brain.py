@@ -14,7 +14,12 @@ from there, so they follow Work updates instead of being copied.
 
 `{{BRAIN}}` in the seed is replaced by the brain's folder name, which keeps the
 Tasks queries of tasks.md scoped to that brain. The new folder gets a fresh Git
-repository with no commit and no remote. An existing folder is never touched.
+repository with no commit and no remote, and the same three Git hooks that
+tools/machine/bootstrap.sh installs in a brain (brain-pre-commit as pre-commit,
+commit-msg, pre-push), copied from tools/machine/hooks/ of the Work repository
+that holds this script. With `--no-git` there is no repository and no hook.
+bootstrap.sh stays the way to install them in a brain cloned by hand.
+An existing folder is never touched.
 
 Every brain is a trust boundary declared in `.data/brain.json`. `--scope`,
 `--description`, `--remote` and `--email` fill it at creation (the file is
@@ -38,6 +43,10 @@ from pathlib import Path
 
 WORK = Path(os.environ.get("WORK_DIR", Path(__file__).resolve().parents[2])).resolve()
 SEED = Path(__file__).resolve().parents[2] / "kit/brain/seed"
+# The hooks come from the Work repository that holds this script, like the seed (and like bootstrap.sh), never from WORK_DIR.
+HOOKS = Path(__file__).resolve().parents[2] / "tools/machine/hooks"
+# hook source -> name in <brain>/.git/hooks/ (the table of the brain loop of tools/machine/bootstrap.sh)
+BRAIN_HOOKS = {"brain-pre-commit": "pre-commit", "commit-msg": "commit-msg", "pre-push": "pre-push"}
 NAME = re.compile(r"^brain(-[a-z0-9][a-z0-9-]*)?$")
 PLACEHOLDER = "{{BRAIN}}"
 TEXT = {".md", ".json"}
@@ -54,6 +63,15 @@ def write_boundary(target: Path, fields: dict[str, str]) -> None:
     declaration.update(fields)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(declaration, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def install_hooks(target: Path) -> None:
+    """Install the brain's Git hooks (mode 755) in <target>/.git/hooks/, as tools/machine/bootstrap.sh does."""
+    destination = target / ".git/hooks"
+    destination.mkdir(parents=True, exist_ok=True)
+    for source, installed in BRAIN_HOOKS.items():
+        shutil.copyfile(HOOKS / source, destination / installed)
+        (destination / installed).chmod(0o755)
 
 
 def create(name: str, git: bool = True, boundary: dict[str, str] | None = None) -> Path:
@@ -75,6 +93,7 @@ def create(name: str, git: bool = True, boundary: dict[str, str] | None = None) 
         write_boundary(target, fields)
     if git:
         subprocess.run(["git", "init", "--quiet", "-b", "main"], cwd=target, check=True)
+        install_hooks(target)
     return target
 
 
@@ -89,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     boundary = {field: getattr(args, field) or "" for field in BOUNDARY_FIELDS}
     target = create(args.name, git=not args.no_git, boundary=boundary)
-    note = "" if args.no_git else ", Git repository with no commit and no remote"
+    note = "" if args.no_git else ", Git repository with no commit and no remote, Git hooks installed"
     print(f"{target.name}/ created from kit/brain/seed/{note}.")
     return 0
 

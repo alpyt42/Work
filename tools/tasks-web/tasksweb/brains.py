@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
+import threading
+import unicodedata
+from http import HTTPStatus
 from pathlib import Path
 
-from .common import WORK, work_config
+from .common import TOOLS_ROOT, TaskError, WORK, python_environment, tasks_launch, work_config
 from .markdown import FENCE_RE, HEADING_RE, split_front_matter
 
 
@@ -116,3 +121,80 @@ def brain_boundary(brain: Path) -> dict[str, str]:
             if isinstance(declared.get(key), str):
                 values[key] = " ".join(declared[key].split())
     return values
+
+
+BRAIN_NAME_RE = re.compile(r"^brain(-[a-z0-9][a-z0-9-]*)?$")
+BRAIN_NAME_LIMIT = 64
+BRAIN_DESCRIPTION_LIMIT = 300
+BRAIN_SCOPE_LIMIT = 60
+BRAIN_CREATE_TIMEOUT = 60
+BRAIN_LOCK = threading.Lock()
+BRAIN_SCRIPT = TOOLS_ROOT / "tools/brain/new-brain.py"
+
+
+def _single_line(value: object, field: str, minimum: int, limit: int) -> str:
+    """A stripped text of `minimum`..`limit` characters without control characters (newlines included)."""
+    if not isinstance(value, str):
+        raise TaskError(HTTPStatus.BAD_REQUEST, f"The {field} must be text.")
+    text = value.strip()
+    if any(unicodedata.category(char) in {"Cc", "Cf", "Zl", "Zp"} for char in text):
+        raise TaskError(HTTPStatus.BAD_REQUEST, f"The {field} must be on one line, without control characters.")
+    if len(text) < minimum:
+        raise TaskError(HTTPStatus.BAD_REQUEST, f"The {field} is required.")
+    if len(text) > limit:
+        raise TaskError(HTTPStatus.BAD_REQUEST, f"The {field} must not exceed {limit} characters.")
+    return text
+
+
+def validate_new_brain(payload: dict) -> tuple[str, str, str]:
+    """(name, description, scope) of a brain to create; TaskError 400 with a sentence when the request is not valid."""
+    if not set(payload) <= {"name", "description", "scope"} or not {"name", "description"} <= set(payload):
+        raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid request: expected name, description and optionally scope.")
+    name = payload["name"]
+    if not isinstance(name, str) or len(name) > BRAIN_NAME_LIMIT or BRAIN_NAME_RE.fullmatch(name) is None:
+        raise TaskError(HTTPStatus.BAD_REQUEST, "The name must be `brain` or `brain-<name>` (lowercase letters, digits and hyphens, 64 characters at most).")
+    description = _single_line(payload["description"], "description", 1, BRAIN_DESCRIPTION_LIMIT)
+    scope = _single_line(payload.get("scope", ""), "scope", 0, BRAIN_SCOPE_LIMIT)
+    return name, description, scope
+
+
+def last_error_line(stderr: str) -> str:
+    """The last non-empty line of a command's stderr, capped; a generic sentence when there is none."""
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    return (lines[-1] if lines else "The brain could not be created.")[:300]
+
+
+def create_brain(work: Path, name: str, description: str, scope: str) -> None:
+    """Run tools/brain/new-brain.py for `name` in `work` (an argument list, no shell, no remote, no e-mail, Git on).
+
+    TaskError 409 when the folder exists or another creation is running, 500 when the tool fails or times out.
+    """
+    if (work / name).exists() or (work / name).is_symlink():
+        raise TaskError(HTTPStatus.CONFLICT, f"{name} already exists.")
+    uv = shutil.which("uv") or tasks_launch.find_uv()
+    if uv is None:
+        raise TaskError(HTTPStatus.SERVICE_UNAVAILABLE, "uv was not found on this machine.")
+    # `--option=value`: a value starting with "-" stays a value, never another option.
+    command = [uv, "run", str(BRAIN_SCRIPT), name, f"--description={description}"]
+    if scope:
+        command.append(f"--scope={scope}")
+    environment = python_environment()
+    environment["WORK_DIR"] = str(work)
+    if not BRAIN_LOCK.acquire(blocking=False):
+        raise TaskError(HTTPStatus.CONFLICT, "Another brain is already being created.")
+    try:
+        if (work / name).exists() or (work / name).is_symlink():
+            raise TaskError(HTTPStatus.CONFLICT, f"{name} already exists.")
+        try:
+            result = subprocess.run(
+                command, cwd=work, env=environment,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=BRAIN_CREATE_TIMEOUT, check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise TaskError(HTTPStatus.INTERNAL_SERVER_ERROR, "Creating the brain took more than 60 seconds.") from None
+        except OSError:
+            raise TaskError(HTTPStatus.INTERNAL_SERVER_ERROR, "Could not start the brain creation.") from None
+    finally:
+        BRAIN_LOCK.release()
+    if result.returncode != 0:
+        raise TaskError(HTTPStatus.INTERNAL_SERVER_ERROR, last_error_line(result.stderr))

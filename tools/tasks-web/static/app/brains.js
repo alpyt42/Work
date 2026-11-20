@@ -79,8 +79,8 @@ function brainTitle(brain) {
 function brainOption(brain, index) {
   const option = element('li', 'brain-option');
   option.id = `brainOption${index}`;
-  option.setAttribute('role', 'option');
-  option.setAttribute('aria-selected', String(brain.name === currentBrain));
+  option.setAttribute('role', 'menuitemradio');
+  option.setAttribute('aria-checked', String(brain.name === currentBrain));
   option.dataset.brain = brain.name;
   const swatch = element('span', 'brain-swatch');
   swatch.dataset.accent = accentFor(brain.name);
@@ -91,26 +91,40 @@ function brainOption(brain, index) {
   option.addEventListener('click', () => chooseBrain(brain.name));
   return option;
 }
-// The switcher: the brain's name as plain text when the Work has one brain, otherwise a button that opens the list.
+// The entry that is an action, not a brain: it opens the "Add brain" dialog.
+function brainAddOption() {
+  const option = element('li', 'brain-option brain-add');
+  option.id = 'brainOptionAdd';
+  option.setAttribute('role', 'menuitem');
+  option.dataset.action = 'add';
+  option.append(element('span', 'brain-add-icon'), element('span', 'brain-option-text'));
+  option.firstChild.append(svgIcon(ICONS.plus));
+  option.lastChild.append(element('span', 'brain-option-name', 'Add brain'));
+  option.addEventListener('click', openAddBrain);
+  return option;
+}
+// The entries the arrows move over: the brains, then "Add brain" (the heading and the separator are not entries).
+function brainMenuItems() { return [...ids.brainMenu.querySelectorAll('[role="menuitemradio"], [role="menuitem"]')]; }
+// The switcher is always a button that opens the menu: it lists the brains and carries "Add brain", even with one brain.
 function renderBrainSwitch() {
-  const several = brains.length > 1;
   const known = brains.find(brain => brain.name === currentBrain);
-  const active = ids.brainMenu.children[brainMenuIndex]?.dataset.brain || currentBrain;
-  ids.brainStatic.hidden = several;
-  ids.brainStaticName.textContent = brainLabel(currentBrain) || 'Brain';
-  ids.brainStatic.title = known ? brainTitle(known) : '';
-  ids.brainButton.hidden = !several;
-  ids.brainName.textContent = brainLabel(currentBrain);
+  const activeItem = brainMenuItems()[brainMenuIndex];
+  const active = activeItem?.dataset.brain || activeItem?.dataset.action || currentBrain;
+  ids.brainName.textContent = brainLabel(currentBrain) || 'Brain';
   ids.brainMini.textContent = brainLabel(currentBrain) || 'Brain';
   ids.brainButton.title = known ? brainTitle(known) : '';
-  ids.brainMenu.replaceChildren(...brains.map(brainOption));
-  if (!several) closeBrainMenu(false);
-  else if (brainMenuOpen()) setBrainActive(Math.max(0, brains.findIndex(brain => brain.name === active)));
-  document.title = several && currentBrain ? `Actions – ${brainLabel(currentBrain)}` : 'Actions';
+  const heading = element('li', 'menu-heading', 'Brains');
+  heading.setAttribute('role', 'presentation');
+  heading.setAttribute('aria-hidden', 'true');
+  const separator = element('li', 'menu-separator');
+  separator.setAttribute('role', 'separator');
+  ids.brainMenu.replaceChildren(heading, ...brains.map(brainOption), separator, brainAddOption());
+  if (brainMenuOpen()) setBrainActive(Math.max(0, brainMenuItems().findIndex(item => (item.dataset.brain || item.dataset.action) === active)));
+  document.title = brains.length > 1 && currentBrain ? `Actions – ${brainLabel(currentBrain)}` : 'Actions';
 }
 function brainMenuOpen() { return !ids.brainMenu.hidden; }
 function setBrainActive(index) {
-  const options = [...ids.brainMenu.children];
+  const options = brainMenuItems();
   if (!options.length) return;
   brainMenuIndex = Math.max(0, Math.min(index, options.length - 1));
   options.forEach((option, position) => option.classList.toggle('is-active', position === brainMenuIndex));
@@ -118,8 +132,9 @@ function setBrainActive(index) {
   options[brainMenuIndex].scrollIntoView({block: 'nearest'});
 }
 function openBrainMenu() {
-  if (brains.length < 2 || brainMenuOpen()) return;
+  if (brainMenuOpen()) return;
   closePopover(false);
+  hideRailTip();
   ids.brainMenu.hidden = false;
   ids.brainButton.setAttribute('aria-expanded', 'true');
   setBrainActive(brains.findIndex(brain => brain.name === currentBrain));
@@ -134,11 +149,16 @@ function closeBrainMenu(refocus = true) {
   brainMenuIndex = -1;
   if (refocus) ids.brainButton.focus();
 }
+// Enter or Space on the highlighted entry: a brain to open, or the "Add brain" dialog.
+function activateBrainItem(item) {
+  if (!item) return;
+  if (item.dataset.action === 'add') openAddBrain(); else chooseBrain(item.dataset.brain);
+}
 function chooseBrain(name) {
   closeBrainMenu();
-  if (!name || name === currentBrain) return;
+  if (!name || name === currentBrain) return Promise.resolve(false);
   const from = brains.findIndex(brain => brain.name === currentBrain);
-  turnToBrain(name, brains.findIndex(brain => brain.name === name) >= from ? 1 : -1);
+  return turnToBrain(name, brains.findIndex(brain => brain.name === name) >= from ? 1 : -1);
 }
 function adoptBrain(name) {
   currentBrain = name;
@@ -428,3 +448,51 @@ function onBrainWheel(event) {
 }
 // Not passive: a swipe that switches brain must also keep the browser from going back or forward in its history.
 document.addEventListener('wheel', onBrainWheel, {passive: false});
+
+// ---------- Add a brain ----------
+// The "Add brain" dialog: `POST /api/brains` makes the folder from the seed, with its own Git repository and hooks (nothing is sent
+// online), then the page opens the new brain like any other. The part of the name after the fixed `brain-` prefix: lowercase letters,
+// digits and hyphens, starting with a letter or a digit.
+const BRAIN_NAME_PART = /^[a-z0-9][a-z0-9-]*$/;
+function openAddBrain() {
+  closeBrainMenu(); // The focus goes back to the switcher, where the dialog returns it when it closes.
+  ids.addBrainName.value = '';
+  ids.addBrainDescription.value = '';
+  ids.addBrainScope.value = '';
+  setAddBrainError('');
+  ids.saveAddBrain.disabled = false;
+  ids.addBrainDialog.showModal();
+  ids.addBrainName.focus();
+}
+function setAddBrainError(message, field = null) {
+  ids.addBrainError.textContent = message;
+  ids.addBrainError.hidden = !message;
+  if (field) field.focus();
+}
+async function createBrain(event) {
+  event.preventDefault();
+  if (ids.saveAddBrain.disabled) return;
+  const rest = ids.addBrainName.value.trim();
+  const description = ids.addBrainDescription.value.trim();
+  const scope = ids.addBrainScope.value.trim();
+  if (!BRAIN_NAME_PART.test(rest)) return setAddBrainError('The name uses lowercase letters, digits and hyphens, and starts with a letter or a digit.', ids.addBrainName);
+  if (!description) return setAddBrainError('Describe what goes in this brain.', ids.addBrainDescription);
+  ids.saveAddBrain.disabled = true;
+  setAddBrainError('');
+  try {
+    // Not scoped to the current brain (`''`): the new brain does not exist yet.
+    const result = await request('/api/brains', {
+      method: 'POST', headers: {'Content-Type': 'application/json', 'X-Tasks-Token': token},
+      body: JSON.stringify({name: `brain-${rest}`, description, scope})
+    }, '');
+    ids.addBrainDialog.close();
+    const name = result.brain?.name || `brain-${rest}`;
+    await loadBrains();
+    await chooseBrain(name);
+    showToast(`Brain ${brainLabel(name)} created`);
+  } catch (error) {
+    if (!error.stale) setAddBrainError(error.message);
+  } finally {
+    ids.saveAddBrain.disabled = false;
+  }
+}

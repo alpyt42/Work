@@ -65,6 +65,22 @@ class NewBrainTest(unittest.TestCase):
         self.assertEqual(self.run_tool("brain", "--no-git").returncode, 0)
         self.assertFalse((self.work / "brain/.git").exists())
 
+    def test_installs_the_brain_git_hooks_like_bootstrap(self) -> None:
+        result = self.run_tool("brain-acme")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("hooks installed", result.stdout)
+        hooks = self.work / "brain-acme/.git/hooks"
+        for source, installed in (("brain-pre-commit", "pre-commit"), ("commit-msg", "commit-msg"), ("pre-push", "pre-push")):
+            self.assertEqual((hooks / installed).read_bytes(), (REPO / "tools/machine/hooks" / source).read_bytes(), installed)
+            self.assertTrue(os.access(hooks / installed, os.X_OK), installed)
+            self.assertEqual((hooks / installed).stat().st_mode & 0o777, 0o755, installed)
+
+    def test_no_git_installs_no_hook(self) -> None:
+        result = self.run_tool("brain-acme", "--no-git")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("hooks", result.stdout)
+        self.assertFalse((self.work / "brain-acme/.git").exists())
+
     def test_refuses_existing_folder_and_bad_name(self) -> None:
         (self.work / "brain").mkdir()
         (self.work / "brain/keep.md").write_text("x", encoding="utf-8")
