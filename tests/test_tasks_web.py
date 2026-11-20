@@ -2253,6 +2253,16 @@ class GitViewTest(unittest.TestCase):
         self.write(self.acme, f"{self.SETUP}/notes/empty.md", "")
         self.assertEqual(self.changes(f"{self.SETUP}/notes/empty.md")["unchanged"], True)
 
+    def test_a_note_saved_with_crlf_then_moved_is_still_renamed(self):
+        # The brain checks text in with LF (text=auto eol=lf): a note an editor saved with CRLF, as on Windows, is
+        # committed with LF, so the moved file's bytes differ from the blob while Git sees the same note.
+        (self.acme / f"{self.SETUP}/notes/crlf.md").write_bytes(b"# Windows note\r\n\r\nSaved with CRLF.\r\n")
+        self.commit(self.acme)
+        (self.acme / f"{self.SETUP}/notes/crlf.md").rename(self.acme / f"{self.SETUP}/notes/crlf-moved.md")
+        moved = self.changes(f"{self.SETUP}/notes/crlf-moved.md")
+        self.assertEqual((moved["change"], moved["unchanged"], moved["blocks"]), ("Renamed", True, []))
+        self.assertEqual([item["path"] for item in self.card()["changes"]], [f"{self.SETUP}/notes/crlf-moved.md"])
+
     def test_see_changes_of_a_secret_a_binary_and_a_huge_file(self):
         self.write(self.acme, "me/id_rsa", "TOKEN=abc123\n")
         self.write(self.acme, "me/server.pem", "KEY-MATERIAL\n")
@@ -2524,14 +2534,19 @@ class GitViewTest(unittest.TestCase):
         with patch.object(tasks_web.subprocess, "Popen", side_effect=spy):
             status, result = self.save()
         self.assertEqual((status, result["ok"]), (200, True), result)
-        git_calls = [(command, kwargs) for command, kwargs in calls if kwargs.get("start_new_session")]  # the writes (the reads have no session of their own)
+        def detached(kwargs):  # its own session on macOS and Linux, its own process group on Windows (no sessions there)
+            if os.name == "nt":
+                return bool(kwargs.get("creationflags", 0) & subprocess.CREATE_NEW_PROCESS_GROUP)
+            return bool(kwargs.get("start_new_session"))
+
+        git_calls = [(command, kwargs) for command, kwargs in calls if detached(kwargs)]  # the writes (the reads are not detached)
         arguments = [[part for part in command[1:] if part not in ("--no-pager", "-c", "core.quotepath=false", "color.ui=false")] for command, _ in git_calls]
         self.assertEqual(arguments, [["add", "-A"],
                                      ["commit", "-m", "docs: save 1 note from tasks-web", "-m", f"- new: {self.NOTES}/2026-10-04-risks.md"],
                                      ["push", "--", "origin", "HEAD:refs/heads/main"]])
         for command, kwargs in git_calls:
             self.assertEqual(kwargs["stdin"], tasks_web.subprocess.DEVNULL)
-            self.assertTrue(kwargs["start_new_session"])  # no controlling terminal: SSH can never wait for a passphrase
+            self.assertTrue(detached(kwargs))  # no controlling terminal: SSH can never wait for a passphrase
             self.assertEqual(kwargs["cwd"], self.acme)
             environment = kwargs["env"]
             self.assertEqual((environment["GIT_TERMINAL_PROMPT"], environment["GIT_EDITOR"]), ("0", "true"))
