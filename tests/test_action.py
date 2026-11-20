@@ -971,7 +971,7 @@ class ActionUpdatedStampTest(unittest.TestCase):
         self.brain = root / "brain"
         self.register = self.brain / "projects/clients/acme/missions/gamma/state/actions.md"
         self.register.parent.mkdir(parents=True)
-        self.register.write_text(STAMPED_REGISTER, encoding="utf-8")
+        self.register.write_text(STAMPED_REGISTER, encoding="utf-8", newline="\n")
         # The ceiling keeps Git from finding a repository above the temporary folder.
         self.env = {**os.environ, **GIT_ENV, "GIT_CEILING_DIRECTORIES": str(root), "ACTION_NOW": "2026-10-26 11:17"}
 
@@ -1016,14 +1016,14 @@ class ActionUpdatedStampTest(unittest.TestCase):
     def test_a_noop_repairs_an_updated_stamp_left_dirty_by_an_earlier_edit(self) -> None:
         self.commit()
         self.register.write_text(STAMPED_REGISTER.replace("    - updated: 2026-10-20 16:24\n",
-                                                          "    - updated: 2026-10-26 11:17\n", 1), encoding="utf-8")
+                                                          "    - updated: 2026-10-26 11:17\n", 1), encoding="utf-8", newline="\n")
         result = self.act("update", "GAM-001", "--state", "todo", "--owner", "Jane", "--due", "2026-10-20")
         self.assertIs(result["updated_changed"], True)
         self.assertEqual(self.text(), STAMPED_REGISTER)
         self.assertEqual(self.git("status", "--porcelain"), "")
 
     def test_trailing_whitespace_is_not_a_change(self) -> None:
-        self.register.write_text(STAMPED_REGISTER.replace("Second action", "Second action   ").replace("    - source: s\n    - created: 2026-10-02", "    - source: s  \n    - created: 2026-10-02"), encoding="utf-8")
+        self.register.write_text(STAMPED_REGISTER.replace("Second action", "Second action   ").replace("    - source: s\n    - created: 2026-10-02", "    - source: s  \n    - created: 2026-10-02"), encoding="utf-8", newline="\n")
         result = self.act("update", "GAM-002", "--owner", "Jane")
         self.assertIs(result["updated_changed"], False)
         self.assertEqual(self.stamp("GAM-002"), "2026-10-05 11:00")
@@ -1218,7 +1218,7 @@ class DefaultBrainTest(unittest.TestCase):
         (self.work / "brain").rename(self.work / "brain-old")
         result = self.listed()  # no `brain/` left and two brains: no default, so today's "missing" behaviour on Work/brain
         self.assertEqual(result.returncode, 3)
-        self.assertIn(str(self.work / "brain/projects"), result.stdout)
+        self.assertIn((self.work / "brain/projects").as_posix(), result.stdout)
         shutil.rmtree(self.work / "brain-old")
         self.assertEqual(self.ids(), ["INI-001"])  # the only brain
 
@@ -1355,7 +1355,7 @@ class ActionArchivedProjectTest(unittest.TestCase):
         self.assertTrue(self.act("show", "TOO-001")["project_archived"])
         self.assertNotIn("project_archived", self.act("show", "GAM-001"))
         text = self.act("show", "GAM-020", "--text")
-        self.assertEqual(text.splitlines()[-1], f"{self.old}:9 (archived project)")
+        self.assertEqual(text.splitlines()[-1], f"{self.old.as_posix()}:9 (archived project)")
         self.assertIn("acme / old · closed 2026-01-05", text)
         self.assertNotIn("archived project", self.act("show", "GAM-001", "--text"))
 
@@ -1397,7 +1397,7 @@ class ActionArchivedProjectTest(unittest.TestCase):
             self.assertEqual(self.old.read_text(encoding="utf-8"), ARCHIVED_OLD)
             self.assertEqual(sorted(path.name for path in self.old.parent.iterdir()), ["actions.md"])
             self.assertEqual(sorted(path.name for path in self.tool.parent.iterdir()), ["actions.md"])
-        self.assertEqual(maintain("sweep", "--register", str(self.old)).splitlines()[0], f"{self.old}: skipped, archived project")
+        self.assertEqual(maintain("sweep", "--register", str(self.old)).splitlines()[0], f"{self.old.as_posix()}: skipped, archived project")
         self.assertIn("skipped, archived project", maintain("archive", "--register", str(self.old), "--write"))
         self.assertEqual(self.old.read_text(encoding="utf-8"), ARCHIVED_OLD)
         # the same register, live, is moved

@@ -230,6 +230,13 @@ class BoundaryTest(PreflightCase):
         self.assertEqual(result.returncode, 1, self.out(result))
         self.assertIn('does not match the "remote" pattern', self.out(result))
 
+    def test_a_windows_path_matches_the_pattern_with_either_separator(self) -> None:
+        module = load_module()
+        self.assertTrue(module.url_matches("C:\\Users\\ada\\remotes\\acme.git", "*/remotes/acme.git", windows=True))
+        self.assertTrue(module.url_matches("C:/Users/ada/remotes/acme.git", "*\\remotes\\acme.git", windows=True))
+        self.assertFalse(module.url_matches("C:\\Users\\ada\\remotes\\globex.git", "*/remotes/acme.git", windows=True))
+        self.assertFalse(module.url_matches("/srv/remotes\\acme.git", "*/remotes/acme.git", windows=False))
+
     def test_a_repository_that_is_not_a_brain_has_no_boundary_to_check(self) -> None:
         repo = self.make_repo()
         result = self.run_tool(repo)
@@ -260,9 +267,10 @@ class SshTest(PreflightCase):
         stub_dir.mkdir(exist_ok=True)
         (stub_dir / "banner.txt").write_text(banner, encoding="utf-8")
         stub = stub_dir / "ssh-stub"
-        stub.write_text(f'#!/usr/bin/env bash\ndir="$(cd "$(dirname "$0")" && pwd)"\nprintf "%s\\n" "$@" > "$dir/args.txt"\ncat "$dir/banner.txt" >&{stream}\nexit {exit_code}\n', encoding="utf-8")
+        stub.write_text(f'#!/usr/bin/env bash\ndir="$(cd "$(dirname "$0")" && pwd)"\nprintf "%s\\n" "$@" > "$dir/args.txt"\ncat "$dir/banner.txt" >&{stream}\nexit {exit_code}\n', encoding="utf-8", newline="\n")
         stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
-        self.write_boundary("acme", "ada@acme.example", f"{stub} -o IdentitiesOnly=yes")
+        # Git reads a backslash as an escape in its config and runs the command through sh: a path with / only.
+        self.write_boundary("acme", "ada@acme.example", f"{stub.as_posix()} -o IdentitiesOnly=yes")
         return stub
 
     def ssh_repo(self, url: str) -> Path:
@@ -327,9 +335,9 @@ class SshTest(PreflightCase):
 
     def test_a_silent_ssh_that_hangs_is_cut_after_the_timeout(self) -> None:
         sleeper = self.root / "sleeper"
-        sleeper.write_text("#!/usr/bin/env bash\nsleep 30\n", encoding="utf-8")
+        sleeper.write_text("#!/usr/bin/env bash\nsleep 30\n", encoding="utf-8", newline="\n")  # no CR for bash, on Windows too
         sleeper.chmod(sleeper.stat().st_mode | stat.S_IXUSR)
-        account, reason = load_module().ssh_probe(str(sleeper), "git", "host.example", None, timeout=1)
+        account, reason = load_module().ssh_probe(sleeper.as_posix(), "git", "host.example", None, timeout=1)
         self.assertIsNone(account)
         self.assertIn("no answer within 1 seconds", reason)
 
@@ -343,6 +351,13 @@ class SshTest(PreflightCase):
         self.assertEqual(module.redact("https://user:secret@host.example/acme.git"), "https://***@host.example/acme.git")  # secret-scan: ignore (fictitious URL: tests the redaction)
         self.assertEqual(module.redact("ssh://git:secret@host.example/acme.git"), "ssh://git@host.example/acme.git")  # secret-scan: ignore (fictitious URL: tests the redaction)
         self.assertEqual(module.redact("git@github.example:acme/brain.git"), "git@github.example:acme/brain.git")
+
+    def test_a_drive_path_is_local_on_windows_as_git_reads_it(self) -> None:
+        module = load_module()
+        for url in ("C:\\remotes\\acme.git", "C:/remotes/acme.git", "c:remotes/acme.git"):
+            self.assertIsNone(module.ssh_target(url, windows=True), url)
+        self.assertEqual(module.ssh_target("C:/remotes/acme.git", windows=False), ("git", "C", None))  # the host C elsewhere
+        self.assertEqual(module.ssh_target("git@github.example:acme/brain.git", windows=True), ("git", "github.example", None))
 
 
 class FastForwardTest(PreflightCase):
@@ -447,7 +462,7 @@ class FastForwardTest(PreflightCase):
 
     def test_manual_fetch_failure_is_an_error(self) -> None:
         repo = self.pushed_repo()
-        shutil.rmtree(self.remotes / "acme.git")
+        (self.remotes / "acme.git").rename(self.remotes / "gone.git")  # Git objects are read-only: no rmtree on Windows
         result = self.run_tool(repo)
         self.assertEqual(result.returncode, 1, self.out(result))
         self.assertIn("ERROR: fetch of origin failed, remote state unknown", result.stdout)

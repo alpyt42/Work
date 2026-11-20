@@ -489,7 +489,7 @@ class TasksWebTest(unittest.TestCase):
     def test_noop_and_return_to_synced_state_keep_the_previous_updated_stamp(self):
         self.register.write_text(self.register.read_text(encoding="utf-8").replace(
             "    - source: note initiale\n", "    - source: note initiale\n    - created: 2026-10-01 09:00\n    - updated: 2026-10-20 16:24\n"),
-            encoding="utf-8")
+            encoding="utf-8", newline="\n")  # the bytes the server writes back, on Windows too
         environment = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 
         def git(*args):
@@ -1042,6 +1042,19 @@ class NotesTest(unittest.TestCase):
         self.assertEqual(self.request("PATCH", "/api/notes", patch_payload, token=False)[0], 403)
         self.assertEqual(self.request("PATCH", "/api/notes", patch_payload, origin=False)[0], 403)
         self.assertFalse(list(self.brain.glob(f"notes/{self.today}-*")))
+
+    def test_a_refusal_reaches_the_client_whatever_is_left_of_the_body(self):
+        """A refusal answers without reading the body: closing on that unread body would reset the connection and lose the 403."""
+        port = self.server.server_port
+        body = json.dumps({"id": f"{self.CLIENT}/notes/2026-10-01-existante.md", "version": "x", "content": "y" * 140000}).encode()
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as client:
+            client.sendall(f"PATCH /api/notes HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: {self.base}\r\nContent-Type: application/json\r\n"
+                           f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+            answer = b""
+            while chunk := client.recv(65536):
+                answer += chunk
+        self.assertTrue(answer.startswith(b"HTTP/1.0 403 "), answer[:80])
+        self.assertTrue(answer.endswith(b'{"error": "Invalid local token."}'), answer[-80:])
 
     def test_patch_replaces_whole_file_and_detects_stale_version(self):
         note_id = f"{self.CLIENT}/notes/2026-10-01-existante.md"
@@ -2242,6 +2255,16 @@ class GitViewTest(unittest.TestCase):
         self.write(self.acme, f"{self.SETUP}/notes/empty.md", "")
         self.assertEqual(self.changes(f"{self.SETUP}/notes/empty.md")["unchanged"], True)
 
+    def test_a_note_saved_with_crlf_then_moved_is_still_renamed(self):
+        # The brain checks text in with LF (text=auto eol=lf): a note an editor saved with CRLF, as on Windows, is
+        # committed with LF, so the moved file's bytes differ from the blob while Git sees the same note.
+        (self.acme / f"{self.SETUP}/notes/crlf.md").write_bytes(b"# Windows note\r\n\r\nSaved with CRLF.\r\n")
+        self.commit(self.acme)
+        (self.acme / f"{self.SETUP}/notes/crlf.md").rename(self.acme / f"{self.SETUP}/notes/crlf-moved.md")
+        moved = self.changes(f"{self.SETUP}/notes/crlf-moved.md")
+        self.assertEqual((moved["change"], moved["unchanged"], moved["blocks"]), ("Renamed", True, []))
+        self.assertEqual([item["path"] for item in self.card()["changes"]], [f"{self.SETUP}/notes/crlf-moved.md"])
+
     def test_see_changes_of_a_secret_a_binary_and_a_huge_file(self):
         self.write(self.acme, "me/id_rsa", "TOKEN=abc123\n")
         self.write(self.acme, "me/server.pem", "KEY-MATERIAL\n")
@@ -2383,7 +2406,7 @@ class GitViewTest(unittest.TestCase):
 
     def test_a_check_that_takes_too_long_is_stopped_and_changes_nothing(self):
         hook = self.acme / ".git/hooks/pre-commit"
-        hook.write_text("#!/bin/sh\nsleep 60\n", encoding="utf-8")
+        hook.write_text("#!/bin/sh\nsleep 60\n", encoding="utf-8", newline="\n")  # no CR for sh, on Windows too
         hook.chmod(0o755)
         self.write(self.acme, f"{self.NOTES}/2026-10-04-risks.md", "# Risks\n")
         before = self.snapshot(self.acme)
@@ -2513,14 +2536,19 @@ class GitViewTest(unittest.TestCase):
         with patch.object(tasks_web.subprocess, "Popen", side_effect=spy):
             status, result = self.save()
         self.assertEqual((status, result["ok"]), (200, True), result)
-        git_calls = [(command, kwargs) for command, kwargs in calls if kwargs.get("start_new_session")]  # the writes (the reads have no session of their own)
+        def detached(kwargs):  # its own session on macOS and Linux, its own process group on Windows (no sessions there)
+            if os.name == "nt":
+                return bool(kwargs.get("creationflags", 0) & subprocess.CREATE_NEW_PROCESS_GROUP)
+            return bool(kwargs.get("start_new_session"))
+
+        git_calls = [(command, kwargs) for command, kwargs in calls if detached(kwargs)]  # the writes (the reads are not detached)
         arguments = [[part for part in command[1:] if part not in ("--no-pager", "-c", "core.quotepath=false", "color.ui=false")] for command, _ in git_calls]
         self.assertEqual(arguments, [["add", "-A"],
                                      ["commit", "-m", "docs: save 1 note from tasks-web", "-m", f"- new: {self.NOTES}/2026-10-04-risks.md"],
                                      ["push", "--", "origin", "HEAD:refs/heads/main"]])
         for command, kwargs in git_calls:
             self.assertEqual(kwargs["stdin"], tasks_web.subprocess.DEVNULL)
-            self.assertTrue(kwargs["start_new_session"])  # no controlling terminal: SSH can never wait for a passphrase
+            self.assertTrue(detached(kwargs))  # no controlling terminal: SSH can never wait for a passphrase
             self.assertEqual(kwargs["cwd"], self.acme)
             environment = kwargs["env"]
             self.assertEqual((environment["GIT_TERMINAL_PROMPT"], environment["GIT_EDITOR"]), ("0", "true"))
@@ -2549,9 +2577,10 @@ class GitViewTest(unittest.TestCase):
     def test_a_command_with_no_end_is_killed_with_its_children(self):
         started = self.root / "started"
         script = self.root / "slow.sh"
-        script.write_text(f"#!/bin/sh\ntouch {started}\nsleep 60 &\nwait\n", encoding="utf-8")
+        # Paths with / only: the shell reads a backslash as an escape (Git runs the alias through sh, on Windows too).
+        script.write_text(f"#!/bin/sh\ntouch '{started.as_posix()}'\nsleep 60 &\nwait\n", encoding="utf-8", newline="\n")
         script.chmod(0o755)
-        self.git(self.acme, "config", "--local", "alias.slow", f"!{script}")
+        self.git(self.acme, "config", "--local", "alias.slow", f"!'{script.as_posix()}'")
         # The limit must leave Git and the shell time to start the alias: one second is enough on a quiet machine, not
         # always on a busy one, so a longer limit is tried only when the alias had not started.
         for limit in (1, 3, 10):
@@ -3143,7 +3172,7 @@ class NoteDeleteTest(unittest.TestCase):
         done = subprocess.run([sys.executable, str(REPO / "tools/brain/check-links.py")], capture_output=True, text=True, encoding="utf-8", timeout=60,
                               env={**os.environ, "BRAIN_DIR": str(self.brain), "WORK_DIR": str(self.brain.parent)})
         self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
-        reported = set(re.findall(r"^ {7}(\S.*)$", done.stdout, re.MULTILINE))
+        reported = {Path(line).as_posix() for line in re.findall(r"^ {7}(\S.*)$", done.stdout, re.MULTILINE)}  # the tool prints the OS separator
         self.assertEqual(reported, {page["id"] for page in data["pages"]}, done.stdout)
 
     def test_unknown_notes_have_no_backlinks_to_ask_for(self):
@@ -3159,13 +3188,14 @@ class NoteDeleteTest(unittest.TestCase):
         path = self.brain / self.NOTE
         path.write_bytes(raw)
         path.chmod(0o640)
+        mode = path.stat().st_mode & 0o777  # 0o640; 0o666 on Windows, where chmod only sets or clears read-only
         self.assertEqual(self.delete(self.NOTE)[0], 200)
         shutil.rmtree(self.brain / f"{self.CLIENT}/notes")  # even the folder may be gone by then
         status, data = self.undo()
         self.assertEqual(status, 200, data)
         self.assertEqual((data["undone"], data["action_id"], data["restored"], data["undo"]["available"]), ('note "2026-10-01-kickoff" deleted', self.NOTE, True, False))  # the first line carries a BOM: no title
         self.assertEqual(path.read_bytes(), raw)
-        self.assertEqual(path.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(path.stat().st_mode & 0o777, mode)
         self.assertIn(self.NOTE, [item["id"] for item in self.request("GET", "/api/notes")[1]["notes"]])
         self.assertEqual(self.request("GET", f"/api/docs/render?id={quote(self.NOTE, safe='')}")[0], 200)
 
@@ -6276,10 +6306,10 @@ class PrioritiesTest(unittest.TestCase):
     def test_version_follows_the_bytes(self):
         stamp = self.now().isoformat(timespec="seconds")
         text = f"---\ntype: priorities\ngenerated: {stamp}\n---\n\n## Now\n- **A**\n"
-        self.put("brain", text)
+        path = self.put("brain", text)
         first = self.request("GET", "/api/priorities")[1]["version"]
         self.assertEqual(first, self.request("GET", "/api/priorities")[1]["version"])
-        self.assertEqual(first, hashlib.sha256(text.encode()).hexdigest()[:16])
+        self.assertEqual(first, hashlib.sha256(path.read_bytes()).hexdigest()[:16])  # the bytes on disk: CRLF lines on Windows
         self.put("brain", text + "- **B**\n")
         self.assertNotEqual(first, self.request("GET", "/api/priorities")[1]["version"])
 

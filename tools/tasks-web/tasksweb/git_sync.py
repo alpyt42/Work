@@ -243,6 +243,18 @@ def git_blob(brain: Path, relative: str, limit: int) -> tuple[bytes | None, bool
         return None, False
 
 
+def blob_ids(data: bytes, algorithm: str) -> list[str]:
+    """The object ids Git may give a file's bytes: as they are, then with CRLF stored as LF.
+
+    Brains check text in with `text=auto eol=lf`: a note an editor saved with CRLF (on Windows) is committed with LF, so
+    its blob id is the one of the LF form.
+    """
+    forms = [data]
+    if b"\r\n" in data and b"\0" not in data[:GIT_TEXT_PEEK]:
+        forms.append(data.replace(b"\r\n", b"\n"))
+    return [hashlib.new(algorithm, b"blob %d\0" % len(form) + form).hexdigest() for form in forms]
+
+
 def pair_renames(brain: Path, files: list[dict]) -> list[dict]:
     """A note moved without a change appears as a deletion and a new file: show it as one renamed note."""
     gone: dict[str, list[dict]] = {}
@@ -258,7 +270,7 @@ def pair_renames(brain: Path, files: list[dict]) -> list[dict]:
         data = read_worktree(brain, item["path"], GIT_COMPARE_LIMIT)
         if data is None or len(data) > GIT_COMPARE_LIMIT:
             continue
-        candidates = gone.get(hashlib.new(algorithm, b"blob %d\0" % len(data) + data).hexdigest())
+        candidates = next((gone[oid] for oid in blob_ids(data, algorithm) if gone.get(oid)), None)
         if candidates:
             old = candidates.pop(0)
             item.update(orig_path=old["path"], untracked=False, change="Renamed", sensitive=item["sensitive"] or old["sensitive"])

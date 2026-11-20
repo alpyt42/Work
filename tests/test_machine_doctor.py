@@ -40,10 +40,10 @@ class MachineDoctorTest(unittest.TestCase):
         (self.work / brain / ".data/local-paths.json").write_text(json.dumps(config), encoding="utf-8")
 
     def run_doctor(self) -> subprocess.CompletedProcess:
-        return subprocess.run([sys.executable, str(TOOL)], env=self.env, capture_output=True, text=True)
+        return subprocess.run([sys.executable, str(TOOL)], env=self.env, capture_output=True, text=True, encoding="utf-8")
 
     def work_config(self, command: str) -> None:
-        result = subprocess.run([sys.executable, str(WORK_CONFIG), command], env=self.env, capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(WORK_CONFIG), command], env=self.env, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def write_local(self, value: object) -> None:
@@ -71,7 +71,7 @@ class MachineDoctorTest(unittest.TestCase):
         (self.work / "artifacts/acme-report/deck.pptx").write_text("x", encoding="utf-8")
         (self.work / "artifacts/acme-report/README.md").write_text("x", encoding="utf-8")
         result = self.run_doctor()
-        self.assertIn(f"INFO: artifacts folder: {self.work}/artifacts (default location, inside the Work root, not a symlink)", result.stdout)
+        self.assertIn(f"INFO: artifacts folder: {self.work / 'artifacts'} (default location, inside the Work root, not a symlink)", result.stdout)
         self.assertIn("INFO: artifacts folder: 1 local file(s), backed up by no repository", result.stdout)
 
     def test_relocated_artifacts_folder_is_reported_and_checked(self) -> None:
@@ -85,7 +85,7 @@ class MachineDoctorTest(unittest.TestCase):
         self.assertIn(f"artifacts folder: {synced} (artifactsDir of work-config.local.json, outside the Work root, not a symlink)", result.stdout)
         self.assertIn("artifacts folder: 2 local file(s), backed up by no repository", result.stdout)
         (self.work / "artifacts").rmdir()
-        (self.work / "artifacts").symlink_to(synced)
+        (self.work / "artifacts").symlink_to(synced, target_is_directory=True)
         self.assertIn("artifacts/ is a symlink to it", self.run_doctor().stdout)
 
     def test_missing_relocated_artifacts_folder_is_reported(self) -> None:
@@ -194,10 +194,11 @@ class MachineDoctorTest(unittest.TestCase):
         (self.work / "brain/skills/off").mkdir()
         (self.work / "brain/skills/off/SKILL.md").write_text("# off\n", encoding="utf-8")
         self.write_local({"version": 1, "skills": {"disabled": ["off"]}})
-        (skills / "live").symlink_to("../../brain/skills/live")
-        (skills / "off").symlink_to("../../brain/skills/off")  # exists but no longer enabled
-        (skills / "gone").symlink_to("../../brain/skills/gone")  # target removed
-        (skills / "foreign").symlink_to(self.home)  # not a managed link
+        # Path targets: a relative Windows link resolves only with \ separators (a str target is stored as written).
+        (skills / "live").symlink_to(Path("../../brain/skills/live"), target_is_directory=True)
+        (skills / "off").symlink_to(Path("../../brain/skills/off"), target_is_directory=True)  # exists but no longer enabled
+        (skills / "gone").symlink_to(Path("../../brain/skills/gone"), target_is_directory=True)  # target removed
+        (skills / "foreign").symlink_to(self.home, target_is_directory=True)  # not a managed link
         out = self.run_doctor().stdout
         self.assertIn("broken link: .claude/skills/gone", out)
         self.assertIn("orphan link: .claude/skills/off", out)
@@ -213,8 +214,8 @@ class MachineDoctorTest(unittest.TestCase):
         claude, agents = self.work / ".claude/skills", self.work / ".agents/skills"
         claude.mkdir(parents=True)
         agents.mkdir(parents=True)
-        (claude / "linked").symlink_to("../../brain/skills/linked")
-        (agents / "linked").symlink_to("../../brain/skills/linked")
+        (claude / "linked").symlink_to(Path("../../brain/skills/linked"), target_is_directory=True)  # \ on Windows
+        (agents / "linked").symlink_to(Path("../../brain/skills/linked"), target_is_directory=True)
         (claude / "copied").mkdir()  # copy-mode skill: a generated copy is expected
         (claude / "copied/.generated-from-brain-skill").write_text("generated\n", encoding="utf-8")
         (claude / "flat").mkdir()  # what `ln -s` leaves on Git Bash without symlink support
@@ -243,7 +244,7 @@ class MachineDoctorTest(unittest.TestCase):
         folder("legacy", ".generated-from-skills-new-project")  # copy made by the previous layout
         folder("added")  # installed by npx, not adopted yet: reported on its own
         folder("leftover")  # what a failed cleanup leaves
-        (skills / "a-link").symlink_to(self.home)
+        (skills / "a-link").symlink_to(self.home, target_is_directory=True)
         result = self.run_doctor()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("WARN: orphan folder: .agents/skills/leftover", result.stdout)
