@@ -24,7 +24,7 @@ The opening view: your overdue actions, those due today, those in progress, the 
 
 ### Priorities
 
-The ranking written by the `/priorities` agent skill for the current brain: what to do now, what to prepare, conflicts, follow-ups. An action ID in an item opens that action.
+The ranking written by the `/priorities` agent skill for the current brain: what to do now, what to prepare, conflicts, follow-ups. An action ID in an item opens that action. Follow-ups carry collapsible drafts of the message, with a button to copy it.
 
 ![Priorities view](../../docs/images/tasks-web-priorities.png)
 

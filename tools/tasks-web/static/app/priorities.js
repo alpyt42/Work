@@ -39,7 +39,7 @@ function linkActionIds(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes = [];
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (!node.parentElement.closest('a, button') && node.nodeValue.match(PRIO_ID)?.some(id => known.has(id))) nodes.push(node);
+    if (!node.parentElement.closest('a, button, .prio-draft') && node.nodeValue.match(PRIO_ID)?.some(id => known.has(id))) nodes.push(node);
   }
   for (const node of nodes) {
     const text = node.nodeValue;
@@ -79,16 +79,42 @@ function prioHeader(data) {
   if (data.stale) head.append(element('p', 'prio-hint', 'Run /priorities in Claude Code to refresh it.'));
   return head;
 }
+// Each draft is a native <details>, closed by default, with a Copy message button added at the end of its opened box.
+function addDraftCopy(root) {
+  for (const draft of root.querySelectorAll('.prio-draft')) {
+    const button = element('button', 'prio-draft-copy');
+    button.type = 'button';
+    button.append(svgIcon(ICONS.copy), element('span', '', 'Copy message'));
+    draft.append(button);
+  }
+}
+const draftKey = draft => draft.querySelector('summary')?.textContent || '';
+async function copyDraft(button) {
+  const body = button.closest('.prio-draft').querySelector('.prio-draft-body');
+  try {
+    await navigator.clipboard.writeText(body.textContent);
+    showToast('Message copied');
+  } catch {
+    const range = document.createRange();
+    range.selectNodeContents(body);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    showToast('Copy failed: select the text and copy it');
+  }
+}
 function prioBody(section) {
   const body = element('div', 'prio-body');
   const template = document.createElement('template');
   template.innerHTML = section.html; // rendered by the server's safe Markdown renderer (raw HTML is escaped there)
   body.append(template.content);
   linkActionIds(body);
+  addDraftCopy(body);
   return body;
 }
 function renderPriorities() {
   const scroll = ids.prioView.scrollTop;
+  const openDrafts = new Set([...ids.prioView.querySelectorAll('.prio-draft[open]')].map(draftKey));
   ids.resultCount.textContent = '';
   if (prioError && !prioData) {
     ids.prioView.replaceChildren(element('p', 'error-banner', prioError));
@@ -128,9 +154,16 @@ function renderPriorities() {
     nodes.push(card);
   });
   ids.prioView.replaceChildren(...nodes);
+  for (const draft of ids.prioView.querySelectorAll('.prio-draft')) draft.open = openDrafts.has(draftKey(draft)); // the drafts that were open stay open
   ids.prioView.scrollTop = scroll;
 }
 ids.prioView.addEventListener('click', event => {
+  const copy = event.target instanceof Element ? event.target.closest('.prio-draft-copy') : null;
+  if (copy) {
+    event.preventDefault(); // a button inside <details> must not toggle it
+    copyDraft(copy);
+    return;
+  }
   const button = event.target instanceof Element ? event.target.closest('.prio-id') : null;
   const action = button && snapshot.actions.find(item => item.id === button.dataset.actionId);
   if (action) openEditor(action);
