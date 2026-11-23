@@ -4,7 +4,7 @@
 
 ## Proposed
 
-### <Decision title> (YYYY-MM-DD, status: proposed)
+### <N>. <Decision title> (YYYY-MM-DD, status: proposed)
 - **Context:** <what motivates it, only when the source does not say it; title, context, decision and consequences hold 70 words in all>
 - **Decision:** <wording to settle>
 - **Consequences:** <effects, related actions>

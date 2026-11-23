@@ -934,6 +934,14 @@ class BrainContextTest(unittest.TestCase):
         self.assertEqual((data["total"], data["kinds"], [hit["line"] for hit in data["hits"]]), (3, {"action": 1, "decision": 2}, [7, 9, 6]))
         self.assertEqual(sorted(data["hits"][0]), ["brain", "excerpt", "kind", "line", "more_in_file", "path"])  # one object per hit
 
+    def test_find_and_brief_show_the_number_written_in_the_heading(self) -> None:
+        self.make_memory()
+        decisions = self.work / self.ROLLOUT / "state/decisions.md"
+        decisions.write_text(decisions.read_text(encoding="utf-8").replace("### Pilot in one site", "### 14. Pilot in one site"), encoding="utf-8")
+        self.assertEqual(self.hits("one site", "--in", "decision"),
+                         [f"decision    {self.ROLLOUT}/state/decisions.md:5  no. 14 [proposed] Pilot in one site (2026-10-13)"])
+        self.assertIn("  no. 14 [proposed] 2026-10-13  Pilot in one site", self.lines("brief", "initech/rollout"))
+
     def test_find_project_keeps_one_project_folder(self) -> None:
         self.make_memory()
         self.write(f"{self.MIGRATION}/notes/2026-10-20-zurich.md", "# Trip\n\nVisit the Zürich office.\n")

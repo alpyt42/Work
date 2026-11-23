@@ -20,7 +20,7 @@ The memory is the index of the brain owner's work; the repos are the territory. 
   2. **The brain owner's to do or to follow up:** the brain owner carries it, alone or with someone; or someone else carries it and the brain owner asked for it, leads that person's work on the project, or needs the result for their own work. A third party's commitment that meets none of these stays in the source.
   3. **Still to do:** what is already done when the agent writes gets no action, at most a timeline entry.
   4. **Not covered:** when an open action has the same deliverable, that action is updated instead of creating another; a step towards it, carried by the same person, becomes one of its subtasks.
-- **Decision:** `state/decisions.md` carries the status and the source; it is written with `uv run tools/brain/decision.py` (`propose`, `accept`, `reject`, `supersede`). A decision mentioned in a meeting stays proposed until the brain owner has confirmed how it is filed; keep a trace of rejected or superseded decisions.
+- **Decision:** `state/decisions.md` carries the status and the source; it is written with `uv run tools/brain/decision.py` (`propose`, `accept`, `reject`, `supersede`). A decision keeps the number `propose` gave it (`### 12. Title`): cite it by that number, which never changes. A decision mentioned in a meeting stays proposed until the brain owner has confirmed how it is filed; keep a trace of rejected or superseded decisions.
 - **Person:** `people/` is the source of truth for identity and aliases; the mission keeps the person's own role there. Never create a person page without a first and last name, and never invent a fact. Every addition cites a dated source or dated information from the brain owner.
 
 ## Where information goes
