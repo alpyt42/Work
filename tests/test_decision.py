@@ -143,13 +143,13 @@ class DecisionTest(unittest.TestCase):
     def test_propose_appends_to_proposed(self) -> None:
         result = self.run_tool("propose", "--project", "acme/gamma", "--title", "Nouvelle (test)", "--decision", "D6",
                                "--source", "[CR](../sources/cr.md)", "--context", "C6", "--consequences", "K6")
-        self.assertEqual((result["number"], result["label"]), (4, "proposal “Nouvelle (test)”"))
+        self.assertEqual((result["number"], result["label"], result["numbered"]), (6, "proposal no. 6 “Nouvelle (test)”", 5))
         self.assertIn(
             "- **Source:** [CR](../sources/cr.md)\n\n"
-            "### Nouvelle (test) (2026-10-13, status: proposed)\n"
+            "### 6. Nouvelle (test) (2026-10-13, status: proposed)\n"
             "- **Context:** C6\n- **Decision:** D6\n- **Consequences:** K6\n- **Source:** [CR](../sources/cr.md)\n\n"
             "## Accepted\n", self.text())
-        self.assertEqual(self.run_tool("list", "--project", "acme/gamma")[3]["title"], "Nouvelle (test)")
+        self.assertEqual([(d["number"], d["title"]) for d in self.run_tool("list", "--project", "acme/gamma")][3], (6, "Nouvelle (test)"))
 
     def test_propose_creates_missing_register(self) -> None:
         self.register.unlink()
@@ -158,7 +158,8 @@ class DecisionTest(unittest.TestCase):
         self.assertTrue(result["created_file"])
         text = self.text()
         self.assertTrue(text.startswith("# Decisions — Gamma mission\n\n> "))
-        self.assertIn("## Proposed\n\n### Première (2026-10-10, status: proposed)\n- **Decision:** D\n- **Source:** s\n\n## Accepted\n\n## Rejected / superseded\n", text)
+        self.assertEqual((result["number"], result["numbered"]), (1, 0))
+        self.assertIn("## Proposed\n\n### 1. Première (2026-10-10, status: proposed)\n- **Decision:** D\n- **Source:** s\n\n## Accepted\n\n## Rejected / superseded\n", text)
         self.assertTrue(text.endswith("## Rejected / superseded\n"))
         self.assertEqual([d["title"] for d in self.run_tool("list", "--project", "acme/gamma")], ["Première"])
 
@@ -189,33 +190,33 @@ class DecisionTest(unittest.TestCase):
 
     def test_accept_moves_to_top_and_keeps_content(self) -> None:
         result = self.run_tool("accept", "Alpha", "--project", "acme/gamma", "--on", "2026-10-14", "--note", "en comité")
-        self.assertEqual((result["label"], result["from"], result["to"]), ("accept “Alpha”", "Proposed", "Accepted"))
+        self.assertEqual((result["label"], result["number"], result["from"], result["to"]), ("accept no. 1 “Alpha”", 1, "Proposed", "Accepted"))
         self.assertIn(
-            "## Accepted\n\n### Alpha (2026-10-01, status: accepted)\n- **Context:** C1.\n- **Decision:** D1.\n"
+            "## Accepted\n\n### 1. Alpha (2026-10-01, status: accepted)\n- **Context:** C1.\n- **Decision:** D1.\n"
             "- **Source:** [CR](../sources/cr.md)\n- **Accepted:** Owner, 2026-10-14 (en comité).\n\n"
-            "### Gamma ancienne (2026-09-01, status: active)\n", self.text())
-        self.assertEqual(self.text().count("### Alpha"), 1)
+            "### 4. Gamma ancienne (2026-09-01, status: active)\n", self.text())
+        self.assertEqual(self.text().count(" Alpha ("), 1)
         self.assertEqual([d["state"] for d in self.run_tool("list", "--project", "acme/gamma")][:3], ["proposed", "proposed", "accepted"])
 
     def test_accept_adds_status_when_title_has_none(self) -> None:
         self.run_tool("accept", "carrée", "--project", "acme/gamma", "--by", "Reviewer")
-        self.assertIn("### Beta carrée (2026-10-03, status: accepted)\n- **Decision:** D3.\n- **Source:** [CR](../sources/cr.md)\n"
+        self.assertIn("### 3. Beta carrée (2026-10-03, status: accepted)\n- **Decision:** D3.\n- **Source:** [CR](../sources/cr.md)\n"
                       "- **Accepted:** Reviewer, 2026-10-13.\n", self.text())
 
     def test_reject_moves_to_top_of_rejected(self) -> None:
         self.run_tool("reject", "2", "--project", "acme/gamma", "--on", "2026-10-12", "--reason", "hors périmètre")
         self.assertIn(
-            "## Rejected / superseded\n\n### Beta ronde (2026-10-02, status: rejected)\n- **Decision:** D2.\n"
-            "- **Source:** [CR](../sources/cr.md)\n- **Rejected:** Owner, 2026-10-12 (hors périmètre).\n\n### Delta", self.text())
+            "## Rejected / superseded\n\n### 2. Beta ronde (2026-10-02, status: rejected)\n- **Decision:** D2.\n"
+            "- **Source:** [CR](../sources/cr.md)\n- **Rejected:** Owner, 2026-10-12 (hors périmètre).\n\n### 5. Delta", self.text())
 
     def test_supersede_moves_old_and_leaves_new(self) -> None:
         before_new = self.run_tool("show", "Alpha", "--project", "acme/gamma")["block"]
         result = self.run_tool("supersede", "ancienne", "--by", "Alpha", "--project", "acme/gamma", "--on", "2026-10-14")
-        self.assertEqual(result["label"], "supersede “Gamma ancienne”")
+        self.assertEqual((result["label"], result["superseded_by_number"]), ("supersede no. 4 “Gamma ancienne”", 1))
         self.assertIn(
-            "## Rejected / superseded\n\n### Gamma ancienne (2026-09-01, status: superseded)\n- **Decision:** D4.\n"
-            "- **Accepted:** Owner, 2026-09-01.\n- **Superseded by:** “Alpha” (2026-10-14).\n\n### Delta", self.text())
-        self.assertEqual(self.run_tool("show", "Alpha", "--project", "acme/gamma")["block"], before_new)
+            "## Rejected / superseded\n\n### 4. Gamma ancienne (2026-09-01, status: superseded)\n- **Decision:** D4.\n"
+            "- **Accepted:** Owner, 2026-09-01.\n- **Superseded by:** “Alpha” (2026-10-14).\n\n### 5. Delta", self.text())
+        self.assertEqual(self.run_tool("show", "Alpha", "--project", "acme/gamma")["block"], ["### 1. " + before_new[0][4:], *before_new[1:]])
         self.assertEqual(self.text().split("## Accepted")[1].split("## Rejected")[0].strip(), "")
 
     def test_invalid_moves_are_refused(self) -> None:
@@ -259,6 +260,137 @@ class DecisionTest(unittest.TestCase):
         self.assertIn("### Autre", self.text())
         with self.assertRaises(tool.ActionError):
             tool.commit(self.register, None, lines, False)
+
+
+NUMBERED = """# Decisions — Gamma
+
+> Citation.
+
+## Proposed
+
+### 7. Alpha (2026-10-01, status: proposed)
+- **Decision:** D1.
+- **Source:** [CR](../sources/cr.md)
+
+### 9. Beta (2026-10-02, status: proposed)
+- **Decision:** D2.
+- **Source:** [CR](../sources/cr.md)
+
+## Accepted
+
+### 12. Gamma (2026-09-01, status: accepted)
+- **Decision:** D3.
+- **Accepted:** Owner, 2026-09-01.
+
+## Rejected / superseded
+
+### 3. Delta (2026-08-01, status: rejected)
+- **Decision:** D4.
+"""
+
+
+class StableNumberTest(unittest.TestCase):
+    """A decision keeps the number written in its heading wherever it moves, so a page that cites « décision 12 » keeps
+    pointing to the same decision; a heading without a number gets one on the next write, or with `number --write`."""
+
+    setUp, tearDown, run_tool, text = DecisionTest.setUp, DecisionTest.tearDown, DecisionTest.run_tool, DecisionTest.text
+
+    def numbers(self) -> dict[int, str]:
+        return {d["number"]: d["title"] for d in self.run_tool("list", "--project", "acme/gamma")}
+
+    def propose(self, title: str, *extra: str) -> dict:
+        return self.run_tool("propose", "--project", "acme/gamma", "--title", title, "--decision", "D", "--source", "s", *extra)
+
+    def test_reads_use_the_written_number_not_the_rank(self) -> None:
+        self.register.write_text(NUMBERED, encoding="utf-8")
+        self.assertEqual(self.numbers(), {7: "Alpha", 9: "Beta", 12: "Gamma", 3: "Delta"})
+        self.assertEqual(self.run_tool("show", "12", "--project", "acme/gamma")["title"], "Gamma")
+        self.assertEqual(self.run_tool("show", "1", "--project", "acme/gamma", code=3)["kind"], "not_found")  # the rank is not a number
+        self.assertEqual(self.run_tool("show", "Gamma", "--project", "acme/gamma", "--text").splitlines()[0],
+                         "no. 12 [accepted] 2026-09-01 — Gamma  (acme / gamma)")
+        self.assertIn(" 12. [accepted] 2026-09-01 — Gamma  (acme / gamma)", self.run_tool("list", "--project", "acme/gamma", "--table"))
+        self.assertEqual(self.text(), NUMBERED)
+
+    def test_proposing_and_settling_never_renumber(self) -> None:
+        """The incident this guards against: three proposals and two acceptances shifted every later rank."""
+        self.register.write_text(NUMBERED, encoding="utf-8")
+        before = self.numbers()
+        created = [self.propose(title)["number"] for title in ("Epsilon", "Zeta", "Eta")]
+        self.assertEqual(created, [13, 14, 15])  # the highest number plus one, wherever it sits
+        self.run_tool("accept", "Zeta", "--project", "acme/gamma")
+        self.run_tool("accept", "9", "--project", "acme/gamma")
+        self.run_tool("reject", "Alpha", "--project", "acme/gamma")
+        self.run_tool("supersede", "12", "--by", "14", "--project", "acme/gamma")
+        after = self.numbers()
+        self.assertEqual({number: after[number] for number in before}, before)
+        self.assertEqual(after, {**before, 13: "Epsilon", 14: "Zeta", 15: "Eta"})
+        self.assertEqual(self.run_tool("show", "9", "--project", "acme/gamma")["state"], "accepted")
+        self.assertIn("## Accepted\n\n### 9. Beta (2026-10-02, status: accepted)\n", self.text())
+        self.assertIn("### 12. Gamma (2026-09-01, status: superseded)\n- **Decision:** D3.\n- **Accepted:** Owner, 2026-09-01.\n"
+                      "- **Superseded by:** “Zeta” (2026-10-13).\n", self.text())
+
+    def test_first_write_to_an_unnumbered_register_keeps_the_ranks_it_was_cited_by(self) -> None:
+        before = self.numbers()  # DECISIONS has no number written: each decision reads as its rank
+        self.assertEqual(before, {1: "Alpha", 2: "Beta ronde", 3: "Beta carrée", 4: "Gamma ancienne", 5: "Delta"})
+        dry = self.run_tool("accept", "Alpha", "--project", "acme/gamma", "--dry-run")
+        self.assertEqual(dry["numbered"], 5)
+        self.assertEqual(self.text(), DECISIONS)
+        self.assertEqual(self.run_tool("accept", "Alpha", "--project", "acme/gamma")["numbered"], 5)
+        self.assertEqual(self.numbers(), before)  # the rank of Gamma ancienne would have become 2
+        self.assertEqual([line for line in self.text().splitlines() if line.startswith("### ")], [
+            "### 2. Beta ronde (2026-10-02, status: proposed)", "### 3. Beta carrée (2026-10-03)",
+            "### 1. Alpha (2026-10-01, status: accepted)", "### 4. Gamma ancienne (2026-09-01, status: active)",
+            "### 5. Delta (2026-08-01, status: rejected)"])
+        self.assertEqual(self.run_tool("reject", "2", "--project", "acme/gamma")["numbered"], 0)
+
+    def test_a_heading_added_by_hand_without_number_gets_the_next_one(self) -> None:
+        added = NUMBERED.replace("## Accepted\n", "### Kappa (2026-10-05)\n- **Decision:** D5.\n\n## Accepted\n")
+        self.register.write_text(added, encoding="utf-8")
+        self.assertEqual(self.numbers()[13], "Kappa")
+        result = self.propose("Lambda")
+        self.assertEqual((result["number"], result["numbered"]), (14, 1))
+        self.assertIn("### 13. Kappa (2026-10-05)\n- **Decision:** D5.\n\n### 14. Lambda (2026-10-13, status: proposed)\n", self.text())
+
+    def test_title_starting_with_a_number_and_heading_without_date(self) -> None:
+        self.register.write_text(NUMBERED.replace("### 3. Delta (2026-08-01, status: rejected)", "### 3. Delta"), encoding="utf-8")
+        self.assertEqual(self.run_tool("show", "3", "--project", "acme/gamma")["title"], "Delta")
+        self.propose("2. Phase two")
+        self.assertIn("### 13. 2. Phase two (2026-10-13, status: proposed)\n", self.text())
+        self.assertEqual(self.run_tool("show", "13", "--project", "acme/gamma")["title"], "2. Phase two")
+        self.run_tool("accept", "Phase two", "--project", "acme/gamma")
+        self.assertIn("### 13. 2. Phase two (2026-10-13, status: accepted)\n", self.text())
+        self.run_tool("propose", "--project", "acme/gamma", "--title", "2. PHASE TWO", "--decision", "D", "--source", "s", code=4)
+
+    def test_a_number_written_twice_is_ambiguous_and_reported(self) -> None:
+        self.register.write_text(NUMBERED.replace("### 3. Delta", "### 9. Delta"), encoding="utf-8")
+        error = self.run_tool("show", "9", "--project", "acme/gamma", code=4)
+        self.assertEqual(error["kind"], "conflict")
+        self.assertIn("Several decisions carry number 9: “Beta” (line 11); “Delta” (line 23)", error["error"])
+        self.assertEqual(self.run_tool("show", "Delta", "--project", "acme/gamma")["number"], 9)
+        report = self.run_tool("number")
+        self.assertEqual([(item["register"].endswith("gamma/state/decisions.md"), item["numbered"], item["duplicates"]) for item in report],
+                         [(True, 0, [9])])
+        self.assertEqual(self.propose("Mu")["number"], 13)
+
+    def test_number_reports_then_writes_every_live_register(self) -> None:
+        other = self.brain / "projects/internal/tooling/state"
+        other.mkdir(parents=True)
+        (other / "actions.md").write_text("# Actions — Tooling\n\n## Open\n", encoding="utf-8")
+        (other / "decisions.md").write_text(NUMBERED, encoding="utf-8")  # already numbered: not listed
+        archived = self.brain / "projects/clients/acme/missions/archive/old/state"
+        archived.mkdir(parents=True)
+        (archived / "actions.md").write_text("# Actions — Old\n\n## Open\n", encoding="utf-8")
+        (archived / "decisions.md").write_text(DECISIONS, encoding="utf-8")
+        report = self.run_tool("number")
+        self.assertEqual(report, [{"project": "acme / gamma", "register": "projects/clients/acme/missions/gamma/state/decisions.md",
+                                   "numbered": 5, "first": 1, "last": 5, "duplicates": [], "dry_run": True}])
+        self.assertEqual(self.text(), DECISIONS)
+        self.assertFalse(self.run_tool("number", "--project", "acme/gamma", "--write")[0]["dry_run"])
+        self.assertEqual(self.text(), DECISIONS.replace("### Alpha", "### 1. Alpha").replace("### Beta ronde", "### 2. Beta ronde")
+                         .replace("### Beta carrée", "### 3. Beta carrée").replace("### Gamma", "### 4. Gamma").replace("### Delta", "### 5. Delta"))
+        self.assertEqual(self.run_tool("number", "--write"), [])
+        self.assertEqual((archived / "decisions.md").read_text(encoding="utf-8"), DECISIONS)  # an archived project is left as it is
+        self.assertIn("is archived", self.run_tool("number", "--project", "acme/old", code=2)["error"])
 
 
 FRENCH_DECISIONS = """# Décisions — Gamma
