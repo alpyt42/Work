@@ -64,6 +64,8 @@ The interface automatically follows the system light or dark setting (`prefers-c
 
 The first item of the sidebar, above Today. It shows the ranking written by the `/priorities` agent skill for the current brain, read from `priorities/<brain>.md` at the root of Work (see "Priorities file"); switching brain shows that brain's file. The header gives the title, when the file was generated ("Generated: 2 hours ago (09:42, 19 Nov 2026)", in the browser's language), the horizon and the next meeting. A file generated before today's date carries a "Not today's" badge and the hint to run `/priorities` in Claude Code to refresh it. **Warnings** is a notice at the top; every other section is a card with its title and its number of items, in file order (**Now** stands out, **Conflicts** is tinted as a warning). An action ID written in an item becomes a button that opens the detail panel of that action, when the action exists in the current brain; any other ID stays plain text. Without a file, the view says "No priorities for this brain yet. Run /priorities in Claude Code."; a file without a section says "Nothing to do in this horizon." The page reads the file again with each refresh and when the window regains focus, and draws it again only when its content changed. The shortcut is `0`; the count next to the entry is the number of `Now` items. The filter row is empty in this view.
 
+Each follow-up carries its drafted message as a collapsible draft, closed by default: its summary line gives the channel, the recipients and the subject (or the thread), and opening it shows the header rows and the message. **Copy message** at the end of an opened draft copies the message text alone and shows "Message copied". The action IDs inside a draft stay plain text, and a draft that was open stays open when the file is redrawn.
+
 ## Today
 
 The opening view. It splits the open actions, after the header filters, into sections (an action appears only once, in the first one that fits):
@@ -132,7 +134,7 @@ Every write made from the interface (creation, edit, status, due date, adding or
 
 `GET /api/priorities` (optional `?brain=<name>`, the default brain otherwise) reads `priorities/<brain name>.md` in the Work root, where the name is the one of the brain's folder (`brain-acme`). The `priorities/` folder is ignored by Git and holds only generated files: the `/priorities` skill rewrites the file of every brain on each run. The server takes the brain only from its list of brains (an unknown or path-like name is refused with 400 "Unknown brain."), never reads a path sent by the page, and treats a file that is not a regular file (a symbolic link included) or that is larger than 1 MB as missing.
 
-```markdown
+````markdown
 ---
 type: priorities
 brain: brain-acme
@@ -152,12 +154,27 @@ next_meeting: 10:00 Steering committee
 
 ## Follow-ups
 - **Jane Doe (mail, thread "Q3 budget")** — ask for the signed order · no answer since 2026-11-14 · ACME-007, ACME-009
-```
+  ```draft
+  channel: mail
+  to: Jane Doe <jane.doe@acme.example>
+  cc: John Smith
+  subject: RE: Q3 budget
+  thread: reply all in "Q3 budget"
+  send: end of afternoon if nothing has arrived
+
+  Hello Jane,
+
+  Could you please send the signed order by Wednesday?
+
+  Thanks in advance!
+  ```
+````
 
 - **Front matter**: flat `key: value` lines. `type` is always `priorities`; `brain` is the brain's folder name; `generated` is an ISO 8601 date-time with its UTC offset (required: without a valid one the file counts as not today's); `horizon` is `YYYY-MM-DD..YYYY-MM-DD`; `next_meeting` is optional free text. Other keys are ignored.
 - **Title**: one optional `# ` line.
 - **Sections**: `## ` headings with these fixed English titles, in this order, the empty ones left out: `Warnings`, `Now`, `Prepare`, `Conflicts`, `New requests`, `Follow-ups`, `To chase`, `To close`, `Lingering`, `Admin`. Titles are matched without regard to case; any other `## ` heading is still shown, as a generic section, in file order. Only the headings are fixed: the text of the items is in the owner's language.
 - **Items**: top-level `- ` bullets, each starting with the bold thing to do, then ` — ` why now, ` · ` deadline, ` · ` action IDs; sub-bullets are allowed. The count of a section is its number of top-level list items. A file with a front matter and no section means nothing to do.
+- **Drafts**: an item of `Follow-ups` may carry the draft of its message, a fenced block with the info string `draft`, indented under the bullet so that it stays inside the list item (the count of a section ignores it). Header lines come first, as `key: value` with keys in any case: `channel` (`mail` or `teams`; any other value is shown as given), `to`, `cc`, `subject`, `thread`, `send`. The headers stop at the first blank line and everything after it is the body, kept exactly as written (line breaks and leading `- ` included) and never parsed as Markdown. When the first line is not a `key: value` with a known key, the block has no headers and is all body; an unknown key inside the header block is shown under its own name. The server renders each draft as a `<details class="prio-draft">`, closed by default: the summary reads `Mail`, `Teams` or `Draft` (no channel), then the recipients (the `to` value without its `<address>` parts), then the subject, else the thread, a missing part leaving out its separator; a list of rows follows (To, Cc, Subject, Thread, Send, then the unknown keys, only those present), then the body as plain text. Every value is escaped. The page adds a **Copy message** button that copies the body.
 - **Action IDs**: `[A-Z]{2,5}-\d{3}` (`ACME-012`), the same pattern as the action routes.
 - **Answer**: `{"brain", "exists": false, "path"}` when the file is missing; otherwise also `title` (or `null`), `generated`, `horizon`, `next_meeting` (or `null`), `stale` (the date of `generated`, in its own offset, is before today's date in Europe/Paris, or `generated` is missing or invalid), `today`, `version` (the first 16 hex characters of the SHA-256 of the file) and `sections`, a list of `{"key", "title", "count", "html"}` where `key` is the slug of a known title (`new-requests`, `follow-ups`…) or `other`, and `html` is the section rendered by the same safe Markdown renderer as the documents (raw HTML is escaped, relative links are not links).
 

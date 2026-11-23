@@ -6327,6 +6327,67 @@ class PrioritiesTest(unittest.TestCase):
         path.mkdir()
         self.assertEqual(self.request("GET", "/api/priorities"), (200, missing))
 
+    DRAFT_FILE = (
+        "---\ntype: priorities\ngenerated: {generated}\n---\n\n## Follow-ups\n"
+        "- **Jane Doe (mail)** — ask for the order · ACME-007\n"
+        "  ```draft\n  channel: Mail\n  to: Jane Doe <jane.doe@acme.example>\n  cc: John Smith\n  subject: RE: Q3 budget\n"
+        "  thread: reply all\n  send: end of afternoon\n  x-note: later\n\n  Hello Jane,\n\n  Please send:\n  - the order;\n  - the annex.\n  ```\n"
+        "- **John Smith (Teams)** — ask for the results · ACME-009\n"
+        "  ```draft\n  channel: teams\n  to: John Smith\n  thread: chat \"Rollout\"\n\n  Hello John, any news?\n  ```\n"
+        "- **Bare** item\n  ```draft\n  Just a body\n  - kept\n  ```\n"
+        "- **Plain** item\n  ```python\n  print(1)\n  ```\n"
+    )
+
+    def draft_section(self, text=None):
+        self.put("brain", (text or self.DRAFT_FILE).format(generated=self.now().isoformat(timespec="seconds")))
+        return self.request("GET", "/api/priorities")[1]["sections"][0]
+
+    def test_drafts_render_as_closed_details_with_summary_rows_and_body(self):
+        section = self.draft_section()
+        html = section["html"]
+        self.assertEqual(section["count"], 4)  # drafts are not items
+        self.assertEqual(html.count('<details class="prio-draft">'), 3)
+        self.assertNotIn("<details open", html)
+        self.assertIn('<summary><span class="prio-draft-channel">Mail</span> · <span class="prio-draft-to">Jane Doe</span>'
+                      ' · <span class="prio-draft-subject">RE: Q3 budget</span></summary>', html)
+        self.assertNotIn("jane.doe@acme.example</span>", html)
+        rows = re.search(r'<dl class="prio-draft-meta">(.*?)</dl>', html, re.S).group(1)
+        labels = re.findall(r"<dt>(.*?)</dt>", rows)
+        self.assertEqual(labels, ["To", "Cc", "Subject", "Thread", "Send", "x-note"])
+        self.assertIn("<dd>Jane Doe &lt;jane.doe@acme.example&gt;</dd>", rows)
+        self.assertIn('<div class="prio-draft-body">Hello Jane,\n\nPlease send:\n- the order;\n- the annex.</div>', html)
+
+    def test_a_teams_draft_without_subject_uses_the_thread_in_the_summary(self):
+        html = self.draft_section()["html"]
+        self.assertIn('<summary><span class="prio-draft-channel">Teams</span> · <span class="prio-draft-to">John Smith</span>'
+                      ' · <span class="prio-draft-subject">chat &quot;Rollout&quot;</span></summary>', html)
+
+    def test_a_draft_without_headers_is_all_body(self):
+        html = self.draft_section()["html"]
+        self.assertIn('<summary><span class="prio-draft-channel">Draft</span></summary>\n<div class="prio-draft-body">Just a body\n- kept</div>', html)
+
+    def test_draft_values_are_escaped(self):
+        text = ("---\ntype: priorities\ngenerated: {generated}\n---\n\n## Follow-ups\n- **A**\n"
+                "  ```draft\n  channel: mail\n  subject: <script>alert(1)</script>\n\n  <script>alert(2)</script> & more\n  ```\n")
+        html = self.draft_section(text)["html"]
+        self.assertNotIn("<script", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+        self.assertIn("&lt;script&gt;alert(2)&lt;/script&gt; &amp; more", html)
+
+    def test_other_fences_and_the_documents_renderer_are_unchanged(self):
+        html = self.draft_section()["html"]
+        self.assertIn('<pre><code class="language-python">print(1)\n</code></pre>', html)
+        from tasksweb.markdown import MARKDOWN
+        self.assertIn("<pre><code", MARKDOWN.render("```draft\nchannel: mail\n\nbody\n```\n", {"id": "x", "ids": set(), "line_offset": 0}))
+
+    def test_the_page_copies_drafts_and_leaves_their_text_alone(self):
+        script = app_script()
+        self.assertIn("'.prio-draft-copy'", script)
+        self.assertIn("navigator.clipboard.writeText(body.textContent)", script)
+        self.assertIn("showToast('Message copied')", script)
+        self.assertIn("showToast('Copy failed: select the text and copy it')", script)
+        self.assertIn("closest('a, button, .prio-draft')", script)  # linkActionIds skips drafts
+
     def test_the_view_is_wired_in_the_page(self):
         with urlopen(self.base + "/", timeout=3) as response:
             page = response.read().decode("utf-8")
