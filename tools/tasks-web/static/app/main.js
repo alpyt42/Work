@@ -153,12 +153,43 @@ ids.editorTitle.tabIndex = -1;
 ids.closeEditor.addEventListener('click', () => closeEditor());
 ids.cancelEditor.addEventListener('click', () => closeEditor());
 ids.editorForm.addEventListener('submit', saveEditor);
-ids.editorForm.addEventListener('input', updateEditorButtons);
-ids.editorForm.addEventListener('change', updateEditorButtons);
+// An existing action saves itself: a committed change (select, date, text field on blur) starts the timer, typing postpones it.
+// The note form and the subtasks have their own writes.
+const ownWrites = event => ids.noteForm.contains(event.target) || ids.editorSubtasks.contains(event.target);
+ids.editorForm.addEventListener('input', event => {
+  if (ownWrites(event)) return;
+  if (!editorAction) updateEditorButtons();
+  else if (autosaveTimer !== null) scheduleAutosave();
+  else updateSaveState();
+});
+ids.editorForm.addEventListener('change', event => {
+  if (ownWrites(event)) return;
+  if (editorAction) scheduleAutosave();
+  else updateEditorButtons();
+});
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushAutosave(); });
+window.addEventListener('pagehide', () => { flushAutosave(); });
+// A click outside the panel closes it (what is left is sent first). Not when the click opened an action (a row, a card, an ID:
+// the panel follows it), started in the panel (a text selection dragged out), selected text, or landed on a menu, a dialog or
+// the message at the bottom.
+let outsidePress = null;
+document.addEventListener('pointerdown', event => {
+  outsidePress = editorOpen() && !ids.editor.contains(event.target) ? editorHistoryRequest : null;
+}, true);
+document.addEventListener('click', event => {
+  const press = outsidePress;
+  outsidePress = null;
+  if (press === null || press !== editorHistoryRequest || !editorOpen()) return;
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target?.isConnected || ids.editor.contains(target)) return;
+  if (target.closest('[data-id], .prio-id, .doc-action, #popover, dialog, #toast, #moreMenu, #brainMenu, .info')) return;
+  if (!window.getSelection().isCollapsed) return;
+  closeEditor({refocus: false});
+});
 ids.deleteEditor.addEventListener('click', deleteEditor);
 ids.editorActionTitle.addEventListener('input', sizeTitleField);
 ids.editorActionTitle.addEventListener('keydown', event => {
-  // The title is one line in the register: Enter saves (Shift+Enter is ignored as well).
+  // The title is one line in the register: Enter saves or creates (Shift+Enter is ignored as well).
   if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); if (!event.shiftKey) ids.editorForm.requestSubmit(); }
 });
 ids.editorProject.addEventListener('change', () => fillGroupOptions());

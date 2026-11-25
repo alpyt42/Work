@@ -212,6 +212,7 @@ function renderSearchResults() {
   } else if (!docPending) docSection.append(searchNone('No document contains these words.'));
   ids.resultCount.textContent = `${plural(actions.length, 'action')}${docPending || docError ? '' : `, ${plural(docTotal, 'document')}`}`;
   ids.docList.replaceChildren(actionSection, docSection);
+  markOpenAction();
 }
 function renderDocList() {
   const focused = ids.docList.contains(document.activeElement) ? document.activeElement.dataset.docId : null;

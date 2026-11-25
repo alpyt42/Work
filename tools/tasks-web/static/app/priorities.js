@@ -156,6 +156,7 @@ function renderPriorities() {
   ids.prioView.replaceChildren(...nodes);
   for (const draft of ids.prioView.querySelectorAll('.prio-draft')) draft.open = openDrafts.has(draftKey(draft)); // the drafts that were open stay open
   ids.prioView.scrollTop = scroll;
+  markOpenAction();
 }
 ids.prioView.addEventListener('click', event => {
   const copy = event.target instanceof Element ? event.target.closest('.prio-draft-copy') : null;
