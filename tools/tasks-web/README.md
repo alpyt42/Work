@@ -88,7 +88,7 @@ The single keys do not apply while typing in a field; `?` shows their help, and 
 | `s` | Status menu of the selected action |
 | `d` | Due date of the selected action |
 | Esc | Close the menu, the drawer or the panel; in the search field, clear it and go back to the view it left |
-| ⌘ Enter | Save the panel or the note being edited |
+| ⌘ Enter | Save the panel now, create the action, or save the note being edited |
 | ⌘ Z | Undo the last write |
 | `[` | Collapse the sidebar to its icons, or expand it (the drawer, under 900 px) |
 | `?` | Shortcuts help |

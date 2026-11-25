@@ -5327,11 +5327,41 @@ class ActionViewsPageTest(unittest.TestCase):
 
     def test_a_closing_warning_and_a_refused_note_are_shown(self):
         self.assertIn("warnings: result.warnings || []", self.function("patchAction"))
-        self.assertIn("warnings: result.warnings || []", self.function("saveEditor"))
+        self.assertIn("warnings: result.warnings || []", self.function("runAutosave"))
         self.assertIn("ids.toast.classList.toggle('is-warning', warnings.length > 0);", self.function("showToast"))
         self.assertIn("onError(error);", self.function("changeDetails"))
         self.assertIn("error.message", self.function("showNoteError"))
         self.assertIn("This note is already in the history: nothing was added.", self.function("submitNote"))
+
+    def test_an_existing_action_saves_itself_and_the_open_action_is_highlighted(self):
+        self.assertIn('<span id="editorSaveState" class="panel-save-state" role="status" aria-live="polite"></span>', self.page)
+        self.assertIn("'editorSaveState'", self.script)
+        # No footer for an existing action: Delete sits next to the ID, the panel closes with ×, Esc or a click outside.
+        head = self.page[self.page.index('<div class="panel-heading-line">'):self.page.index('<p id="editorHint"')]
+        self.assertIn('<button id="deleteEditor" class="icon-button panel-delete" type="button" aria-label="Delete this action"', head)
+        self.assertIn('id="editorSaveState"', head)
+        self.assertIn("ids.editorFoot.hidden = Boolean(action);", self.function("openEditor"))
+        self.assertIn("'editorFoot'", self.script)
+        for fragment in ("document.addEventListener('pointerdown'", "press !== editorHistoryRequest",
+                         "target.closest('[data-id], .prio-id, .doc-action, #popover, dialog, #toast, #moreMenu, #brainMenu, .info')",
+                         "closeEditor({refocus: false});"):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, self.script)
+        for name in ("openEditor", "closeEditor"):
+            with self.subTest(function=name):
+                self.assertIn("flushAutosave()", self.function(name))
+        self.assertIn("editorAdopt", self.function("syncEditorAfterRefresh"))
+        self.assertIn("editorAdopt = job.id;", self.function("runAutosave"))
+        self.assertIn("The title cannot be empty: this change is not saved.", self.function("flushAutosave"))
+        self.assertIn("flushAutosave()", self.function("switchBrain"))
+        marker = self.function("markOpenAction")
+        self.assertIn("'is-open'", marker)
+        self.assertIn("'has-open'", marker)
+        self.assertIn("markOpenAction();", self.function("renderPriorities"))
+        self.assertIn("markOpenAction();", self.function("renderSearchResults"))
+        self.assertIn(".prio-id.is-open", self.styles)
+        self.assertIn(".prio-body li.has-open", self.styles)
+        self.assertIn(".doc-action.is-open", self.styles)
 
     def test_sidebar_entries_and_archived_ones_have_a_more_menu_that_archives_or_unarchives(self):
         menu = self.function("entryMenu")

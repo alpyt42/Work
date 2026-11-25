@@ -5,6 +5,13 @@ const NEW_GROUP = '__new';
 let editorAction = null;
 let editorInitial = '';
 let editorReturnFocus = null;
+// Autosave (an existing action): a change is sent shortly after it is committed; one write at a time, the newest job replaces a queued one.
+const AUTOSAVE_DELAY = 400;
+let autosaveTimer = null;
+let autosaveBusy = false;
+let autosaveNext = null;
+let autosavePromise = null;
+let editorAdopt = null; // the id whose fresh line the next refresh adopts in place (no reopen: a note being typed survives)
 function groupChoice() {
   return ids.editorGroup.value === NEW_GROUP ? {fresh: true, text: ids.editorGroupNew.value} : {slug: ids.editorGroup.value};
 }
@@ -46,8 +53,89 @@ function formAction() {
 function editorOpen() { return !ids.editor.hidden; }
 function editorSignature() { return JSON.stringify([ids.editorProject.value, formAction()]); }
 function editorDirty() { return editorOpen() && editorSignature() !== editorInitial; }
+function unsentChanges() { return Boolean(editorAction) && editorDirty(); }
+function setSaveState(text) { ids.editorSaveState.textContent = text; }
+function updateSaveState() {
+  if (!editorOpen() || !editorAction) { setSaveState(''); return; }
+  if (autosaveBusy) setSaveState('Saving…');
+  else if (!ids.editorError.hidden) setSaveState('Not saved');
+  else if (editorDirty()) setSaveState('Unsaved changes');
+  else setSaveState(ids.editorSaveState.dataset.saved ? 'Saved' : '');
+}
 function updateEditorButtons() {
-  ids.saveEditor.disabled = Boolean(editorAction) && !editorDirty();
+  if (editorAction) updateSaveState();
+  else ids.saveEditor.disabled = false;
+}
+function scheduleAutosave(delay = AUTOSAVE_DELAY) {
+  if (!editorOpen() || !editorAction) return;
+  clearTimeout(autosaveTimer);
+  autosaveTimer = null;
+  if (editorDirty()) autosaveTimer = setTimeout(flushAutosave, delay);
+  updateSaveState();
+}
+// Sends what the panel holds now (a change in flight finishes first). Returns a promise to await, or null when there is nothing to send.
+function flushAutosave() {
+  clearTimeout(autosaveTimer);
+  autosaveTimer = null;
+  if (!editorOpen() || !editorAction || !editorDirty()) return autosavePromise;
+  const action = formAction();
+  if (action.title === '') {
+    ids.editorError.textContent = 'The title cannot be empty: this change is not saved.';
+    ids.editorError.hidden = false;
+    setSaveState('Not saved');
+    return autosavePromise;
+  }
+  autosaveNext = {id: editorAction.id, action, signature: editorSignature()};
+  if (!autosaveBusy) autosavePromise = runAutosave();
+  return autosavePromise;
+}
+async function runAutosave() {
+  autosaveBusy = true;
+  try {
+    while (autosaveNext) {
+      const job = autosaveNext;
+      autosaveNext = null;
+      const version = editorAction?.id === job.id ? ids.editor.dataset.version : findAction(job.id)?.version;
+      setSaveState('Saving…');
+      try {
+        const result = await request(`/api/actions/${encodeURIComponent(job.id)}`, {
+          method: 'PATCH', headers: {'Content-Type': 'application/json', 'X-Tasks-Token': token},
+          body: JSON.stringify({version, action: job.action})
+        });
+        setUndo(result.undo);
+        showToast('Action updated', {undo: true, warnings: result.warnings || []});
+        if (editorOpen() && editorAction?.id === job.id) {
+          editorInitial = job.signature;
+          editorAdopt = job.id; // the refresh below hands the panel its fresh version
+          ids.editorError.hidden = true;
+          ids.editorSaveState.dataset.saved = '1';
+        }
+        await refresh();
+      } catch (error) {
+        if (editorOpen() && editorAction?.id === job.id) {
+          ids.editorError.textContent = error.status === 409
+            ? 'The register changed since you opened this action: this change is not saved. Close the panel and reopen the action.'
+            : error.message;
+          ids.editorError.hidden = false;
+          if (autosaveNext?.id === job.id) autosaveNext = null; // no automatic retry
+        } else showError(`${job.id} not saved: ${error.message}`);
+      }
+    }
+  } finally {
+    autosaveBusy = false;
+    updateSaveState();
+  }
+}
+// The open panel, an existing action: the id whose later highlights follow.
+function markOpenAction() {
+  const id = editorOpen() && editorAction ? editorAction.id : null;
+  for (const item of ids.prioView.querySelectorAll('.has-open')) item.classList.remove('has-open');
+  for (const button of ids.prioView.querySelectorAll('.prio-id[data-action-id]')) {
+    const open = id !== null && button.dataset.actionId === id;
+    button.classList.toggle('is-open', open);
+    if (open) button.closest('li')?.classList.add('has-open');
+  }
+  for (const button of document.querySelectorAll('.doc-action[data-action-id]')) button.classList.toggle('is-open', id !== null && button.dataset.actionId === id);
 }
 function sizeTitleField() {
   ids.editorActionTitle.style.height = 'auto';
@@ -66,7 +154,10 @@ function renderStamps(action) {
 // preset (creation only): {register, group (slug), state}. focus: 'auto' (title when creating, heading when editing), 'title', 'none'.
 function openEditor(action = null, preset = null, {focus = 'auto'} = {}) {
   const same = action && editorAction && editorAction.id === action.id;
-  if (editorDirty() && !same && !confirm('Discard the unsaved changes to this action?')) return false;
+  if (unsentChanges()) {
+    flushAutosave(); // captures the open action's values before the panel moves on
+    if (same) return true;
+  } else if (editorDirty() && !same && !confirm('Discard the unsaved changes to this action?')) return false;
   closePopover(false);
   if (!editorOpen()) editorReturnFocus = document.activeElement;
   const historyRequest = ++editorHistoryRequest;
@@ -99,8 +190,9 @@ function openEditor(action = null, preset = null, {focus = 'auto'} = {}) {
   ids.editorPriority.value = action?.priority || '';
   ids.editorDue.value = action?.due || (!action && preset?.due) || '';
   ids.editorScheduled.value = action?.scheduled || '';
-  ids.saveEditor.textContent = action ? 'Save' : 'Create action';
-  ids.cancelEditor.textContent = action ? 'Close' : 'Cancel';
+  delete ids.editorSaveState.dataset.saved;
+  setSaveState('');
+  ids.editorFoot.hidden = Boolean(action); // an existing action saves itself and closes with × or a click outside: no footer
   ids.deleteEditor.hidden = !action;
   renderStamps(action);
   setEditorBusy(false);
@@ -111,6 +203,7 @@ function openEditor(action = null, preset = null, {focus = 'auto'} = {}) {
   sizeTitleField();
   editorInitial = editorSignature();
   updateEditorButtons();
+  markOpenAction();
   if (focus === 'title' || (focus === 'auto' && !action)) ids.editorActionTitle.focus();
   else if (focus === 'auto') ids.editorTitle.focus({preventScroll: true});
   if (action) {
@@ -126,13 +219,20 @@ function openEditor(action = null, preset = null, {focus = 'auto'} = {}) {
 }
 function closeEditor({force = false, refocus = true} = {}) {
   if (!editorOpen()) return true;
-  if (!force && editorDirty() && !confirm('Discard the unsaved changes to this action?')) return false;
+  if (!force && unsentChanges()) {
+    flushAutosave();
+    if (formAction().title === '') { ids.editorActionTitle.focus(); return false; } // an empty title is not sent: the panel stays, with its message
+  } else if (!force && editorDirty() && !confirm('Discard the unsaved changes to this action?')) return false;
+  clearTimeout(autosaveTimer);
+  autosaveTimer = null;
   const wasEditing = editorAction?.id;
   ids.editor.hidden = true;
   ids.app.classList.remove('has-panel');
   editorHistoryRequest += 1;
   editorAction = null;
   noteState = null;
+  setSaveState('');
+  markOpenAction();
   if (refocus) {
     const row = wasEditing && rowFor(wasEditing);
     const target = row?.querySelector(ROW_MAIN) || (editorReturnFocus?.isConnected && !ids.editor.contains(editorReturnFocus) ? editorReturnFocus : null);
@@ -146,6 +246,14 @@ function syncEditorAfterRefresh() {
   if (!editorOpen() || !editorAction) return;
   const fresh = findAction(editorAction.id);
   if (!fresh) { closeEditor({force: true, refocus: false}); return; }
+  if (editorAdopt && editorAction.id === editorAdopt) {
+    editorAction = fresh;
+    ids.editor.dataset.version = fresh.version;
+    renderStamps(fresh);
+    editorAdopt = null;
+    updateSaveState();
+    return;
+  }
   if (fresh.version !== editorAction.version && !editorDirty()) openEditor(fresh, null, {focus: 'none'});
 }
 // The history, newest first: the register appends, so the last sub-bullet leads and the source closes the list. Only the order
@@ -465,7 +573,7 @@ function reloadDetails() {
   }).catch(() => { /* The next refresh will catch up. */ });
 }
 function setEditorBusy(busy) {
-  ids.saveEditor.disabled = busy || (Boolean(editorAction) && !editorDirty());
+  ids.saveEditor.disabled = busy;
   ids.deleteEditor.disabled = busy;
   ids.saveEditor.setAttribute('aria-busy', String(busy));
 }
@@ -516,35 +624,24 @@ async function deleteFromRow(action, button) {
     button.disabled = false;
   }
 }
+// The form's submit (Enter in the title, ⌘ Enter): an existing action sends its changes now, a new action is created.
 async function saveEditor(event) {
   event.preventDefault();
+  if (editorAction) { flushAutosave(); return; }
   if (ids.saveEditor.disabled) return;
   if (!ids.editorForm.reportValidity()) return;
   const action = formAction();
-  const id = ids.editor.dataset.actionId;
   setEditorBusy(true);
   try {
-    if (id) {
-      const result = await request(`/api/actions/${encodeURIComponent(id)}`, {
-        method: 'PATCH', headers: {'Content-Type': 'application/json', 'X-Tasks-Token': token},
-        body: JSON.stringify({version: ids.editor.dataset.version, action})
-      });
-      setUndo(result.undo);
-      editorInitial = editorSignature(); // saved: the panel follows the fresh line after the refresh
-      showToast('Action updated', {undo: true, warnings: result.warnings || []});
-      await refresh();
-      if (editorOpen()) ids.editorTitle.focus({preventScroll: true});
-    } else {
-      const result = await request('/api/actions', {
-        method: 'POST', headers: {'Content-Type': 'application/json', 'X-Tasks-Token': token},
-        body: JSON.stringify({register: ids.editorProject.value, action})
-      });
-      setUndo(result.undo);
-      closeEditor({force: true, refocus: false});
-      await refresh();
-      showToast(`Action ${result.id} created`, {undo: true});
-      focusAction(result.id);
-    }
+    const result = await request('/api/actions', {
+      method: 'POST', headers: {'Content-Type': 'application/json', 'X-Tasks-Token': token},
+      body: JSON.stringify({register: ids.editorProject.value, action})
+    });
+    setUndo(result.undo);
+    closeEditor({force: true, refocus: false});
+    await refresh();
+    showToast(`Action ${result.id} created`, {undo: true});
+    focusAction(result.id);
   } catch (error) {
     ids.editorError.textContent = error.status === 409 ? 'The register changed since you opened it: copy your changes, close the panel, then reopen the action.' : error.message;
     ids.editorError.hidden = false;

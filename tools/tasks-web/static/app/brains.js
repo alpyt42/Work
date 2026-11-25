@@ -257,6 +257,11 @@ function switchBrain(name) {
     showToast('An operation is in progress: wait for it to finish before switching brain.');
     return false;
   }
+  if (unsentChanges() || autosaveBusy) {
+    flushAutosave();
+    showToast('Saving the open action: switch brain again in a moment.');
+    return false;
+  }
   if (editorDirty() && !confirm('Discard the unsaved changes to this action?')) return false;
   if (docDirty() && !confirm('Discard the unsaved changes to this note?')) return false;
   enterBrain(name);

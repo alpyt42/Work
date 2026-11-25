@@ -812,6 +812,7 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .panel-form { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
 .panel-head { flex: none; display: flex; align-items: flex-start; gap: 8px; padding: 14px 14px 10px 20px; border-bottom: 1px solid var(--line-soft); }
 .panel-heading { flex: 1 1 auto; min-width: 0; }
+.panel-heading-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .panel-heading h2 { display: inline-block; font-size: var(--fs-sm); font-weight: 600; font-variant-numeric: tabular-nums; border-radius: 4px; }
 .panel-hint { font-size: var(--fs-xs); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .panel-hint:empty { display: none; }
@@ -877,7 +878,11 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .panel-error { margin: 0 20px 10px; }
 .panel-foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 14px 12px 14px; border-top: 1px solid var(--line-soft); }
 .panel-foot-spacer { flex: 1 1 auto; }
-.panel-foot .button-danger svg { width: 15px; height: 15px; }
+.panel-save-state { margin-left: 4px; color: var(--text-muted); font-size: var(--fs-xs); font-weight: 400; white-space: nowrap; }
+.panel-save-state:empty { display: none; }
+.panel-delete { width: 26px; height: 26px; }
+.panel-delete svg { width: 15px; height: 15px; }
+.panel-delete:hover { background: var(--danger-soft); color: var(--danger); }
 
 /* ---------- Documents (Docs, Search) ---------- */
 .docs-view { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 20px; padding: 20px var(--page-x) 24px; }
@@ -897,6 +902,7 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 }
 .doc-item:hover { background: var(--bg-hover); }
 .doc-item[aria-pressed="true"] { background: var(--accent-soft); }
+.doc-action.is-open { background: var(--accent-soft); }
 .doc-item:focus-visible { outline-offset: -2px; border-radius: 0; }
 .doc-item-title { font-weight: 500; overflow-wrap: anywhere; }
 .doc-item-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; font-size: var(--fs-xs); color: var(--text-muted); }
@@ -1521,6 +1527,8 @@ html, body { overscroll-behavior-x: none; }
 .prio-body code { font-family: var(--mono); font-size: .92em; }
 .prio-id { display: inline; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg-sunken); color: var(--accent-strong); font: inherit; font-family: var(--mono); font-size: .9em; cursor: pointer; }
 .prio-id:hover { background: var(--bg-hover); border-color: var(--accent); }
+.prio-id.is-open, .prio-id.is-open:hover { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.prio-body li.has-open { background: var(--accent-soft); border-radius: 6px; box-shadow: 0 0 0 4px var(--accent-soft), 0 0 0 5px var(--accent); }
 .prio-draft { margin: .4em 0 .2em; max-width: 90ch; border: 1px solid transparent; border-radius: 6px; color: var(--text); }
 .prio-draft[open] { border-color: var(--line); background: var(--bg-surface); }
 .prio-draft > summary { display: block; padding: 3px 8px; border-radius: 6px; color: var(--text-muted); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; list-style: none; }
