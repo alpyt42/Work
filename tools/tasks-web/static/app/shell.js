@@ -65,7 +65,7 @@ function toggleSidebar() {
   try { localStorage.setItem(SIDEBAR_KEY, collapsed ? 'collapsed' : 'open'); } catch { /* Not remembered. */ }
   updateSidebarToggle();
 }
-narrowQuery.addEventListener('change', () => { closeDrawer(false); hideRailTip(); endPeek(); updateSidebarToggle(); });
+narrowQuery.addEventListener('change', () => { closeDrawer(false); hideRailTip(); endPeek(); fitCardToView(); updateSidebarToggle(); });
 
 // Corvus's macOS window (window-shell.js) has two sidebar columns when wide: a rail of icons that always shows, and the brain's card,
 // which the sidebar button folds away. Folded, the pointer on one of the views of the rail (Priorities to Docs, the ones the projects
@@ -113,15 +113,12 @@ function fitCardToView() {
   updateSidebarToggle();
 }
 // Above the projects, the card names the view they open: the hovered one while the card peeks (a project chosen then opens it,
-// app/filters.js), else the current one (render.js calls this on each change of view).
+// app/filters.js). Pinned, the header already names the view and the line stays empty (CSS: .card-view:not(:empty) while peeking).
 let peekView = '';
 function pendingPeekView() { return peeking() ? peekView : ''; }
 function showCardView() {
-  const card = document.getElementById('cardView');
-  if (!card) return;
-  const name = pendingPeekView() || view;
-  const icon = ids[NAV_BUTTONS[name]]?.querySelector('svg')?.cloneNode(true);
-  card.replaceChildren(...(icon ? [icon] : []), document.createTextNode(VIEW_TITLES[name] || ''));
+  const icon = ids[NAV_BUTTONS[peekView]]?.querySelector('svg')?.cloneNode(true);
+  ids.cardView.replaceChildren(...(icon ? [icon] : []), document.createTextNode(VIEW_TITLES[peekView] || ''));
   // The highlight follows the pointer while the card peeks: the hovered view looks chosen, and stays so while the pointer is on the
   // card, since a project chosen there opens it (CSS: .is-peeked).
   for (const entry of ids.sidebar.querySelectorAll('.nav-item.is-peeked')) entry.classList.remove('is-peeked');
@@ -155,11 +152,8 @@ for (const entry of ids.sidebar.querySelectorAll('.nav[aria-labelledby="viewsHea
     leavePeek();
   });
 }
-// The card itself keeps the peek, so that a project can be chosen in it: it goes when the pointer leaves both the views and the card.
-for (const part of ids.sidebar.querySelectorAll('.sidebar-top, .projects')) {
-  part.addEventListener('mouseenter', () => { if (peeking()) keepPeek(); });
-  part.addEventListener('mouseleave', leavePeek);
-}
+// The card itself keeps the peek, so that a project can be chosen in it: the per-move check above (PEEK_KEEPERS) ends it when the
+// pointer leaves both the views and the card.
 
 // ---------- Resizing ----------
 // The handles on the sidebar's edge (its card's in the Mac window) and on the detail panel's: drag, arrow keys, double-click for the
@@ -184,16 +178,22 @@ function makeResizable(handle, {variable, min, max, fromRight = false, step = 16
     handle.setPointerCapture(event.pointerId);
     document.documentElement.classList.add('is-resizing');
     const move = moved => setWidth(variable, clamp(startWidth + (fromRight ? startX - moved.clientX : moved.clientX - startX)));
+    let ended = false;
+    // Also ends when the handle goes away mid-drag (the sidebar folds, the panel closes): the capture is lost then.
     const end = () => {
+      if (ended) return;
+      ended = true;
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', end);
       handle.removeEventListener('pointercancel', end);
+      handle.removeEventListener('lostpointercapture', end);
       document.documentElement.classList.remove('is-resizing');
       saveWidth(variable);
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', end);
     handle.addEventListener('pointercancel', end);
+    handle.addEventListener('lostpointercapture', end);
   });
   handle.addEventListener('keydown', event => {
     const delta = {ArrowLeft: -step, ArrowRight: step}[event.key];
@@ -206,7 +206,13 @@ function makeResizable(handle, {variable, min, max, fromRight = false, step = 16
   handle.addEventListener('dblclick', () => resetWidth(variable));
 }
 makeResizable(ids.sidebarResizer, macWindow ? {variable: '--list-w', min: 180, max: () => 440} : {variable: '--sidebar-full-w', min: 200, max: () => 440});
-makeResizable(ids.panelResizer, {variable: '--panel-w', min: 340, max: () => Math.max(340, Math.round(innerWidth * .6)), fromRight: true});
+// The list beside the panel keeps at least 480 px (the sidebar's width is read as laid out: full, rail or card).
+const PANEL_MIN = 340;
+const LIST_MIN = 480;
+makeResizable(ids.panelResizer, {
+  variable: '--panel-w', min: PANEL_MIN, fromRight: true,
+  max: () => Math.max(PANEL_MIN, Math.min(innerWidth * .6, innerWidth - ids.sidebar.getBoundingClientRect().width - LIST_MIN)),
+});
 
 // In the rail the labels are visually hidden (still read by screen readers), so each entry shows its label, and its count when it has
 // one, in a small bubble to its right on hover and keyboard focus. The bubble is fixed to the page: the sidebar scrolls and would clip it.

@@ -274,7 +274,6 @@ function setView(next, persist = true) {
   }
   ids.viewTitle.textContent = VIEW_TITLES[next];
   fitCardToView(); // the Mac window's card: away on the views without projects (app/shell.js)
-  showCardView(); // the view named above its projects
   if (next !== 'search' && ids.searchInput.value) { // any other view ends the search: the field never says something the page does not show
     ids.searchInput.value = '';
     clearTimeout(docTimer);

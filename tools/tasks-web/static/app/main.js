@@ -305,6 +305,18 @@ ids.timelineTray.addEventListener('drop', event => {
   if (action && !closed(action) && action.due) updateDue(action, '');
 });
 document.addEventListener('dragend', endTimelineDrag);
+// A file or a link dropped outside the zones that take drops (the Board and the Timeline prevent the default themselves) would load
+// in place of the app, in the browser or the native window: refuse it. Our own drags carry neither files nor a URL.
+function foreignDrop(event) {
+  const types = Array.from(event.dataTransfer?.types || []);
+  return !event.defaultPrevented && (types.includes('Files') || types.includes('text/uri-list'));
+}
+document.addEventListener('dragover', event => {
+  if (!foreignDrop(event)) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'none';
+});
+document.addEventListener('drop', event => { if (foreignDrop(event)) event.preventDefault(); });
 // An empty day of a project: a click starts a new action due that day, in that project.
 function clearGhost() { ids.timelineScroll.querySelector('.tl-ghost')?.remove(); }
 ids.timelineScroll.addEventListener('pointermove', event => {

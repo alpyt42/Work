@@ -14,12 +14,15 @@ and launcher.sh run it. Standard library only.
    never a second server, never someone else's page.
 3. Otherwise start `uv run tools/tasks-web/tasks-web.py --port 8765` from the Work root, detached (its own session
    on macOS and Linux; on Windows its own process group and a console with no window, so neither it nor the Git
-   and uv commands it runs ever show a window), output in agents/tasks-web.log, PID in agents/tasks-web.pid; wait up
-   to 10 seconds for it to answer, then open the page.
+   and uv commands it runs ever show a window), output in agents/tasks-web.log (emptied first, then only appended to),
+   PID in agents/tasks-web.pid (for information: nothing reads it); wait up to 10 seconds for it to answer, then open
+   the page.
 4. The page opens through a chain, the first step that works, each outcome written to agents/tasks-web.log:
-   (a) the native window, tools/tasks-web/window.py (pywebview, run by uv; the first run downloads pywebview). On
-       macOS the installed Corvus.app is opened first (`open -b local.work.tasks-brain`), so the window is the bundle,
-       with its Dock icon and name; window.py is run directly only when that app is not installed;
+   (a) the native window, tools/tasks-web/window.py (pywebview, run by uv; the first run downloads pywebview), on
+       macOS and Windows. On macOS the Corvus.app that install-app.py built is opened first, by its path in the
+       artifacts folder (never by bundle id, which an archived copy shares), and the launcher is done: the bundle
+       shows its own window, or its own fallback. window.py is run directly only when that app is not there. Linux
+       skips (a): uv's isolated environment cannot reach the system's GTK or Qt bindings;
    (b) a Chrome app window (`--app=URL`): Google Chrome, else Microsoft Edge, else Chromium or Brave;
    (c) the default browser.
 
@@ -35,6 +38,7 @@ Windows, zenity, kdialog or notify-send on Linux); --no-dialog leaves the dialog
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import shutil
 import socket
@@ -51,7 +55,7 @@ SERVER_SCRIPT = Path("tools/tasks-web/tasks-web.py")
 PORT = 8765
 HOST = "127.0.0.1"
 TITLE = "Corvus"
-BUNDLE_ID = "local.work.tasks-brain"  # of the installed Corvus.app; LaunchServices finds the app by it
+MAC_APP = Path("internal/setup/tasks-dock-app/Corvus.app")  # in the artifacts folder: where install-app.py builds it
 WINDOW_SCRIPT = Path("tools/tasks-web/window.py")
 WINDOW_WAIT = 20.0  # seconds a prepared window may take to show
 WINDOW_FIRST_WAIT = 180.0  # the same when its environment is not prepared yet: uv may download pywebview
@@ -142,6 +146,18 @@ def console_uv(path: Path) -> Path:
     return sibling if path.name.lower() == "uvw.exe" and sibling.is_file() else path
 
 
+def windowless_uv(uv: str | Path) -> Path | None:
+    """Windows: the uvw.exe (no console window) next to uv.exe, else next to the file uv.exe links to (a WinGet link
+    or a Scoop shim seen through a symlink); None when there is none."""
+    path = Path(uv)
+    places = [path.with_name("uvw.exe")]
+    try:
+        places.append(path.resolve().with_name("uvw.exe"))
+    except (OSError, RuntimeError):  # a link loop, a drive that is gone
+        pass
+    return next((place for place in places if place.is_file()), None)
+
+
 def find_uv(environ: dict[str, str] | None = None, system: str | None = None, home: Path | None = None) -> str | None:
     """Absolute path of uv: the one running this script (UV), else PATH, else the usual install places."""
     environ = os.environ if environ is None else environ
@@ -207,10 +223,13 @@ def start_detached(command: list[str], cwd: Path, log: Path, environment: dict[s
                    append: bool = False) -> subprocess.Popen:
     """Start `command` so that it outlives this launcher and never holds its streams or its console.
 
-    Its output goes to `log`, which a fresh server start truncates and the native window (`append`) only extends.
+    Its output goes to `log`, which a fresh server start empties and the native window (`append`) only extends. The log
+    is always written in append mode, so that the lines launch.py and window.py add later are not overwritten by it.
     """
     options: dict = {"cwd": cwd, "env": environment or utf8_environment(), "stdin": subprocess.DEVNULL, "stderr": subprocess.STDOUT}
-    with open(log, "ab" if append else "wb") as output:
+    if not append:
+        open(log, "wb").close()
+    with open(log, "ab") as output:
         options["stdout"] = output
         if os.name != "nt":
             return subprocess.Popen(command, start_new_session=True, **options)
@@ -307,21 +326,23 @@ def open_fallback(url: str, work: Path = WORK, command_for=app_mode_command, sta
     return ""
 
 
-def window_command(uv: str, work: Path, port: int, system: str | None = None, no_fallback: bool = True) -> list[str]:
-    """`<uv> run --quiet --script window.py --port N`; on Windows the windowless uvw.exe (`--gui-script`) when it is there."""
+def window_command(uv: str, work: Path, port: int, system: str | None = None) -> list[str]:
+    """`<uv> run --quiet --script window.py --port N --no-fallback` (launch.py runs the fallback itself); on Windows the
+    windowless uvw.exe (`--gui-script`) when there is one."""
     system = system or system_name()
     program, flag = uv, "--script"
-    if system == "windows" and Path(uv).with_name("uvw.exe").is_file():
-        program, flag = str(Path(uv).with_name("uvw.exe")), "--gui-script"
-    command = [program, "run", "--quiet", flag, str(work / WINDOW_SCRIPT), "--port", str(port)]
-    return command + ["--no-fallback"] if no_fallback else command
+    windowless = windowless_uv(uv) if system == "windows" else None
+    if windowless is not None:
+        program, flag = str(windowless), "--gui-script"
+    return [program, "run", "--quiet", flag, str(work / WINDOW_SCRIPT), "--port", str(port), "--no-fallback"]
 
 
 def stop_process(process: subprocess.Popen) -> None:
     """Stop a window that did not show, with the children uv started; never raises."""
     try:
         if os.name == "nt":
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, creationflags=CREATE_NO_WINDOW, check=False)
         else:
             import signal
 
@@ -331,55 +352,63 @@ def stop_process(process: subprocess.Popen) -> None:
         pass
 
 
-def open_bundle(bundle_id: str = BUNDLE_ID) -> bool:
-    """macOS: `open -b <bundle id>`: starts the installed Corvus.app, or activates the running one; False without the app."""
+def artifacts_dir(work: Path) -> Path:
+    """The artifacts folder of `work`, resolved as install-app.py does (tools/machine/work_config.py of this checkout)."""
+    spec = importlib.util.spec_from_file_location("tasks_launch_work_config", WORK / "tools/machine/work_config.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.artifacts_dir(work)
+
+
+def installed_app(work: Path = WORK, folder=artifacts_dir) -> Path | None:
+    """macOS: the Corvus.app that install-app.py built in the artifacts folder; None when it is not there.
+
+    Found by its path, never by its bundle id: LaunchServices may pick an archived copy (an "Actions Brain.app" or an
+    older Corvus.app moved to archive/) that has the same id.
+    """
     try:
-        return subprocess.run(["open", "-b", bundle_id], stdin=subprocess.DEVNULL, capture_output=True, timeout=30,
+        app = folder(work) / MAC_APP
+    except Exception:  # noqa: BLE001 - an invalid configuration: no app to open, window.py runs instead
+        return None
+    return app if (app / "Contents/Info.plist").is_file() else None
+
+
+def open_bundle(app: Path) -> bool:
+    """macOS: `open <app>`: starts that Corvus.app, or activates it when it already runs; True when `open` succeeded."""
+    try:
+        return subprocess.run(["open", str(app)], stdin=subprocess.DEVNULL, capture_output=True, timeout=30,
                               check=False).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
 
 
-def window_running(ready: Path) -> bool:
-    """True when the ready file names a live process (window.py writes its PID there)."""
-    try:
-        pid = int(ready.read_text(encoding="utf-8").split()[0])
-        if pid <= 0:
-            return False
-        if os.name == "nt":
-            return True  # no cheap check here; window.py removes the file when it closes
-        os.kill(pid, 0)
-    except PermissionError:
-        return True
-    except (OSError, ValueError, IndexError):
-        return False
-    return True
-
-
 def open_native_window(port: int = PORT, work: Path = WORK, uv: str | None = None, starter=start_detached, wait: float | None = None,
-                       delay: float = DELAY, system: str | None = None, stopper=stop_process, bundle_opener=open_bundle) -> bool:
-    """Run window.py detached and wait for its ready file; False (with the reason in the log) when it cannot show.
+                       delay: float = DELAY, system: str | None = None, stopper=stop_process, bundle_opener=open_bundle,
+                       app_finder=installed_app) -> bool:
+    """Open the native window; False (with the reason in the log) when it cannot show.
 
-    Without `wait` the wait is WINDOW_WAIT, or WINDOW_FIRST_WAIT while no window ever showed here, because uv may then
-    download pywebview. A window.py that exits with 0 raised the window that was already open (Windows and Linux), or was closed at once.
+    macOS with the installed Corvus.app: open it and return True at once (the bundle shows its own window, or its own
+    fallback). Linux: False (no native window). Otherwise run window.py detached and wait for its ready file. Without
+    `wait` the wait is WINDOW_WAIT, or WINDOW_FIRST_WAIT while no window ever showed here, because uv may then download
+    pywebview. A window.py that exits with 0 raised the window that was already open, or was closed at once.
     """
     system = system or system_name()
+    if system == "linux":
+        log_line(work, "Native window skipped: none on Linux (uv's environment has no GTK or Qt bindings).")
+        return False
+    if system == "macos":
+        app = app_finder(work)
+        if app is not None:
+            if bundle_opener(app):
+                log_line(work, f"Opened {app.name}: it shows the page in its own window.")
+                return True
+            log_line(work, f"{app.name} could not be opened: window.py runs directly.")
     agents = work / "agents"
     agents.mkdir(parents=True, exist_ok=True)
     ready, prepared = agents / READY_FILE, agents / PREPARED_FILE
     first_run = not prepared.exists()
     wait = (WINDOW_FIRST_WAIT if first_run else WINDOW_WAIT) if wait is None else wait
-    if system == "macos" and bundle_opener(BUNDLE_ID):
-        # The installed Corvus.app runs --prepare-window and becomes the window (the Dock shows Corvus, not python); an
-        # app that is already running is only activated, and its ready file names a live process.
-        deadline = time.monotonic() + wait
-        while time.monotonic() < deadline:
-            if window_running(ready):
-                log_line(work, "Page opened in the native window (Corvus.app).")
-                return True
-            time.sleep(delay)
-        log_line(work, f"Native window skipped: Corvus.app did not show within {wait:g} s.")
-        return False
     uv = uv or find_uv()
     if uv is None:
         log_line(work, "Native window skipped: uv was not found.")

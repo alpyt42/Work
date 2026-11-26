@@ -1,5 +1,6 @@
 #!/bin/zsh
-# Start Corvus (the local task manager) on demand, then open it (native window, else Chrome app window, else browser).
+# Start Corvus (the local task manager) on demand, then open it: the installed Corvus.app (found by its path in the
+# artifacts folder), else window.py, else a Chrome app window, else the browser.
 # Kept for the apps built before install-app.py: the work is done by launch.py (macOS, Windows, Linux).
 # No dialog from launch.py here: the app that runs this script shows the error itself.
 set -euo pipefail

@@ -5,7 +5,7 @@
 
 const token = document.querySelector('meta[name="csrf-token"]').content;
 const ids = Object.fromEntries([
-  'app', 'sidebar', 'sidebarResizer', 'panelResizer', 'scrim', 'sidebarToggle', 'brainMini', 'sidebarClose', 'mainContent', 'brainSwipe', 'brainSwipeName',
+  'app', 'sidebar', 'cardView', 'sidebarResizer', 'panelResizer', 'scrim', 'sidebarToggle', 'brainMini', 'sidebarClose', 'mainContent', 'brainSwipe', 'brainSwipeName',
   'brainSwitch', 'brainButton', 'brainName', 'brainMenu', 'railTip',
   'addBrainDialog', 'addBrainForm', 'closeAddBrain', 'addBrainName', 'addBrainDescription', 'addBrainScope', 'addBrainError', 'cancelAddBrain', 'saveAddBrain',
   'prioButton', 'prioCount', 'prioView', 'todayButton', 'listButton', 'boardButton', 'timelineButton', 'docsButton', 'archivesButton', 'toolsButton', 'gitButton', 'settingsButton',

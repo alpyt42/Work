@@ -19,7 +19,7 @@ from .tools import run_tool, tool_catalog
 from .brains import brain_boundary, brain_label, create_brain, discover_brains, validate_new_brain
 from .settings import SETTINGS_VALUE_LIMIT, settings_apply, settings_snapshot
 from .update import UPDATE_VERSION_RE, UpdateState, update_apply
-from .git_sync import GIT_LOCK, GIT_VERSION_RE, git_changes, git_fetch_overview, git_overview, git_pull, git_save_and_send
+from .git_sync import GIT_VERSION_RE, git_changes, git_fetch_overview, git_overview, git_pull, git_save_and_send, git_write_lock
 from .priorities import read_priorities
 from .store import Store
 
@@ -264,7 +264,9 @@ class Handler(BaseHTTPRequestHandler):
         """`POST /api/git/save` (save the notes of one brain and send them), `POST /api/git/send` (send what is already saved) and
         `POST /api/git/pull` (bring the online copy's new commits here, fast-forward only).
 
-        The brain is named in the address and required; the body carries the `version` of the card the person confirmed.
+        The brain is named in the address and required; the body carries the `version` of the card the person confirmed. A check of
+        the online copy running meanwhile is waited for (git_write_lock); the pull and the staging of a save also hold off the page's
+        own edits and tools (page_writes_held: GIT_LOCK, then WRITE_LOCK, then TOOL_LOCK).
         """
         if not self._write_allowed():
             return
@@ -276,15 +278,11 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(payload, dict) or set(payload) != {"version"} or not isinstance(payload["version"], str) or not GIT_VERSION_RE.fullmatch(payload["version"]):
                 raise TaskError(HTTPStatus.BAD_REQUEST, "Invalid request.")
             name, brain = self.server.git_brain(self._brain_name(required=True))
-            if not GIT_LOCK.acquire(blocking=False):
-                raise TaskError(HTTPStatus.CONFLICT, "Another save is already running.")
-            try:
+            with git_write_lock():
                 if path == "/api/git/pull":
                     result = git_pull(name, brain, payload["version"])
                 else:
                     result = git_save_and_send(name, brain, payload["version"], push_only=path == "/api/git/send")
-            finally:
-                GIT_LOCK.release()
             self._json(HTTPStatus.OK, result)
         except TaskError as error:
             self._json(error.status, {"error": error.message})
@@ -295,7 +293,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _git_fetch_request(self) -> None:
         """`POST /api/git/fetch` with `{}` or `{"force": true}` and an optional `?brain=`: check the online copy of every brain (or of one),
-        at most once per 5 minutes each unless forced, never while a save or a pull runs. A failed check is recorded, not an error."""
+        at most once per 5 minutes each unless forced, never while a save, a send or a pull runs or waits (that brain is skipped, never
+        waited for). A failed check is recorded, not an error."""
         if not self._write_allowed():
             return
         try:
@@ -433,6 +432,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("Content-Type", "").split(";", 1)[0] != "application/json" or self.headers.get("Content-Length") != "2" or self.rfile.read(2) != b"{}":
             self._json(HTTPStatus.BAD_REQUEST, {"error": "Invalid shutdown request."})
             return
+        # The native window (window.py) closes on a closed port at once only after this marker: a restart writes none.
+        marker = self.server.work / "agents" / "tasks-web.quit"
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(f"{time.time()}\n", encoding="utf-8")
+        except OSError:
+            pass
         self._json(HTTPStatus.OK, {"stopping": True})
         threading.Thread(target=self.server.shutdown, daemon=True).start()
 

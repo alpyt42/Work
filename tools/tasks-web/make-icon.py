@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["pillow>=10"]
+# dependencies = ["pillow==13.0.0"]
 # ///
 """Write the Corvus icon files into tools/tasks-web/static/.
 

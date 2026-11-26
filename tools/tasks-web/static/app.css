@@ -818,6 +818,9 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 @media (max-width: 900px) {  /* the sidebar is a drawer: the view takes the whole width */
   .app.has-panel .panel, .app.has-panel:not(.sidebar-collapsed) .panel, .app.has-panel.sidebar-collapsed .panel { left: 0; width: auto; }
 }
+/* Laid out between the sidebar and the edge (width auto), the panel has no width of its own to drag: no handle. */
+@media (max-width: 1243px) { .app:not(.sidebar-collapsed) .panel-resizer { display: none; } }
+@media (max-width: 1027px) { .app.sidebar-collapsed .panel-resizer { display: none; } }
 .panel-form { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
 .panel-head { flex: none; display: flex; align-items: flex-start; gap: 8px; padding: 14px 14px 10px 20px; border-bottom: 1px solid var(--line-soft); }
 .panel-heading { flex: 1 1 auto; min-width: 0; }
@@ -1646,11 +1649,10 @@ html, body { overscroll-behavior-x: none; }
 /* While the card peeks, the view that its projects open: the hovered one (app/shell.js). Pinned, the view header names it already. */
 .card-view { display: none; }
 @media (min-width: 901px) {
-  .mac-window .card-view {
+  .mac-window .app.sidebar-peek .card-view:not(:empty) {
     display: flex; align-items: center; gap: 8px; margin: 12px 8px 0; font-size: var(--fs-sm); font-weight: 600; color: var(--accent-strong);
   }
   .mac-window .card-view svg { width: 16px; height: 16px; }
-  .mac-window .card-view:empty, .mac-window .app:not(.sidebar-peek) .card-view { display: none; } /* pinned, the header already names the view */
 }
 @media (min-width: 901px) {
   /* While the card peeks, the highlight follows the pointer: the hovered view (app/shell.js marks it) looks chosen, the current one

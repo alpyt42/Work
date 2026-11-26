@@ -44,7 +44,7 @@ function renderSyncPullButton() {
   ids.syncPullButton.hidden = !show;
   if (!show) return;
   const busy = gitBusy.has(card.name);
-  ids.syncPullButtonLabel.textContent = busy ? 'Pulling…' : `Pull ${gitPullPlural(card.behind)}`;
+  ids.syncPullButtonLabel.textContent = busy ? 'Syncing…' : `Sync ${gitPullPlural(card.behind)}`;
   ids.syncPullButton.disabled = busy;
   ids.syncPullButton.setAttribute('aria-busy', String(busy));
   ids.syncPullButton.title = `${gitPullPlural(card.behind)} from another computer ${card.behind === 1 ? 'is' : 'are'} waiting online. Click to bring ${card.behind === 1 ? 'it' : 'them'} into ${card.label}.`;
@@ -152,14 +152,14 @@ function gitCardNode(card) {
   if (card.action) {
     const busy = gitBusy.has(card.name);
     const actions = element('div', 'git-actions');
-    const label = {save: 'Save and send', send: 'Send', pull: 'Pull'}[card.action] || 'Send';
-    const verb = {save: 'Saving and sending', send: 'Sending', pull: 'Pulling'}[card.action] || 'Sending';
+    const label = {save: 'Save and send', send: 'Send', pull: 'Sync'}[card.action] || 'Send';
+    const verb = {save: 'Saving and sending', send: 'Sending', pull: 'Syncing'}[card.action] || 'Sending';
     const button = element('button', 'button button-primary', busy ? `${verb}…` : label);
     button.type = 'button';
     button.dataset.focusKey = `go:${card.name}`;
     button.disabled = busy;
     button.setAttribute('aria-busy', String(busy));
-    button.setAttribute('aria-label', busy ? `${verb} ${card.label}` : card.action === 'pull' ? `Pull ${gitPullPlural(card.behind)} into ${card.label}` : `${label} for ${card.label}`);
+    button.setAttribute('aria-label', busy ? `${verb} ${card.label}` : card.action === 'pull' ? `Sync ${gitPullPlural(card.behind)} into ${card.label}` : `${label} for ${card.label}`);
     button.addEventListener('click', () => card.action === 'save' ? askGitSave(card) : runGit(card, card.action === 'pull' ? 'pull' : 'send'));
     actions.append(button);
     section.append(actions);

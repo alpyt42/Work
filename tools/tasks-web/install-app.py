@@ -7,23 +7,27 @@
 
 Run from Work with: uv run tools/tasks-web/install-app.py [--dry-run] [--uninstall]
 Each entry opens Corvus, the local actions app: launch.py starts the local server when needed and opens the page in a
-native window (window.py), else in a Chrome app window, else in the default browser.
+native window (window.py; macOS and Windows), else in a Chrome app window, else in the default browser.
 The absolute path of uv is written into the entry, because desktop launchers get a minimal PATH: run the
 installer again after moving Work or uv. Standard library only.
 
 - macOS: "Corvus.app" in <artifacts>/internal/setup/tasks-dock-app/, with a README.md: a real bundle (bundle id
   local.work.tasks-brain, the icon of static/icon.icns, ad-hoc signed) whose Contents/MacOS/Corvus is a zsh script. It
-  runs `launch.py --prepare-window` (server started, pywebview ready) and execs the Python of window.py with
-  CFProcessPath set to the bundle, so the Dock, Cmd+Tab and the app menu show Corvus and its icon. No AppleScript.
+  checks that uv and launch.py are still there, runs `launch.py --prepare-window` (server started, pywebview ready) and
+  execs the Python of window.py with CFProcessPath set to the bundle (on that exec only: the server and Git never see
+  it), so the Dock, Cmd+Tab and the app menu show Corvus and its icon. No AppleScript. When uv or Work moved, or
+  launch.py stops with an unexpected code, it shows a dialog and writes a line to <Work>/agents/tasks-web.log.
   Once built, the installer runs `window.py --check` so that the first click does not download pywebview (non-fatal).
   Nothing in the artifacts folder is ever overwritten or deleted: when the app is already there the installer refuses,
   and --replace first moves the existing files into <artifacts>/archive/tasks-dock-app-<date>/ (an "Actions Brain.app"
   of an earlier install and its launch.applescript included); --uninstall moves the app it made there too.
 - Windows: "Corvus.lnk" in the Start Menu (%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs), and on the
-  Desktop with --desktop, made by PowerShell (WScript.Shell). Its target is the windowless uvw.exe next to uv.exe
-  when there is one (else uv.exe, in a minimized window) with `run --gui-script <launch.py>`.
+  Desktop with --desktop, made by PowerShell (WScript.Shell). Its target is the windowless uvw.exe next to uv.exe, or
+  next to the file uv.exe links to, when there is one (else uv.exe, in a minimized window) with
+  `run --gui-script <launch.py>`. Then `window.py --check` runs once, as on macOS (non-fatal).
 - Linux: corvus.desktop in $XDG_DATA_HOME/applications (default ~/.local/share), the icon in
-  $XDG_DATA_HOME/icons/hicolor/256x256/apps, then update-desktop-database when it is installed.
+  $XDG_DATA_HOME/icons/hicolor/256x256/apps, then update-desktop-database when it is installed. No pywebview download:
+  Linux has no native window, the page opens in a Chrome app window.
 
 An entry of an earlier install named "Actions Brain" (Windows shortcut, Linux menu entry and its icon) is removed when
 it carries the installer's mark, by an install and by --uninstall.
@@ -180,20 +184,38 @@ def shell_quote(value: str) -> str:
     return "'" + value.replace("'", "'\\''") + "'"
 
 
-def bundle_script(uv: str, launch: Path, window: Path, port: int = launch_tool.PORT) -> str:
+MOVED_DIALOG = (f'display dialog "{APP_NAME} cannot start: uv or Work moved; run install-app.py --replace" '
+                f'with title "{APP_NAME}" buttons {{"OK"}} default button "OK" with icon stop')
+
+
+def bundle_script(uv: str, launch: Path, window: Path, port: int = launch_tool.PORT, log: Path | None = None) -> str:
     """Contents/MacOS/Corvus: prepare the server and the window's Python, then exec it as this very process.
 
-    CFProcessPath makes LaunchServices register the process as the bundle (Dock icon and name, Cmd+Tab, app menu, one
-    instance: opening the bundle again activates it). The script ends silently when the preparation fails: launch.py has
-    then opened the page elsewhere, or shown its own dialog.
+    CFProcessPath, set on the exec only, makes LaunchServices register the process as the bundle (Dock icon and name,
+    Cmd+Tab, app menu, one instance: opening the bundle again activates it); launch.py, the server and Git never see it.
+    When uv or launch.py is gone (uv or Work moved) or launch.py stops with a code other than 0 or 1, a dialog says so
+    and a line goes to `log` (<Work>/agents/tasks-web.log). The script ends silently when launch.py printed no Python
+    (code 1, or 0 without a path): it has then opened the page elsewhere, or shown its own dialog.
     """
+    log = WORK / "agents/tasks-web.log" if log is None else log
     return ("#!/bin/zsh\n"
             f"# {APP_NAME}: {MARKER}.\n"
             "# Starts the local server (launch.py), then becomes the native window (window.py) in this same process.\n"
-            'export CFProcessPath="${0:A}"\n'
-            f"python=$({shell_quote(uv)} run --quiet --script {shell_quote(str(launch))} --prepare-window) || exit 0\n"
-            "[[ -n $python ]] || exit 0\n"
-            f'exec "$python" {shell_quote(str(window))} --port {port}\n')
+            f"uv_bin={shell_quote(uv)}\n"
+            f"launch_py={shell_quote(str(launch))}\n"
+            f"window_py={shell_quote(str(window))}\n"
+            f"log_file={shell_quote(str(log))}\n"
+            "fail() {\n"
+            f'  {{ print -r -- "[{APP_NAME}.app $(/bin/date +%Y-%m-%dT%H:%M:%S)] $1" >> "$log_file"; }} 2>/dev/null\n'
+            f"  /usr/bin/osascript -e {shell_quote(MOVED_DIALOG)} >/dev/null 2>&1\n"
+            "  exit 1\n"
+            "}\n"
+            '[[ -f $uv_bin && -x $uv_bin && -f $launch_py ]] || fail "Cannot start: uv ($uv_bin) or launch.py ($launch_py) is missing."\n'
+            'python=$("$uv_bin" run --quiet --script "$launch_py" --prepare-window)\n'
+            "code=$?\n"
+            '(( code == 0 || code == 1 )) || fail "launch.py --prepare-window stopped with code $code."\n'
+            "[[ $python == /* && -x $python ]] || exit 0\n"
+            f'CFProcessPath="${{0:A}}" exec "$python" "$window_py" --port {port}\n')
 
 
 def info_plist() -> dict:
@@ -415,11 +437,11 @@ def windows_plan(args: argparse.Namespace) -> Plan:
     if not args.dry_run and launch_tool.system_name() != "windows":
         raise InstallError("The Windows shortcut can only be created on Windows (use --dry-run to see it).")
     uv = resolve_uv(args.uv, "windows", args.dry_run)
-    windowless = Path(uv).with_name("uvw.exe")
     if uv == PLACEHOLDER_UV["windows"]:
         target, style = "<uvw.exe next to uv.exe>", 1
     else:
-        target, style = (str(windowless), 1) if windowless.is_file() else (uv, 7)  # 7: minimized, when only uv.exe exists
+        windowless = launch_tool.windowless_uv(uv)  # next to uv.exe, or next to what a WinGet link points to
+        target, style = (str(windowless), 1) if windowless else (uv, 7)  # 7: minimized, when only uv.exe exists
     arguments = f'run --gui-script "{LAUNCH}"'
     plan = Plan(f"{APP_NAME} for Windows")
     for link in windows_links(True, LEGACY_LINK_NAME):
@@ -429,6 +451,7 @@ def windows_plan(args: argparse.Namespace) -> Plan:
         script = powershell_script(link, target, arguments, WORK, STATIC / "icon.ico", style)
         plan.add("shortcut", link, create_link(script, link))
         plan.texts.append((f"PowerShell script for {link} (powershell.exe -NoProfile -NonInteractive -EncodedCommand)", script))
+    plan.add("prewarm", "window.py --check (downloads pywebview once)", prewarm(uv))
     plan.notes.append(f"Target: {target} {arguments}")
     if style == 7:
         plan.notes.append("uvw.exe was not found next to uv.exe: the shortcut runs uv.exe in a minimized window. "

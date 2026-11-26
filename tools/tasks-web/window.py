@@ -1,32 +1,34 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["pywebview>=6"]
+# dependencies = ["pywebview==6.2.1"]
 # ///
 """Corvus's native window: the local actions page (http://127.0.0.1:8765/) in a window of its own.
 
 Run from Work with: uv run --script tools/tasks-web/window.py [--port N]
-launch.py starts it (Windows, Linux) and the macOS bundle execs it with the Python that `--check` reports, after
-launch.py --prepare-window has started the server. The window is a pywebview window: WKWebView on macOS, WebView2 on
-Windows, GTK or Qt on Linux. The window never starts the server and closing it leaves the server running; the page's
-Quit stops the server, and the window follows. An in-page Update restarts the server in place (an exec: same PID), so a
-closed port alone is not a Quit. The window closes when the port has stopped answering three times in a row, one second
-apart, AND the server process is gone (the PID in agents/tasks-web.pid, written by launch.py: the `uv run tasks-web.py`
-process, which survives the restart and exits on Quit). While that PID is alive the window waits, with no limit. With
-no usable pid file (a server started by hand) it closes only after the port stayed closed for 90 s, longer than the
-page's own restart wait.
+launch.py starts it on Windows, and on macOS when no Corvus.app is installed (a run from a terminal); the macOS bundle
+execs it with the Python that `--check` reports, after launch.py --prepare-window has started the server. Linux has no
+native window: uv's isolated environment cannot reach the system's GTK or Qt bindings, so launch.py opens a Chrome app
+window there. The window is a pywebview window: WKWebView on macOS, WebView2 (Edge Chromium) on Windows. It never starts
+the server and closing it leaves the server running; the page's Quit stops the server, and the window follows.
 
+- Quit or restart: an in-page Update restarts the server, so a closed port alone is not a Quit. The server's
+  /api/shutdown writes agents/tasks-web.quit (a time stamp) before it stops. The window closes when the port has failed
+  three checks in a row, one second apart, AND that marker was written after the window started. Otherwise (a restart,
+  a server stopped some other way) it closes only once the port has stayed closed for 90 s, longer than the page's own
+  60 s restart wait, so that a failed restart leaves the page time to show its error.
 - --check imports pywebview, prints the path of this Python on stdout and exits 0 (how launch.py finds the interpreter
   of the script environment, and downloads pywebview the first time).
 - Private mode is off, so the page's localStorage (the view, the filters, the collapsed groups) survives between runs; the
-  store lives in the system's web view data (~/Library/WebKit/<bundle id>/ on macOS).
-- Windows and Linux allow one window: it holds agents/tasks-web-window.lock; a second start touches
-  agents/tasks-web-window.raise, which the open window polls (twice a second) to restore and show itself, then exits.
-  macOS needs none: opening the bundle again activates the running one.
+  store lives in the system's web view data (~/Library/WebKit/<bundle id>/ on macOS, the WebView2 profile on Windows).
+- One window on every system: it holds agents/tasks-web-window.lock; a second start touches agents/tasks-web-window.raise,
+  which the open window polls (twice a second) to come to the front, then exits with 0. Opening the macOS bundle again
+  only activates the running one.
 - agents/tasks-web-window.ready is written once the window is shown, and removed when it closes: launch.py waits for it.
-- When the window cannot be created or started, the error goes to agents/tasks-web.log and the page opens through the
-  fallback chain of launch.py (a Chrome app window, else the default browser), unless --no-fallback (launch.py does it
-  itself then); the exit code is 1.
+- When the window cannot be created or started (on Windows, also when the WebView2 runtime is missing), the error goes to
+  agents/tasks-web.log and the page opens through the fallback chain of launch.py (a Chrome app window, else the default
+  browser), unless --no-fallback (launch.py does it itself then); the exit code is 1.
+- Only the macOS page (marked .mac-window) has drag regions, and the web view never opens file:// URLs.
 
 The page's content security policy refuses eval, so nothing here evaluates JavaScript in the page.
 """
@@ -51,17 +53,18 @@ PORT = 8765
 HOST = "127.0.0.1"
 TITLE = "Corvus"
 APP_ID = "local.work.tasks-brain"  # the bundle id, and the Windows AppUserModelID that groups the taskbar icon
-ICON = HERE / "static/icon.png"  # used by the GTK and Qt backends
 SIZE = (1280, 840)
 MIN_SIZE = (720, 480)
 LOCK_FILE = "tasks-web-window.lock"
 RAISE_FILE = "tasks-web-window.raise"
 READY_FILE = "tasks-web-window.ready"
-GONE_LIMIT = 3  # consecutive failed checks before the window closes
+QUIT_FILE = "tasks-web.quit"  # in agents/: the server's /api/shutdown writes the time of a Quit there before it stops
+GONE_LIMIT = 3  # consecutive failed checks before the window closes after a Quit
 GONE_INTERVAL = 1.0  # seconds between two checks
 RAISE_INTERVAL = 0.5  # seconds between two looks at the raise file
-PID_FILE = "tasks-web.pid"  # in agents/: the server's process (launch.py writes it)
-NO_PID_WAIT = 90.0  # seconds the port may stay closed when there is no pid to ask: longer than the page's restart wait (60 s)
+CLOSED_WAIT = 90.0  # seconds the port may stay closed without a Quit: longer than the page's restart wait (60 s)
+RESTART_AFTER = 20.0  # seconds without a server and without a Quit before the window starts the server again
+DRAG_REGION_SELECTOR = ".mac-window .pywebview-drag-region"  # only the macOS page, under its transparent title bar
 
 
 def page_url(port: int = PORT) -> str:
@@ -72,6 +75,41 @@ def window_url(port: int = PORT, platform: str | None = None) -> str:
     """The page as the window opens it: on macOS with ?shell=mac, so that the page leaves room for the window buttons
     under the transparent title bar (static/window-shell.js) and gives a strip to drag the window by."""
     return page_url(port) + ("?shell=mac" if (platform or sys.platform) == "darwin" else "")
+
+
+def icon_path(platform: str | None = None) -> Path:
+    """The window's icon: .ico on Windows (WinForms' System.Drawing.Icon reads nothing else), the PNG elsewhere."""
+    return HERE / ("static/icon.ico" if (platform or sys.platform) == "win32" else "static/icon.png")
+
+
+def start_options(platform: str | None = None) -> dict:
+    """The keyword arguments of webview.start: localStorage kept, the icon, and on Windows the WebView2 renderer."""
+    platform = platform or sys.platform
+    options = {"private_mode": False, "icon": str(icon_path(platform))}
+    if platform == "win32":
+        options["gui"] = "edgechromium"
+    return options
+
+
+def configure(settings) -> None:
+    """pywebview's settings for this page (`settings` is webview.settings, which only accepts its own keys)."""
+    # The page marks the empty parts of its bar .pywebview-drag-region on every system, and pywebview's drag script also
+    # runs in framed windows: only the macOS page, whose title bar is transparent, is draggable from the page. Only a
+    # press on such a part itself moves the window, not one on a button, the search or the title's links inside it.
+    settings["DRAG_REGION_SELECTOR"] = DRAG_REGION_SELECTOR
+    settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
+    settings["ALLOW_FILE_URLS"] = False  # a file dropped on the window must not open as a page
+
+
+def check_renderer(initialize: Callable[[str], object]) -> None:
+    """Windows: make sure pywebview uses WebView2. `initialize` is webview.guilib.initialize.
+
+    Without the WebView2 runtime, pywebview 6.2.1 falls back to MSHTML (Internet Explorer) even with gui="edgechromium",
+    and this page would be blank there: raising sends it to the fallback chain instead.
+    """
+    renderer = getattr(initialize("edgechromium"), "renderer", None)
+    if renderer != "edgechromium":
+        raise RuntimeError(f"the WebView2 runtime is missing (pywebview would use {renderer or 'no renderer'})")
 
 
 def blend_title_bar(native) -> None:
@@ -119,68 +157,49 @@ def port_open(port: int = PORT, host: str = HOST, timeout: float = 0.5) -> bool:
             return False
 
 
-def pid_alive(pid: int) -> bool:
-    """True when a process with this PID exists (POSIX: signal 0; Windows: its exit code is still STILL_ACTIVE)."""
-    if os.name == "nt":
-        import ctypes
-
-        kernel = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-        if not handle:
-            return False
-        try:
-            code = ctypes.c_ulong()
-            return bool(kernel.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259  # STILL_ACTIVE
-        finally:
-            kernel.CloseHandle(handle)
+def quit_since(path: Path, since: float) -> bool:
+    """True when the server's quit marker was written at `since` (a time.time()) or later: a Quit, not a restart."""
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # it exists, under another user
+        try:
+            stamp = float(path.read_text(encoding="utf-8").split()[0])
+        except (ValueError, IndexError):  # not a time stamp: when the file was written
+            stamp = path.stat().st_mtime
     except OSError:
         return False
-    return True
-
-
-def server_alive(pid_file: Path, alive: Callable[[int], bool] = pid_alive) -> bool | None:
-    """Whether the server process is alive according to its pid file; None when the file is missing or unusable."""
-    try:
-        pid = int(pid_file.read_text(encoding="utf-8").split()[0])
-    except (OSError, ValueError, IndexError):
-        return None
-    return alive(pid) if pid > 0 else None
+    return stamp >= since
 
 
 def watch_port(on_gone: Callable[[], None], check: Callable[[], bool] = port_open, stop: threading.Event | None = None,
-               interval: float = GONE_INTERVAL, limit: int = GONE_LIMIT, process: Callable[[], bool | None] = lambda: False,
-               no_pid_wait: float = NO_PID_WAIT, clock: Callable[[], float] = time.monotonic) -> bool:
-    """Call `on_gone` once the server is gone; True when it did.
+               interval: float = GONE_INTERVAL, limit: int = GONE_LIMIT, quit_requested: Callable[[], bool] = lambda: False,
+               closed_wait: float = CLOSED_WAIT, clock: Callable[[], float] = time.monotonic,
+               on_quiet: Callable[[], None] | None = None, restart_after: float = RESTART_AFTER) -> bool:
+    """Call `on_gone` once the server is gone for good; True when it did.
 
-    Gone means `check` failed `limit` times in a row, `interval` seconds apart, and `process()` says the server process
-    is dead (False). While it is alive (True, a restart in progress) the wait has no limit. With None (no pid to ask) the
-    port must stay closed for `no_pid_wait` seconds. A successful check resets everything. Returns False when `stop`
-    is set first (the window closed by itself).
+    Gone means `check` failed `limit` times in a row, `interval` seconds apart, and either `quit_requested()` (the page's
+    Quit) or the port stayed closed for `closed_wait` seconds (a restart that never came back). Without a Quit, once the
+    port has been closed for `restart_after` seconds, `on_quiet` is called once for that outage: the window starts the
+    server again, so a server that stopped on its own does not leave the window without one (a click on the app icon
+    only brings the open window forward). A successful check resets everything. Returns False when `stop` is set first
+    (the window closed by itself).
     """
     stop = stop or threading.Event()
-    failures, closed_since = 0, None
+    failures, closed_since, restarted = 0, None, False
     while not stop.wait(interval):
         if check():
-            failures, closed_since = 0, None
+            failures, closed_since, restarted = 0, None, False
             continue
         failures += 1
         closed_since = clock() if closed_since is None else closed_since
-        if failures < limit:
-            continue
-        state = process()
-        if state is False or (state is None and clock() - closed_since >= no_pid_wait):
+        if failures >= limit and (quit_requested() or clock() - closed_since >= closed_wait):
             on_gone()
             return True
+        if on_quiet is not None and not restarted and clock() - closed_since >= restart_after and not quit_requested():
+            restarted = True
+            on_quiet()
     return False
 
 
-# --- one window (Windows and Linux)
+# --- one window
 
 class InstanceLock:
     """An exclusive lock on a file of agents/ that the system drops when the process ends, however it ends."""
@@ -237,9 +256,7 @@ def take_raise_request(path: Path) -> bool:
     """True, and the request is consumed, when a second start asked for the window."""
     try:
         path.unlink()
-    except FileNotFoundError:
-        return False
-    except OSError:
+    except OSError:  # FileNotFoundError included: no request
         return False
     return True
 
@@ -250,6 +267,18 @@ def watch_raise(path: Path, on_raise: Callable[[], None], stop: threading.Event 
     while not stop.wait(interval):
         if take_raise_request(path):
             on_raise()
+
+
+def raise_window(window, minimized: bool, platform: str | None = None) -> None:
+    """Bring the open window to the front: restore it only when it is minimized (a restore also leaves a maximized
+    window), then show it. Windows does not let a background process take the focus, so the window is also put on top
+    for a moment."""
+    if minimized:
+        window.restore()
+    window.show()
+    if (platform or sys.platform) == "win32":
+        window.on_top = True
+        window.on_top = False
 
 
 # --- the window
@@ -266,25 +295,47 @@ def set_app_id() -> None:
         pass
 
 
+def launch_module():
+    """launch.py (standard library only), loaded from its file: the fallback opener and the server's start live there."""
+    spec = importlib.util.spec_from_file_location("tasks_launch", HERE / "launch.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def fall_back(port: int) -> None:
     """The fallback opener of launch.py (a Chrome app window, else the default browser)."""
     try:
-        spec = importlib.util.spec_from_file_location("tasks_launch", HERE / "launch.py")
-        assert spec and spec.loader
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = launch_module()
         module.open_fallback(module.page_url(port), WORK)
     except Exception as error:  # noqa: BLE001 - the original error is already logged
         log(f"The fallback could not open the page either: {error}")
+
+
+def restart_server(port: int, agents: Path, reload: Callable[[], None]) -> None:
+    """Start the server again after it stopped without a Quit, then reload the page; never raises."""
+    try:
+        log("The server stopped without a Quit: starting it again.", agents)
+        launch_module().ensure_server(port, WORK)
+        reload()
+    except Exception as error:  # noqa: BLE001 - the window then waits, and closes after CLOSED_WAIT
+        log(f"Could not start the server again: {error}", agents)
 
 
 def run_window(port: int, agents: Path) -> None:
     """Create the window and block until it closes. Raises when pywebview cannot show it."""
     import webview  # imported here: --check and the helpers above need no GUI
 
+    started = time.time()  # a quit marker older than this is from an earlier window
     set_app_id()
+    if sys.platform == "win32":
+        from webview import guilib
+
+        check_renderer(guilib.initialize)
     stop = threading.Event()
     ready = agents / READY_FILE
+    minimized = threading.Event()
     window = webview.create_window(TITLE, window_url(port), width=SIZE[0], height=SIZE[1], min_size=MIN_SIZE)
 
     def blend() -> None:
@@ -296,13 +347,12 @@ def run_window(port: int, agents: Path) -> None:
             log(f"Could not blend the title bar: {error}", agents)
 
     def destroy() -> None:
-        log("The server is gone: closing the window.", agents)
+        log("The server quit: closing the window.", agents)
         window.destroy()
 
     def bring_forward() -> None:
         try:
-            window.restore()
-            window.show()
+            raise_window(window, minimized.is_set())
         except Exception as error:  # noqa: BLE001 - a window being closed
             log(f"Could not raise the window: {error}", agents)
 
@@ -311,18 +361,19 @@ def run_window(port: int, agents: Path) -> None:
 
     def background() -> None:
         threading.Thread(target=watch_port, args=(destroy, lambda: port_open(port), stop),
-                         kwargs={"process": lambda: server_alive(agents / PID_FILE)}, daemon=True).start()
-        if sys.platform != "darwin":
-            threading.Thread(target=watch_raise, args=(agents / RAISE_FILE, bring_forward, stop), daemon=True).start()
+                         kwargs={"quit_requested": lambda: quit_since(agents / QUIT_FILE, started),
+                                 "on_quiet": lambda: restart_server(port, agents, lambda: window.load_url(window_url(port)))},
+                         daemon=True).start()
+        threading.Thread(target=watch_raise, args=(agents / RAISE_FILE, bring_forward, stop), daemon=True).start()
 
     window.events.shown += shown
-    # The page marks the empty parts of its bar .pywebview-drag-region: only a press on such a part itself moves the window,
-    # not one on a button, the search or the title's links inside it.
-    webview.settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
+    window.events.minimized += minimized.set
+    window.events.restored += minimized.clear
+    configure(webview.settings)
     if sys.platform == "darwin":
         window.events.before_show += blend
     try:
-        webview.start(background, private_mode=False, icon=str(ICON))
+        webview.start(background, **start_options())
     finally:
         stop.set()
         ready.unlink(missing_ok=True)
@@ -339,12 +390,10 @@ def main(argv: list[str] | None = None) -> int:
 
         print(sys.executable)
         return 0
-    lock = None
-    if sys.platform != "darwin":
-        lock = InstanceLock(AGENTS / LOCK_FILE)
-        if not lock.acquire():
-            request_raise(AGENTS / RAISE_FILE)
-            return 0
+    lock = InstanceLock(AGENTS / LOCK_FILE)
+    if not lock.acquire():
+        request_raise(AGENTS / RAISE_FILE)
+        return 0
     try:
         run_window(args.port, AGENTS)
     except Exception as error:  # noqa: BLE001 - whatever stops the window, the page must still open
@@ -353,8 +402,7 @@ def main(argv: list[str] | None = None) -> int:
             fall_back(args.port)
         return 1
     finally:
-        if lock is not None:
-            lock.release()
+        lock.release()
     return 0
 
 
