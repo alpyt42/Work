@@ -63,7 +63,7 @@ uv run tools/machine/work.py update --check   # is a newer release available, an
 uv run tools/machine/work.py update --apply --to vX.Y.Z   # fast-forward to that release, then run update.sh
 ```
 
-The Update button of the Actions app does the same. The shared conventions, guides, templates, and tools follow; your brains, your configuration, and your local files are not touched. An update is blocked, with its reasons, by local commits, by modified files the release also changes, by a new major version, by a detached HEAD or by a missing upstream.
+The Update button of Corvus does the same. The shared conventions, guides, templates, and tools follow; your brains, your configuration, and your local files are not touched. An update is blocked, with its reasons, by local commits, by modified files the release also changes, by a new major version, by a detached HEAD or by a missing upstream.
 
 ## Move local-paths.json out of Git
 

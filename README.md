@@ -17,9 +17,9 @@
 - Loading whole project files fills the agent's context window.
 - With several clients on one machine, one client's data can end up in another's repository.
 
-Work is a portable `Work/` workspace that fixes this. Memory lives in private Markdown repositories called brains, one per trust boundary. Agents read them through small commands that return only the part a question needs. Git hooks keep the boundaries intact. A local app lets you read and edit the same files without an agent. The repository holds the tools, the shared conventions and the checks. It holds no client data.
+Work is a portable `Work/` workspace that fixes this. Memory lives in private Markdown repositories called brains, one per trust boundary. Agents read them through small commands that return only the part a question needs. Git hooks keep the boundaries intact. A local app, Corvus, lets you read and edit the same files without an agent. The repository holds the tools, the shared conventions and the checks. It holds no client data.
 
-![The Actions app: Today view](docs/images/tasks-web-today.png)
+![Corvus, the local app: the Today view](docs/images/tasks-web-today.png)
 
 ## Features
 
@@ -27,13 +27,13 @@ Work is a portable `Work/` workspace that fixes this. Memory lives in private Ma
 - **Context on demand.** `brain-state.py` loads output, not files: `brief` for where a project stands, `find` for a term or an identifier, `section` for one heading of a page, `person` for someone and what they carry, `due` for late and upcoming actions, `changes` for what moved since a date. Agents never read a register or a project page whole.
 - **Action and decision registers.** `action.py` and `decision.py` write the registers, with length caps (35 words for a history entry, 40 for a timeline entry, 70 for a decision field). A commitment becomes an action only when four tests hold; otherwise it stays in the minutes or message where it was said.
 - **Project archiving.** `brain-state.py archive` moves a finished mission, project or client into an `archive/` folder, rewrites the links, and refuses while an action is still open. An archived project leaves every command and every view. `unarchive` is the exact inverse.
-- **A local Actions app.** `tasks-web.py` serves a browser interface on `127.0.0.1` with the views Today, Actions, Board, Timeline, Docs, Archives, Tools, Sync, Settings, and one search across actions and documents. A selector switches between brains. Sync saves and sends a brain's changed notes through its own Git hooks. It installs as an app on macOS, Windows and Linux (`install-app.py`).
+- **Corvus, a local app.** `tasks-web.py` serves the views Today, Priorities, Actions, Board, Timeline, Docs, Archives, Tools, Sync and Settings on `127.0.0.1`, with one search across actions and documents. A selector switches between brains. Sync saves and sends a brain's changed notes through its own Git hooks, and brings in the changes made on another computer as a fast-forward only. `install-app.py` installs it as an app on macOS, Windows and Linux, in a window of its own.
 - **Guardrails.** Git hooks refuse staged secrets, the names of clients and people known to the other brains, malformed commit messages, dead or cross-brain links, and pushes with the wrong identity, a force push or a remote branch deletion. A Claude Code hook refuses direct `python`, deletions in the artifacts folder, hook bypasses and writes into an `artifacts/` folder not yet linked to the configured one. `preflight-push.py` runs before every push.
 - **Obsidian compatible.** Open `Work/` as the vault. Each brain's `tasks.md` shows the registers as Tasks queries and a kanban, with a form to add an action.
 - **Releases.** Every push to `main` is tested on Linux and released automatically from its Conventional Commits. Machines update to a release only, never to the tip of `main`, and an update never touches the brains.
 
 
-![The sidebar collapsed to its icons, in dark mode](docs/images/tasks-web-rail-dark.png)
+![Corvus in dark mode: the project card shown over the page from the Timeline icon](docs/images/tasks-web-rail-dark.png)
 
 ## How it works
 
@@ -66,10 +66,10 @@ Without `--brain`, a blank brain is created locally from `kit/brain/seed/`. The 
 ## Documentation
 
 - [Setup and maintenance](docs/SETUP.md): layout, new machine (Windows included), another computer, updates, checks.
-- [Brains, skills and tools](docs/BRAINS.md): trust boundaries, skills, repositories, Obsidian, the Actions app.
+- [Brains, skills and tools](docs/BRAINS.md): trust boundaries, skills, repositories, Obsidian, the Corvus app.
 - [`tools/README.md`](tools/README.md): index of every command.
 - [`tools/machine/README.md`](tools/machine/README.md): install, update, hooks and releases.
 - [`tools/machine/GIT-IDENTITY.md`](tools/machine/GIT-IDENTITY.md): Git author and SSH key per trust boundary.
-- [`tools/tasks-web/README.md`](tools/tasks-web/README.md): the Actions app.
+- [`tools/tasks-web/README.md`](tools/tasks-web/README.md): Corvus, the local app.
 - [`kit/brain/AGENTS.md`](kit/brain/AGENTS.md) and [`kit/brain/docs/README.md`](kit/brain/docs/README.md): brain conventions and guides.
 - [`kit/obsidian/README.md`](kit/obsidian/README.md): Obsidian setup.
