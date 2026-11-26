@@ -1,6 +1,6 @@
-# Actions app
+# Corvus
 
-A local browser app that reads and edits the action registers and the notes of your brains, without an agent. It runs on your own computer only (`127.0.0.1`), stores no copy of your data and loads no network resource: no CDN, nothing fetched from the Internet. Back to the [root README](../../README.md).
+Corvus, a local app (a native window, or a browser tab) that reads and edits the action registers and the notes of your brains, without an agent. It runs on your own computer only (`127.0.0.1`), stores no copy of your data and loads no network resource: no CDN, nothing fetched from the Internet. Back to the [root README](../../README.md).
 
 ![Today view](../../docs/images/tasks-web-today.png)
 
@@ -14,7 +14,7 @@ uv run tools/tasks-web/tasks-web.py
 
 Then open `http://127.0.0.1:8765/` (`--port N` to choose another port, `Ctrl+C` to stop). `uv run` installs the one dependency on its own. `--brain <folder>` picks the default brain and `WORK_DIR` another Work root.
 
-To start it from the Dock, the Start Menu or the applications menu instead, run `uv run tools/tasks-web/install-app.py` once: it adds an **Actions Brain** entry that starts the server when needed and opens the page (see [Install the app](REFERENCE.md#install-the-app)).
+To start it from the Dock, the Start Menu or the applications menu instead, run `uv run tools/tasks-web/install-app.py` once: it adds a **Corvus** entry that starts the server when needed and opens the page in a native window of its own, else in a Chrome app window or the browser (see [Install the app](REFERENCE.md#install-the-app)).
 
 ## Tour
 
@@ -68,7 +68,7 @@ The `[` key folds the sidebar to a rail of icons, each named in a tooltip. The p
 
 ### Update
 
-When a new release of Work exists, an **Update** button appears in the sidebar. The dialog shows the release notes and, once confirmed, a step bar through the install. Archives, Tools, Sync (save and send a brain's changes) and Settings sit below it; see the reference.
+When a new release of Work exists, an **Update** button appears in the sidebar. The dialog shows the release notes and, once confirmed, a step bar through the install. Archives, Tools, Sync (save and send a brain's changes, check its online copy and pull what others sent) and Settings sit below it; see the reference.
 
 ![The Update dialog with its step bar](../../docs/images/tasks-web-update.png)
 

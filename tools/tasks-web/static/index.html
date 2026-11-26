@@ -7,8 +7,9 @@
   <meta name="theme-color" content="#F7F8FA" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#15181D" media="(prefers-color-scheme: dark)">
   <meta name="csrf-token" content="__CSRF_TOKEN__">
-  <title>Actions</title>
+  <title>Corvus</title>
   <link rel="stylesheet" href="/app.css">
+  <script src="/window-shell.js"></script>
   <script src="/md-edit.js" defer></script>
   <script src="/timeline-view.js" defer></script>
   <script src="/brain-swipe.js" defer></script>
@@ -32,7 +33,7 @@
 <body>
   <a class="skip-link" href="#mainContent">Skip to content</a>
   <div id="app" class="app">
-    <aside id="sidebar" class="sidebar" aria-label="Navigation">
+    <aside id="sidebar" class="sidebar pywebview-drag-region" aria-label="Navigation">
       <div class="sidebar-top">
         <div id="brainSwitch" class="brain-switch">
           <button id="brainButton" class="brain-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="brainMenu">
@@ -75,6 +76,7 @@
           </button>
         </nav>
         <section class="projects" aria-labelledby="projectsHeading">
+          <p id="cardView" class="card-view" aria-live="polite"></p>
           <h2 id="projectsHeading" class="sidebar-heading">Projects</h2>
           <ul id="projectNav" class="project-nav"></ul>
         </section>
@@ -83,6 +85,10 @@
         <button id="updateButton" class="update-button" type="button" hidden>
           <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4"/><path d="M12 16V8"/></svg>
           <span id="updateButtonLabel">Update</span>
+        </button>
+        <button id="syncPullButton" class="update-button" type="button" hidden>
+          <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
+          <span id="syncPullButtonLabel">Pull changes</span>
         </button>
         <nav class="nav footer-list" aria-label="Archives, tools, sync and settings">
           <button id="archivesButton" class="nav-item" type="button" data-view="archives" title="The archived clients, missions and projects, read-only; unarchive one to work on it again.">
@@ -93,7 +99,7 @@
             <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>
             <span class="nav-label">Tools</span>
           </button>
-          <button id="gitButton" class="nav-item" type="button" data-view="git" title="Save the changes of each brain and send them to its online copy. Nothing is saved or sent until you click.">
+          <button id="gitButton" class="nav-item" type="button" data-view="git" title="Save the changes of each brain and send them to its online copy, or bring here what others sent. The online copies are checked from time to time. Nothing is saved or sent until you click.">
             <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="m21 8-4-4-4 4"/><path d="M17 4v16"/></svg>
             <span class="nav-label">Sync</span><span id="gitCount" class="nav-count"></span>
           </button>
@@ -113,22 +119,23 @@
               <button id="undoButton" class="menu-item" type="button" role="menuitem" aria-disabled="true"><span id="undoLabel" class="menu-item-text">Nothing to undo</span><kbd class="menu-kbd">⌘Z</kbd></button>
               <button id="shortcutsButton" class="menu-item" type="button" role="menuitem"><span class="menu-item-text">Keyboard shortcuts</span><kbd class="menu-kbd">?</kbd></button>
               <div class="menu-separator" role="separator"></div>
-              <button id="quitButton" class="menu-item menu-item-danger" type="button" role="menuitem">Quit Actions Brain…</button>
+              <button id="quitButton" class="menu-item menu-item-danger" type="button" role="menuitem">Quit Corvus…</button>
             </div>
           </div>
         </div>
       </div>
+      <div id="sidebarResizer" class="resizer sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize the sidebar" title="Drag to resize, double-click to reset" tabindex="0"></div>
     </aside>
     <div id="scrim" class="scrim" hidden></div>
     <div id="railTip" class="rail-tip" aria-hidden="true" hidden></div>
     <main id="mainContent" class="main" tabindex="-1">
-      <header class="view-header">
-        <div class="view-bar">
+      <header class="view-header pywebview-drag-region">
+        <div class="view-bar pywebview-drag-region">
           <button id="sidebarToggle" class="icon-button sidebar-toggle" type="button" aria-controls="sidebar" aria-expanded="true" aria-label="Collapse the sidebar" title="Collapse the sidebar ([)">
             <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
             <span id="brainMini" class="brain-mini" aria-hidden="true"></span>
           </button>
-          <div class="view-heading">
+          <div class="view-heading pywebview-drag-region">
             <h1 id="viewTitle">Today</h1>
             <span id="syncInfo" class="info info-title" hidden>
               <button id="syncInfoButton" class="info-button" type="button" aria-label="About Sync" aria-describedby="syncInfoTip"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></button>
@@ -274,11 +281,16 @@
         </div>
         <div id="settingsView" class="settings-view" aria-label="Settings" hidden></div>
         <div id="gitView" class="git-view" aria-label="Save and send" hidden>
+          <div class="git-toolbar">
+            <button id="gitCheckButton" class="button" type="button" title="Ask the online copies whether they have newer changes">Check online</button>
+            <span id="gitCheckInfo" class="git-last" role="status" aria-live="polite"></span>
+          </div>
           <div id="gitCards" class="git-cards"></div>
         </div>
       </div>
     </main>
     <aside id="editor" class="panel" role="dialog" aria-modal="false" aria-labelledby="editorTitle" hidden>
+      <div id="panelResizer" class="resizer panel-resizer" role="separator" aria-orientation="vertical" aria-label="Resize the panel" title="Drag to resize, double-click to reset" tabindex="0"></div>
       <form id="editorForm" class="panel-form" novalidate>
         <div class="panel-head">
           <div class="panel-heading">
@@ -451,8 +463,8 @@
   </dialog>
   <dialog id="quitDialog" class="dialog dialog-small" aria-labelledby="quitHeading" aria-describedby="quitText">
     <form method="dialog">
-      <h2 id="quitHeading">Quit Actions Brain?</h2>
-      <p id="quitText" class="dialog-intro">The local server stops. The page will not respond until you open it again from the Dock.</p>
+      <h2 id="quitHeading">Quit Corvus?</h2>
+      <p id="quitText" class="dialog-intro">The local server stops. The page will not respond until you open Corvus again.</p>
       <div class="dialog-actions"><button class="button" type="submit" value="cancel" autofocus>Stay</button><button id="quitConfirm" class="button button-danger-solid" type="button">Quit</button></div>
     </form>
   </dialog>

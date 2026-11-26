@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Build the macOS "Actions Brain" app (no Dock change here). Kept as a shortcut: install-app.py does the work, on
+# Build the macOS "Corvus" app (no Dock change here). Kept as a shortcut: install-app.py does the work, on
 # every system; options are passed on (--replace, --dry-run, --artifacts-dir DIR, --uv PATH).
 set -euo pipefail
 

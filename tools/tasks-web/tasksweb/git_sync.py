@@ -1,8 +1,10 @@
 """Git: save and send the changes of a brain (the Sync view).
 
 The Sync view works on the brains found in Work, never on Work itself and never on a path or a repository
-chosen by the page. Reading never touches the network. Saving is one confirmed `git add -A`, `git commit` and
-`git push` of one brain, with every Git hook running, no terminal to ask anything on and a time limit.
+chosen by the page. Listing never touches the network. Saving is one confirmed `git add -A`, `git commit` and
+`git push` of one brain, with every Git hook running, no terminal to ask anything on and a time limit. The only other
+network calls are a throttled `git fetch` (to learn whether the online copy is ahead) and a fast-forward-only pull
+(`git merge --ff-only` after a fetch): never a merge commit, a rebase or a force.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import shutil
 import signal
 import subprocess
 import threading
+import time
 from datetime import datetime
 from http import HTTPStatus
 from pathlib import Path
@@ -30,6 +33,9 @@ GIT_READ_TIMEOUT = 10
 GIT_ADD_TIMEOUT = 60
 GIT_COMMIT_TIMEOUT = 180
 GIT_PUSH_TIMEOUT = 120
+GIT_FETCH_TIMEOUT = 20
+GIT_PULL_TIMEOUT = 60
+GIT_FETCH_EVERY = 300  # seconds between two real fetches of one brain, unless forced
 GIT_CHANGE_LIMIT = 200  # changed notes listed for one brain (the count stays exact)
 GIT_COMPARE_LIMIT = 300_000  # bytes read on each side of a comparison
 GIT_COMPARE_LINES = 3000  # lines shown by "See changes"
@@ -46,6 +52,7 @@ GIT_STRIPPED_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DI
 # here, and never removed: the pre-push check refuses them).
 GIT_NO_PROMPT_ENV = ("SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "GIT_ASKPASS", "DISPLAY")
 GIT_LOCK = threading.Lock()
+GIT_FETCH_STATE: dict[str, dict] = {}  # brain folder -> {"mono": monotonic time of the last attempt, "at": ISO time, "error": short reason or ""}
 GIT_VERSION_RE = re.compile(r"^[0-9a-f]{32}$")
 GIT_REMOTE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 GIT_BRANCH_REF_RE = re.compile(r"^refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]*$")
@@ -60,6 +67,9 @@ GIT_MESSAGES = {
     "clean": "Everything is saved and sent.",
     "unsent": "Saved on this computer, not sent yet.",
     "behind": "This brain was changed on another computer. Ask your agent to bring those changes here before saving.",
+    "pullable": "{count} on another computer, not here yet.",
+    "pull_first": "This brain was changed on another computer. Pull those changes here before saving.",
+    "pullable_local": " Your unsaved notes stay as they are.",
 }
 GIT_CHANGED_NOTES = "{count} {notes} changed since the last save."
 GIT_STALE = "These notes changed since you last looked. Check the list and try again."
@@ -424,6 +434,16 @@ def git_last_saved(brain: Path) -> str | None:
     return datetime.fromtimestamp(int(stamp), ZoneInfo("Europe/Paris")).isoformat(timespec="seconds") if stamp.isdigit() else None
 
 
+def plural_changes(count: int) -> str:
+    return f"{count} change is" if count == 1 else f"{count} changes are"
+
+
+def git_fetch_info(brain: Path) -> dict:
+    """When the online copy was last checked from this page and what went wrong, from memory (no network)."""
+    state = GIT_FETCH_STATE.get(str(brain))
+    return {"fetched_at": state["at"] if state else None, "fetch_error": state["error"] if state else ""}
+
+
 def git_inspect(name: str, brain: Path) -> tuple[dict, tuple[str, str] | None, list[dict]]:
     """The card of a brain: where things stand in one sentence, the changed notes, and what the button does.
 
@@ -431,7 +451,8 @@ def git_inspect(name: str, brain: Path) -> tuple[dict, tuple[str, str] | None, l
     online copy is known as of the last fetch only).
     """
     card: dict = {"name": name, "label": brain_label(name), "state": "unavailable", "message": "", "pending": False, "action": None,
-                  "count": 0, "unsent": 0, "changes": [], "more": 0, "last_saved": None, "version": "", "url": "", "web_url": None}
+                  "count": 0, "unsent": 0, "changes": [], "more": 0, "last_saved": None, "version": "", "url": "", "web_url": None,
+                  "behind": 0, "pullable": False, **git_fetch_info(brain)}
 
     def unavailable(reason: str) -> tuple[dict, None, list[dict]]:
         return {**card, "message": GIT_UNAVAILABLE[reason]}, None, []
@@ -470,8 +491,9 @@ def git_inspect(name: str, brain: Path) -> tuple[dict, tuple[str, str] | None, l
     ahead, behind = int(counts.group(1)), int(counts.group(2))
     card["unsent"] = ahead
     if behind:
-        card["state"] = "behind"
-        card["message"] = GIT_MESSAGES["behind"]
+        card.update(state="behind", behind=behind, message=GIT_MESSAGES["behind"])
+        if not ahead:  # nothing of ours to merge: the online copy can simply be brought here
+            card.update(pullable=True, action="pull", message=GIT_MESSAGES["pullable"].format(count=plural_changes(behind)) + (GIT_MESSAGES["pullable_local"] if files else ""))
     elif files:
         card.update(state="changes", action="save", message=GIT_CHANGED_NOTES.format(count=len(files), notes="note" if len(files) == 1 else "notes"))
     elif ahead:
@@ -718,7 +740,7 @@ def git_save_and_send(name: str, brain: Path, version: str, push_only: bool) -> 
     """
     card, target, _ = git_inspect(name, brain)
     if card["state"] in ("unavailable", "behind") or target is None:
-        raise TaskError(HTTPStatus.CONFLICT, card["message"])
+        raise TaskError(HTTPStatus.CONFLICT, GIT_MESSAGES["pull_first"] if card["pullable"] else card["message"])
     if card["version"] != version:
         raise TaskError(HTTPStatus.CONFLICT, GIT_STALE)
     if push_only and not card["unsent"]:
@@ -753,3 +775,120 @@ def git_save_and_send(name: str, brain: Path, version: str, push_only: bool) -> 
     if code != 0:
         return git_outcome(False, "send", f"Saved on this computer, but not sent: {git_push_reason(output, code)}.", details, git_card(name, brain), saved=True)
     return git_outcome(True, "done", "Saved and sent.", details, git_card(name, brain), saved=True)
+
+
+def git_fetch_reason(output: str, code: int) -> str:
+    """Why the check of the online copy failed, in a few plain words."""
+    text = output.replace("\r", "")
+    if code == 124:
+        return "the online copy did not answer in time"
+    if code == 127:
+        return "Git could not be started"
+    if re.search(r"Permission denied|Authentication failed|could not read (Username|Password)|terminal prompts disabled|Host key verification failed", text, re.IGNORECASE):
+        return "the online copy refused the connection"
+    if re.search(r"Could not resolve host|Network is unreachable|Connection (timed out|refused|reset)|unable to access|Could not read from remote", text, re.IGNORECASE):
+        return "the online copy could not be reached (check the network)"
+    if re.search(r"does not appear to be a git repository|repository .* not found|No such file or directory|not found", text, re.IGNORECASE):
+        return "the online copy could not be found"
+    if "index.lock" in text or "cannot lock ref" in text:
+        return "another program is using this brain right now"
+    return git_first_line(text) or "the online copy did not answer"
+
+
+def git_fetch_target(brain: Path) -> tuple[str, str] | None:
+    """(remote, branch ref) of the current branch's upstream, or None (not a repository, detached, no upstream)."""
+    if not (brain / ".git").exists():
+        return None
+    try:
+        branch = run_git(brain, "symbolic-ref", "-q", "--short", "HEAD").decode("utf-8", "replace").strip()
+    except TaskError:
+        return None
+    return git_push_target(brain, branch) if branch else None
+
+
+def git_fetch_locked(brain: Path) -> str:
+    """One real `git fetch --prune` of the brain's upstream remote; the caller holds GIT_LOCK. Records the time and the error in memory.
+
+    Returns "fetched", "failed" (offline, refused, timed out: not an error for the page) or "unavailable" (nothing to fetch from).
+    """
+    target = git_fetch_target(brain)
+    if target is None:
+        return "unavailable"
+    started = time.monotonic()
+    code, output = run_git_write(brain, ["fetch", "--quiet", "--prune", "--", target[0]], GIT_FETCH_TIMEOUT)
+    GIT_FETCH_STATE[str(brain)] = {
+        "mono": started, "at": datetime.now(ZoneInfo("Europe/Paris")).isoformat(timespec="seconds"),
+        "error": "" if code == 0 else f"Could not check the online copy: {git_fetch_reason(output, code)}.",
+    }
+    return "fetched" if code == 0 else "failed"
+
+
+def git_fetch(brain: Path, force: bool = False) -> str:
+    """Check the online copy of one brain: "fetched", "failed", "throttled" (checked less than 5 minutes ago), "busy" (a save or a pull
+    is running: skipped, never waited for) or "unavailable"."""
+    state = GIT_FETCH_STATE.get(str(brain))
+    if not force and state and time.monotonic() - state["mono"] < GIT_FETCH_EVERY:
+        return "throttled"
+    if not GIT_LOCK.acquire(blocking=False):
+        return "busy"
+    try:
+        return git_fetch_locked(brain)
+    finally:
+        GIT_LOCK.release()
+
+
+def git_fetch_overview(brains: dict[str, Path], current: str, only: str | None = None, force: bool = False) -> dict:
+    """Fetch every brain (or `only` one), then the cards as `GET /api/git` gives them plus what each check did."""
+    outcomes = {name: git_fetch(path.resolve(), force) for name, path in brains.items() if only in (None, name)}
+    return {**git_overview(brains, current), "fetch": outcomes}
+
+
+def git_pull_reason(output: str, code: int) -> str:
+    """Why a fast-forward was refused, in a few plain words."""
+    text = output.replace("\r", "")
+    if code == 124:
+        return "it did not finish in time"
+    if code == 127:
+        return "Git could not be started"
+    if "index.lock" in text:
+        return "another program is using this brain right now: try again in a moment"
+    clash = re.search(r"(?:local changes to the following files|untracked working tree files) would be overwritten.*?:\n((?:[ \t]+\S.*\n?)+)", text)
+    if clash:
+        names = [posixpath.splitext(posixpath.basename(line.strip()))[0] or line.strip() for line in clash.group(1).splitlines() if line.strip()]
+        shown = ", ".join(f"“{name}”" for name in names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+        return f"your changes to {shown} would be overwritten by the online version. Ask your agent to bring them here"
+    if re.search(r"Not possible to fast-forward|diverging", text):
+        return "this brain and its online copy both have changes the other lacks. Ask your agent to bring them together"
+    return git_first_line(text) or "Git refused it"
+
+
+def git_pull(name: str, brain: Path, version: str) -> dict:
+    """Bring the online copy's new commits here by fast-forward only; the caller holds GIT_LOCK.
+
+    Allowed when the card is `behind` with nothing of its own to send (unsaved notes may stay), never when both sides have commits.
+    The version is checked against the card the person saw, then the online copy is fetched and the fast-forward runs; the brain's
+    hooks run as from a terminal (post-merge). A refusal by Git (unsaved changes it would overwrite) is a 409 and changes nothing.
+    """
+    card, target, _ = git_inspect(name, brain)
+    if card["state"] == "unavailable" or target is None:
+        raise TaskError(HTTPStatus.CONFLICT, card["message"])
+    if card["version"] != version:
+        raise TaskError(HTTPStatus.CONFLICT, GIT_STALE)
+    if card["state"] == "behind" and not card["pullable"]:
+        raise TaskError(HTTPStatus.CONFLICT, card["message"])
+    if card["state"] != "behind":
+        raise TaskError(HTTPStatus.CONFLICT, "Nothing to bring here: this brain is up to date.")
+    outcome = git_fetch_locked(brain)
+    if outcome != "fetched":
+        raise TaskError(HTTPStatus.BAD_GATEWAY, f"Not brought here: {git_fetch_info(brain)['fetch_error'] or 'the online copy could not be checked.'}")
+    fresh = git_inspect(name, brain)[0]
+    if fresh["state"] != "behind" or not fresh["pullable"]:
+        raise TaskError(HTTPStatus.CONFLICT, fresh["message"] if fresh["state"] == "behind" else "Nothing to bring here: this brain is up to date.")
+    before = git_head(brain)
+    code, output = run_git_write(brain, ["merge", "--ff-only", "--no-edit", "@{upstream}"], GIT_PULL_TIMEOUT)
+    if git_head(brain) == before:
+        raise TaskError(HTTPStatus.CONFLICT, f"Not brought here: {git_pull_reason(output, code)}. Nothing was changed.")
+    message = f"Brought {fresh['behind']} {'change' if fresh['behind'] == 1 else 'changes'} here."
+    if code != 0:  # the fast-forward happened and a hook said something afterwards
+        message += f" A check afterwards reported: {git_first_line(output)}."
+    return {**git_outcome(True, "done", message, output, git_card(name, brain)), "pulled": fresh["behind"]}

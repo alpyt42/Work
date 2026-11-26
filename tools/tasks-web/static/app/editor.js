@@ -141,6 +141,15 @@ function sizeTitleField() {
   ids.editorActionTitle.style.height = 'auto';
   ids.editorActionTitle.style.height = `${Math.min(ids.editorActionTitle.scrollHeight + 2, 320)}px`;
 }
+// The title wraps again when its width changes (the panel's handle, the window, the fonts once loaded): its height follows, so that
+// no line is cut. Only a change of width counts, not the height this sets.
+let titleFieldWidth = 0;
+new ResizeObserver(([entry]) => {
+  if (entry.contentRect.width === titleFieldWidth) return;
+  titleFieldWidth = entry.contentRect.width;
+  if (titleFieldWidth) sizeTitleField();
+}).observe(ids.editorActionTitle);
+document.fonts?.ready.then(() => { if (!ids.editor.hidden) sizeTitleField(); });
 function renderStamps(action) {
   if (!action) { ids.editorStamps.hidden = true; ids.editorStamps.replaceChildren(); return; }
   const pairs = [

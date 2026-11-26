@@ -360,3 +360,5 @@ loadBrains({initial: true}).finally(() => {
 showUpdatedToast();
 checkUpdate();
 setInterval(checkUpdate, UPDATE_CHECK_EVERY);
+fetchGitInBackground();
+setInterval(fetchGitInBackground, GIT_FETCH_EVERY);

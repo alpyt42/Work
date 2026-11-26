@@ -5,7 +5,7 @@
 
 const token = document.querySelector('meta[name="csrf-token"]').content;
 const ids = Object.fromEntries([
-  'app', 'sidebar', 'scrim', 'sidebarToggle', 'brainMini', 'sidebarClose', 'mainContent', 'brainSwipe', 'brainSwipeName',
+  'app', 'sidebar', 'sidebarResizer', 'panelResizer', 'scrim', 'sidebarToggle', 'brainMini', 'sidebarClose', 'mainContent', 'brainSwipe', 'brainSwipeName',
   'brainSwitch', 'brainButton', 'brainName', 'brainMenu', 'railTip',
   'addBrainDialog', 'addBrainForm', 'closeAddBrain', 'addBrainName', 'addBrainDescription', 'addBrainScope', 'addBrainError', 'cancelAddBrain', 'saveAddBrain',
   'prioButton', 'prioCount', 'prioView', 'todayButton', 'listButton', 'boardButton', 'timelineButton', 'docsButton', 'archivesButton', 'toolsButton', 'gitButton', 'settingsButton',
@@ -29,7 +29,7 @@ const ids = Object.fromEntries([
   'editorSubtasks', 'editorSubtasksCount', 'editorSubtasksBar', 'editorSubtaskList', 'subtaskForm', 'subtaskInput', 'submitSubtask', 'subtaskHint', 'subtaskError',
   'noteInput', 'noteWords', 'submitNote', 'closeNoteForm', 'noteError', 'editorStamps', 'editorError', 'deleteEditor', 'cancelEditor', 'saveEditor', 'editorSaveState', 'editorFoot',
   'popover', 'newNoteDialog', 'newNoteForm', 'closeNewNote', 'newNoteTitle', 'newNoteProject', 'newNoteWhere', 'newNoteToolbar', 'newNoteContent',
-  'newNoteError', 'cancelNewNote', 'saveNewNote', 'deleteNoteDialog', 'deleteNoteHeading', 'deleteNoteText', 'deleteNoteLinks', 'deleteNoteError', 'deleteNoteCancel', 'deleteNoteConfirm', 'updateButton', 'updateButtonLabel', 'updateDialog', 'updateHeading', 'updateText', 'updateNotes', 'updateList', 'updateWhat', 'updateProgress', 'updateBar', 'updateBarFill', 'updateStep', 'updateElapsed', 'updateError', 'updateCancel', 'updateRecheck', 'updateConfirm', 'quitDialog', 'quitConfirm', 'shortcutsDialog', 'toast', 'toastText', 'toastAction'
+  'newNoteError', 'cancelNewNote', 'saveNewNote', 'deleteNoteDialog', 'deleteNoteHeading', 'deleteNoteText', 'deleteNoteLinks', 'deleteNoteError', 'deleteNoteCancel', 'deleteNoteConfirm', 'updateButton', 'updateButtonLabel', 'updateDialog', 'updateHeading', 'updateText', 'updateNotes', 'updateList', 'updateWhat', 'updateProgress', 'updateBar', 'updateBarFill', 'updateStep', 'updateElapsed', 'updateError', 'updateCancel', 'updateRecheck', 'updateConfirm', 'quitDialog', 'quitConfirm', 'shortcutsDialog', 'toast', 'toastText', 'toastAction', 'syncPullButton', 'syncPullButtonLabel', 'gitCheckButton', 'gitCheckInfo'
 ].map(id => [id, document.getElementById(id)]));
 
 // The interface text is English; dates, relative times, case changes and sorting follow the browser's locale.

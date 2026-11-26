@@ -2,10 +2,10 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""Installer (install-app.py) and launcher (launch.py) of the local actions page.
+"""Installer (install-app.py), launcher (launch.py) and native window (window.py) of Corvus, the local actions app.
 
 Everything runs on a fake home, a fake APPDATA, a fake XDG_DATA_HOME, a fake artifacts folder and a fake uv: nothing outside
-a temporary folder is written. PowerShell is never run; the macOS app is compiled only on macOS.
+a temporary folder is written. PowerShell is never run, no real window is opened and pywebview is never imported.
 """
 
 import base64
@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -42,8 +43,9 @@ def load(name: str, path: Path):
 
 install = load("tasks_install_under_test", WEB / "install-app.py")
 launch = load("tasks_launch_under_test", WEB / "launch.py")
+window = load("tasks_window_under_test", WEB / "window.py")  # imports pywebview only when a window is created
+REAL_PREWARM = install.prewarm  # MacInstallTest patches it out; its own test calls the real one
 REAL_LOGIN_SHELL_PATH = launch.login_shell_path  # LaunchTest patches it out; its own test calls the real one
-OSACOMPILE = Path("/usr/bin/osacompile")
 
 
 def entry_value(path: Path) -> str:
@@ -104,10 +106,10 @@ class FakeHomes(unittest.TestCase):
 
 class LinuxInstallTest(FakeHomes):
     def entry(self) -> Path:
-        return self.xdg / "applications/actions-brain.desktop"
+        return self.xdg / "applications/corvus.desktop"
 
     def icon(self) -> Path:
-        return self.xdg / "icons/hicolor/256x256/apps/actions-brain.png"
+        return self.xdg / "icons/hicolor/256x256/apps/corvus.png"
 
     def test_the_desktop_entry_runs_the_launcher_with_the_absolute_uv(self):
         with patch.object(install.shutil, "which", return_value=None):
@@ -115,7 +117,7 @@ class LinuxInstallTest(FakeHomes):
         self.assertEqual(code, 0, err)
         lines = self.entry().read_text(encoding="utf-8").splitlines()
         self.assertEqual(lines[0], "[Desktop Entry]")
-        for line in ("Type=Application", "Name=Actions Brain", "Terminal=false", "Categories=Office;",
+        for line in ("Type=Application", "Name=Corvus", "Terminal=false", "Categories=Office;",
                      f"Path={entry_value(install.WORK)}", f"Icon={entry_value(self.icon())}", f"X-Actions-Brain={install.MARKER}"):
             self.assertIn(line, lines)
         self.assertIn(f'Exec={exec_argument(self.uv)} "run" "--quiet" "--script" {exec_argument(install.LAUNCH)}', lines)
@@ -171,13 +173,41 @@ class LinuxInstallTest(FakeHomes):
             self.assertEqual(self.installer("--platform", "linux", "--uv", str(other))[0], 0)
         self.assertIn(f'Exec={exec_argument(other)}', self.entry().read_text(encoding="utf-8"))
 
+    def legacy_files(self) -> tuple[Path, Path]:
+        entry, icon = self.xdg / "applications/actions-brain.desktop", self.xdg / "icons/hicolor/256x256/apps/actions-brain.png"
+        entry.parent.mkdir(parents=True)
+        icon.parent.mkdir(parents=True)
+        entry.write_text(f"[Desktop Entry]\nName=Actions Brain\nX-Actions-Brain={install.MARKER}\n", encoding="utf-8")
+        icon.write_bytes(b"\x89PNG " + install.ICON_MARKER)
+        return entry, icon
+
+    def test_an_install_replaces_the_legacy_entry_of_ours_and_the_uninstall_removes_it(self):
+        entry, icon = self.legacy_files()
+        with patch.object(install.shutil, "which", return_value=None):
+            self.assertEqual(self.installer("--platform", "linux", "--uv", str(self.uv))[0], 0)
+            self.assertFalse(entry.exists() or icon.exists())
+            self.assertTrue(self.entry().is_file())
+            entry, icon = self.legacy_files() if not entry.parent.exists() else (entry, icon)
+            entry.write_text(f"[Desktop Entry]\nName=Actions Brain\nX-Actions-Brain={install.MARKER}\n", encoding="utf-8")
+            code, _, err = self.installer("--platform", "linux", "--uninstall")
+        self.assertEqual(code, 0, err)
+        self.assertFalse(entry.exists() or self.entry().exists())
+
+    def test_a_legacy_entry_that_is_not_ours_is_left_alone(self):
+        entry, icon = self.legacy_files()
+        entry.write_text("[Desktop Entry]\nName=Actions Brain\n", encoding="utf-8")
+        with patch.object(install.shutil, "which", return_value=None):
+            self.assertEqual(self.installer("--platform", "linux", "--uv", str(self.uv))[0], 0)
+        self.assertTrue(entry.exists())
+        self.assertFalse(icon.exists())  # the icon carries our mark
+
 
 class WindowsInstallTest(FakeHomes):
     def start_menu_link(self) -> Path:
-        return self.appdata / "Microsoft/Windows/Start Menu/Programs/Actions Brain.lnk"
+        return self.appdata / "Microsoft/Windows/Start Menu/Programs/Corvus.lnk"
 
     def desktop_link(self) -> Path:
-        return self.profile / "Desktop/Actions Brain.lnk"
+        return self.profile / "Desktop/Corvus.lnk"
 
     def fake_powershell(self, calls: list):
         """Stands for powershell.exe: records the decoded script and writes a .lnk holding the description, as Windows does."""
@@ -191,7 +221,7 @@ class WindowsInstallTest(FakeHomes):
         return run
 
     def test_the_powershell_script_creates_the_shortcut_with_quoted_paths(self):
-        link = Path("/fake/Start Menu/Programs/Actions Brain.lnk")
+        link = Path("/fake/Start Menu/Programs/Corvus.lnk")
         # Windows paths whatever the host: a Path would print C:/Work’s on macOS and C:\Work’s on Windows.
         script = install.powershell_script(link, "C:/Users/o'neil/.local/bin/uvw.exe", 'run --gui-script "C:/Work’s/launch.py"',
                                            PureWindowsPath("C:/Work’s"), PureWindowsPath("C:/Work’s/icon.ico"), 1)
@@ -274,65 +304,191 @@ class WindowsInstallTest(FakeHomes):
         runner.assert_not_called()
         self.assertEqual(self.start_menu_link().read_bytes(), b"L\0\0\0other")
 
+    def legacy_link(self) -> Path:
+        return self.start_menu_link().with_name("Actions Brain.lnk")
+
+    def test_an_install_removes_the_legacy_shortcut_of_ours(self):
+        self.legacy_link().parent.mkdir(parents=True)
+        self.legacy_link().write_bytes(b"L\0\0\0" + install.MARKER.encode("utf-16-le"))
+        calls = []
+        with patch.object(install.launch_tool, "system_name", return_value="windows"), \
+                patch.object(install, "run_command", side_effect=self.fake_powershell(calls)):
+            code, out, err = self.installer("--platform", "windows", "--uv", str(self.uv_exe))
+        self.assertEqual(code, 0, err)
+        self.assertFalse(self.legacy_link().exists())
+        self.assertTrue(self.start_menu_link().is_file())
+
+    def test_uninstall_also_removes_the_legacy_shortcut_and_keeps_one_that_is_not_ours(self):
+        self.legacy_link().parent.mkdir(parents=True)
+        self.legacy_link().write_bytes(b"L\0\0\0" + install.MARKER.encode("utf-16-le"))
+        self.assertEqual(self.installer("--platform", "windows", "--uninstall")[0], 0)
+        self.assertFalse(self.legacy_link().exists())
+        self.legacy_link().write_bytes(b"L\0\0\0other")
+        self.assertEqual(self.installer("--platform", "windows", "--uninstall")[0], 0)
+        self.assertTrue(self.legacy_link().exists())
+
 
 class MacInstallTest(FakeHomes):
     def folder(self) -> Path:
         return self.artifacts / "internal/setup/tasks-dock-app"
 
-    def fake_build(self, source: str, app: Path):
-        def build():
-            (app / "Contents").mkdir(parents=True)
-            with open(app / "Contents/Info.plist", "wb") as handle:
-                plistlib.dump({"CFBundleIdentifier": install.BUNDLE_ID, install.PLIST_MARKER_KEY: install.MARKER}, handle)
-        return build
+    def setUp(self):
+        super().setUp()
+        self.system = patch.object(install.launch_tool, "system_name", return_value="macos")  # a real build is macOS's
+        self.system.start()
+        self.addCleanup(self.system.stop)
+        warm = patch.object(install, "prewarm", return_value=lambda: None)  # never download pywebview from a test
+        self.warm = warm.start()
+        self.addCleanup(warm.stop)
+        sign = patch.object(install, "sign")  # nor sign: codesign only matters on the real bundle
+        self.sign = sign.start()
+        self.addCleanup(sign.stop)
 
-    def test_the_applescript_runs_launch_py_with_the_absolute_uv(self):
-        source = install.applescript_source('/opt/u"v\\bin/uv', PurePosixPath("/srv/Work/tools/tasks-web/launch.py"))  # a macOS path on any host
-        self.assertIn(install.MARKER, source.splitlines()[0])
-        self.assertIn('do shell script ((quoted form of "/opt/u\\"v\\\\bin/uv") & " run --quiet --script " & '
-                      '(quoted form of "/srv/Work/tools/tasks-web/launch.py") & " --no-dialog")', source)
-        self.assertIn('display dialog ("Could not open Actions. " & errorMessage)', source)
+    def build(self, uv: Path | None = None) -> Path:
+        code, _, err = self.installer("--platform", "macos", "--artifacts-dir", str(self.artifacts), "--uv", str(uv or self.uv))
+        self.assertEqual(code, 0, err)
+        return self.folder() / "Corvus.app"
+
+    def make_legacy(self) -> Path:
+        """What an install of the AppleScript era left: Actions Brain.app (marked), launch.applescript and the README."""
+        old_app = self.folder() / "Actions Brain.app"
+        (old_app / "Contents").mkdir(parents=True)
+        with open(old_app / "Contents/Info.plist", "wb") as handle:
+            plistlib.dump({"CFBundleIdentifier": install.BUNDLE_ID, install.PLIST_MARKER_KEY: install.MARKER}, handle)
+        (self.folder() / "launch.applescript").write_text(f"-- Actions Brain: {install.MARKER}.\n", encoding="utf-8")
+        (self.folder() / "README.md").write_text(f"old readme {install.MARKER}\n", encoding="utf-8")
+        return old_app
+
+    def test_the_bundle_has_the_plist_the_icon_and_an_executable_script(self):
+        app = self.build()
+        with open(app / "Contents/Info.plist", "rb") as handle:
+            info = plistlib.load(handle)
+        for key, value in {"CFBundleExecutable": "Corvus", "CFBundleName": "Corvus", "CFBundleDisplayName": "Corvus",
+                           "CFBundleIdentifier": "local.work.tasks-brain", "CFBundleIconFile": "icon", "CFBundlePackageType": "APPL",
+                           "NSHighResolutionCapable": True, install.PLIST_MARKER_KEY: install.MARKER}.items():
+            self.assertEqual(info[key], value, key)
+        for key in ("CFBundleShortVersionString", "LSMinimumSystemVersion"):
+            self.assertTrue(info[key], key)
+        self.assertEqual((app / "Contents/Resources/icon.icns").read_bytes(), (WEB / "static/icon.icns").read_bytes())
+        executable = app / "Contents/MacOS/Corvus"
+        self.assertTrue(os.access(executable, os.X_OK))
+        self.assertEqual(executable.read_text(encoding="utf-8"), install.bundle_script(str(self.uv), install.LAUNCH, install.WINDOW))
+        self.assertTrue(install.app_is_ours(app))
+        self.assertIn(install.MARKER, (self.folder() / "README.md").read_text(encoding="utf-8"))
+        self.assertIn("Corvus", (self.folder() / "README.md").read_text(encoding="utf-8"))
+        self.assertEqual(list((self.root / "staging").iterdir()), [])  # the staging folder is cleaned
+        self.assertFalse(any(path.is_symlink() for path in app.rglob("*")))  # OneDrive does not sync symlinks
+        self.sign.assert_called_once()
+        self.warm.assert_called_once_with(str(self.uv))
+        self.assertFalse((self.folder() / "launch.applescript").exists())
+
+    def test_the_script_becomes_the_bundle_process_and_quotes_its_paths(self):
+        script = install.bundle_script("/opt/u'v dir/uv", PurePosixPath("/srv/My Work/tools/tasks-web/launch.py"),
+                                       PurePosixPath("/srv/My Work/tools/tasks-web/window.py"), 8765)
+        lines = script.splitlines()
+        self.assertEqual(lines[0], "#!/bin/zsh")
+        self.assertIn(install.MARKER, lines[1])
+        self.assertIn('export CFProcessPath="${0:A}"', lines)
+        self.assertIn("python=$('/opt/u'\\''v dir/uv' run --quiet --script '/srv/My Work/tools/tasks-web/launch.py' --prepare-window) || exit 0", lines)
+        self.assertIn("[[ -n $python ]] || exit 0", lines)
+        self.assertEqual(lines[-1], 'exec "$python" \'/srv/My Work/tools/tasks-web/window.py\' --port 8765')
+        self.assertLess(lines.index('export CFProcessPath="${0:A}"'), lines.index(lines[-1]))
         with self.assertRaises(install.InstallError):
-            install.applescript_source("/opt/uv\n", Path("/srv/launch.py"))
+            install.bundle_script("/opt/uv\n", Path("/srv/launch.py"), Path("/srv/window.py"))
+
+    @unittest.skipIf(os.name == "nt", "zsh is a macOS and Linux shell")
+    @unittest.skipUnless(shutil.which("zsh"), "needs zsh")
+    def test_the_quoted_script_hands_odd_paths_to_the_shell_intact(self):
+        # Run the script with stand-ins for uv and the Python: the odd paths must reach them as single arguments.
+        odd = self.root / "it's a \"dir\" $HOME"
+        odd.mkdir()
+        record = self.root / "record.txt"
+        uv, python = odd / "uv", self.root / "python"  # the interpreter's own path is only echoed, so it stays plain
+        uv.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{record}"\necho "{python}"\n', encoding="utf-8")
+        python.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" >> "{record}"\n', encoding="utf-8")
+        uv.chmod(0o755)
+        python.chmod(0o755)
+        script = self.root / "Corvus"
+        script.write_text(install.bundle_script(str(uv), odd / "launch.py", odd / "window.py", 8765), encoding="utf-8")
+        script.chmod(0o755)
+        subprocess.run([str(script)], check=True, capture_output=True, timeout=20)
+        self.assertEqual(record.read_text(encoding="utf-8").splitlines(),
+                         ["run", "--quiet", "--script", str(odd / "launch.py"), "--prepare-window", str(odd / "window.py"), "--port", "8765"])
+
+    def test_nothing_is_compiled_and_no_applescript_is_written(self):
+        self.assertFalse(hasattr(install, "OSACOMPILE") or hasattr(install, "applescript_source"))
+        with patch.object(install.subprocess, "run") as run:
+            self.build()
+        run.assert_not_called()  # sign and prewarm are patched: the build itself runs no command
+        self.assertFalse(list(self.folder().glob("*.applescript")))
 
     def test_dry_run_writes_nothing(self):
         before = self.snapshot()
         code, out, err = self.installer("--platform", "macos", "--dry-run", "--artifacts-dir", str(self.artifacts), "--uv", str(self.uv))
         self.assertEqual(code, 0, err)
-        self.assertIn("osacompile", out)
-        self.assertIn("do shell script", out)
+        self.assertIn("CFProcessPath", out)
+        self.assertIn("--prepare-window", out)
+        self.assertIn("CFBundleDisplayName", out)
+        self.assertNotIn("osacompile", out)
         self.assertEqual(self.snapshot(), before)
         self.assertFalse(self.artifacts.exists())
 
-    def test_an_existing_app_is_never_overwritten_or_deleted(self):
-        old_app = self.folder() / "Actions Brain.app"
-        (old_app / "Contents").mkdir(parents=True)
-        (old_app / "Contents/Info.plist").write_bytes(b"old plist")
-        (self.folder() / "README.md").write_text("old readme\n", encoding="utf-8")
-        before = self.snapshot()
-        with patch.object(install, "OSACOMPILE", self.uv):
+    def test_a_real_build_needs_macos(self):
+        with patch.object(install.launch_tool, "system_name", return_value="linux"):
             code, _, err = self.installer("--platform", "macos", "--artifacts-dir", str(self.artifacts), "--uv", str(self.uv))
+        self.assertEqual(code, 1)
+        self.assertIn("only be built on macOS", err)
+        self.assertFalse(self.artifacts.exists())
+
+    def test_the_prewarm_runs_window_check_and_never_fails_the_install(self):
+        passed = Mock(returncode=0, stdout="/env/bin/python\n", stderr="")
+        failed = Mock(returncode=1, stdout="", stderr="no wheel\nboom\n")
+        outcomes = [(passed, "pywebview is ready"), (failed, "boom"), (OSError(2, "No such file"), "could not run"),
+                    (subprocess.TimeoutExpired("uv", 1), "more than")]
+        for outcome, expected in outcomes:
+            with patch.object(install.subprocess, "run", side_effect=[outcome] if isinstance(outcome, BaseException) else None,
+                              return_value=outcome) as run, redirect_stdout(io.StringIO()) as out:
+                REAL_PREWARM("/opt/uv")()
+            self.assertEqual(run.call_args.args[0], ["/opt/uv", "run", "--quiet", "--script", str(install.WINDOW), "--check"])
+            self.assertIn(expected, out.getvalue())
+
+    def test_an_existing_app_is_never_overwritten_or_deleted(self):
+        old_app = self.make_legacy()
+        before = self.snapshot()
+        code, _, err = self.installer("--platform", "macos", "--artifacts-dir", str(self.artifacts), "--uv", str(self.uv))
         self.assertEqual(code, 1)
         self.assertIn("--replace", err)
         self.assertEqual(self.snapshot(), before)
-        with patch.object(install, "build_app", side_effect=self.fake_build), patch.object(install, "OSACOMPILE", self.uv):
-            code, out, err = self.installer("--platform", "macos", "--replace", "--artifacts-dir", str(self.artifacts), "--uv", str(self.uv))
+        code, out, err = self.installer("--platform", "macos", "--replace", "--artifacts-dir", str(self.artifacts), "--uv", str(self.uv))
         self.assertEqual(code, 0, err)
         archived = list((self.artifacts / "archive").glob("tasks-dock-app-*"))
         self.assertEqual(len(archived), 1)
-        self.assertEqual((archived[0] / "Actions Brain.app/Contents/Info.plist").read_bytes(), b"old plist")
-        self.assertEqual((archived[0] / "README.md").read_text(encoding="utf-8"), "old readme\n")
-        self.assertTrue(install.app_is_ours(old_app))
+        self.assertEqual(sorted(path.name for path in archived[0].iterdir()), ["Actions Brain.app", "README.md", "launch.applescript"])
+        self.assertTrue(install.app_is_ours(self.folder() / "Corvus.app"))
+        self.assertFalse(old_app.exists())
         self.assertIn(install.MARKER, (self.folder() / "README.md").read_text(encoding="utf-8"))
-        self.assertIn(install.MARKER, (self.folder() / "launch.applescript").read_text(encoding="utf-8"))
+        self.assertNotIn("old readme", (self.folder() / "README.md").read_text(encoding="utf-8"))
         self.assertIn(str(archived[0]), out)
         # Nothing was deleted: every file present before is still somewhere under the artifacts folder, unchanged.
         contents = list(self.snapshot().values())
         for data in before.values():
             self.assertIn(data, contents)
 
-    def test_uninstall_moves_only_its_own_app_into_the_archive(self):
-        app = self.folder() / "Actions Brain.app"
+    def test_replace_also_archives_a_previous_corvus_app(self):
+        first = self.build()
+        code, out, err = self.installer("--platform", "macos", "--artifacts-dir", str(self.artifacts), "--uv", str(self.uv))
+        self.assertEqual(code, 1)
+        self.assertIn("--replace", err)
+        other = self.root / "bin/uv2"
+        other.write_bytes(b"fake uv")
+        code, out, err = self.installer("--platform", "macos", "--replace", "--artifacts-dir", str(self.artifacts), "--uv", str(other))
+        self.assertEqual(code, 0, err)
+        archived = next((self.artifacts / "archive").glob("tasks-dock-app-*"))
+        self.assertIn(str(self.uv), (archived / "Corvus.app/Contents/MacOS/Corvus").read_text(encoding="utf-8"))
+        self.assertIn(str(other), (first / "Contents/MacOS/Corvus").read_text(encoding="utf-8"))
+
+    def test_uninstall_moves_only_its_own_apps_into_the_archive(self):
+        app = self.folder() / "Corvus.app"
         (app / "Contents").mkdir(parents=True)
         (app / "Contents/Info.plist").write_bytes(b"not ours")
         code, out, err = self.installer("--platform", "macos", "--uninstall", "--artifacts-dir", str(self.artifacts))
@@ -340,37 +496,36 @@ class MacInstallTest(FakeHomes):
         self.assertIn("was not made by install-app.py", out)
         self.assertTrue(app.exists())
         shutil.rmtree(app)  # the test's own fixture, in the temporary folder
-        with patch.object(install, "build_app", side_effect=self.fake_build), patch.object(install, "OSACOMPILE", self.uv):
-            self.assertEqual(self.installer("--platform", "macos", "--artifacts-dir", str(self.artifacts), "--uv", str(self.uv))[0], 0)
+        self.build()
         (self.folder() / "notes.txt").write_text("the owner's file\n", encoding="utf-8")
         code, out, err = self.installer("--platform", "macos", "--uninstall", "--artifacts-dir", str(self.artifacts))
         self.assertEqual(code, 0, err)
         archived = next((self.artifacts / "archive").glob("tasks-dock-app-*"))
-        self.assertEqual(sorted(path.name for path in archived.iterdir()), ["Actions Brain.app", "README.md", "launch.applescript"])
+        self.assertEqual(sorted(path.name for path in archived.iterdir()), ["Corvus.app", "README.md"])
         self.assertFalse(app.exists())
         self.assertEqual((self.folder() / "notes.txt").read_text(encoding="utf-8"), "the owner's file\n")
         self.assertIn("Nothing is deleted", out)
 
+    def test_uninstall_also_archives_the_legacy_app_of_ours(self):
+        old_app = self.make_legacy()
+        code, out, err = self.installer("--platform", "macos", "--uninstall", "--artifacts-dir", str(self.artifacts))
+        self.assertEqual(code, 0, err)
+        archived = next((self.artifacts / "archive").glob("tasks-dock-app-*"))
+        self.assertEqual(sorted(path.name for path in archived.iterdir()), ["Actions Brain.app", "README.md", "launch.applescript"])
+        self.assertFalse(old_app.exists())
+
+    def test_a_legacy_app_that_is_not_ours_is_left_alone_on_uninstall(self):
+        old_app = self.folder() / "Actions Brain.app"
+        (old_app / "Contents").mkdir(parents=True)
+        (old_app / "Contents/Info.plist").write_bytes(b"not ours")
+        code, out, err = self.installer("--platform", "macos", "--uninstall", "--artifacts-dir", str(self.artifacts))
+        self.assertEqual(code, 0, err)
+        self.assertTrue(old_app.exists())
+        self.assertFalse((self.artifacts / "archive").exists())
+
     def test_options_of_another_system_are_refused(self):
         self.assertEqual(self.installer("--platform", "linux", "--desktop", "--dry-run")[0], 1)
         self.assertEqual(self.installer("--platform", "windows", "--replace", "--dry-run")[0], 1)
-
-    @unittest.skipUnless(sys.platform == "darwin" and OSACOMPILE.is_file(), "the app is compiled by macOS's osacompile")
-    def test_the_real_app_carries_its_bundle_id_marker_and_icon(self):
-        code, _, err = self.installer("--platform", "macos", "--artifacts-dir", str(self.artifacts), "--uv", str(self.uv))
-        self.assertEqual(code, 0, err)
-        app = self.folder() / "Actions Brain.app"
-        with open(app / "Contents/Info.plist", "rb") as handle:
-            info = plistlib.load(handle)
-        self.assertEqual(info["CFBundleIdentifier"], install.BUNDLE_ID)
-        self.assertEqual(info[install.PLIST_MARKER_KEY], install.MARKER)
-        self.assertNotIn("CFBundleIconName", info)
-        self.assertEqual((app / "Contents/Resources/applet.icns").read_bytes(), (WEB / "static/icon.icns").read_bytes())
-        script = subprocess.run(["/usr/bin/osadecompile", str(app / "Contents/Resources/Scripts/main.scpt")],
-                                capture_output=True, text=True, encoding="utf-8", check=True).stdout
-        self.assertIn(str(install.LAUNCH), script)
-        self.assertIn(str(self.uv), script)
-        self.assertEqual(list((self.root / "staging").iterdir()), [])  # the staging folder is cleaned
 
 
 class StubActions(BaseHTTPRequestHandler):
@@ -567,6 +722,513 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(launch.console_uv(uvw), uvw)
         uv.write_bytes(b"")
         self.assertEqual(launch.console_uv(uvw), uv)
+
+
+class FakeWindow:
+    """Stands for the Popen of window.py: it shows (writes the ready file) or exits after a given number of polls."""
+
+    def __init__(self, ready: Path | None = None, shows_after: int | None = None, exits_with: int | None = None, exits_after: int = 0):
+        self.ready, self.shows_after, self.exits_with, self.exits_after = ready, shows_after, exits_with, exits_after
+        self.polls = 0
+        self.pid = 4242
+
+    def poll(self):
+        self.polls += 1
+        if self.shows_after is not None and self.polls > self.shows_after and self.ready is not None:
+            self.ready.write_text("1\n", encoding="utf-8")
+        if self.exits_with is not None and self.polls > self.exits_after:
+            return self.exits_with
+        return None
+
+
+class OpenChainTest(unittest.TestCase):
+    """Native window, then a Chrome app window, then the default browser: every step with injected functions."""
+
+    URL = "http://127.0.0.1:8765/"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.work = Path(self.temp.name)
+        shell = patch.object(launch, "login_shell_path", return_value=[])
+        shell.start()
+        self.addCleanup(shell.stop)
+
+    def log(self) -> str:
+        path = self.work / "agents/tasks-web.log"
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    def test_macos_opens_chrome_then_edge_then_chromium_or_brave_as_an_app(self):
+        home = Path("/Users/jane")
+        def command(*installed):
+            return launch.app_mode_command(self.URL, "macos", {}, home, exists=lambda path: str(path) in installed)
+        self.assertEqual(command("/Applications/Google Chrome.app", "/Applications/Microsoft Edge.app"),
+                         ["open", "-na", "Google Chrome", "--args", f"--app={self.URL}"])
+        self.assertEqual(command("/Users/jane/Applications/Microsoft Edge.app", "/Applications/Brave Browser.app"),
+                         ["open", "-na", "Microsoft Edge", "--args", f"--app={self.URL}"])
+        self.assertEqual(command("/Applications/Brave Browser.app")[3:4], ["--args"])
+        self.assertEqual(command("/Applications/Brave Browser.app")[2], "Brave Browser")
+        self.assertIsNone(command("/Applications/Safari.app"))
+
+    def test_windows_looks_in_program_files_and_local_app_data(self):
+        environ = {"ProgramFiles": "C:/PF", "ProgramFiles(x86)": "C:/PF86", "LOCALAPPDATA": "C:/Local"}
+        def command(*installed):
+            return launch.app_mode_command(self.URL, "windows", environ, Path("C:/Users/jane"), exists=lambda path: str(path) in installed)
+        self.assertEqual(command("C:/PF86/Microsoft/Edge/Application/msedge.exe"),
+                         ["C:/PF86/Microsoft/Edge/Application/msedge.exe", f"--app={self.URL}"])
+        self.assertEqual(command("C:/Local/Google/Chrome/Application/chrome.exe", "C:/PF86/Microsoft/Edge/Application/msedge.exe")[0],
+                         "C:/Local/Google/Chrome/Application/chrome.exe")  # Chrome before Edge, wherever it is
+        self.assertEqual(command("C:/Local/BraveSoftware/Brave-Browser/Application/brave.exe")[0],
+                         "C:/Local/BraveSoftware/Brave-Browser/Application/brave.exe")
+        self.assertIsNone(command())
+
+    def test_linux_takes_the_first_browser_on_the_path(self):
+        found = {"chromium-browser": "/usr/bin/chromium-browser", "microsoft-edge": "/usr/bin/microsoft-edge"}
+        which = lambda name, path=None: found.get(name)  # noqa: E731
+        self.assertEqual(launch.app_mode_command(self.URL, "linux", {"PATH": "/usr/bin"}, which=which),
+                         ["/usr/bin/chromium-browser", f"--app={self.URL}"])
+        self.assertIsNone(launch.app_mode_command(self.URL, "linux", {}, which=lambda name, path=None: None))
+
+    def test_the_fallback_prefers_the_app_window_then_the_browser_and_logs_its_choice(self):
+        browser = Mock(return_value=True)
+        starter = Mock(return_value=True)
+        self.assertEqual(launch.open_fallback(self.URL, self.work, lambda url: ["/usr/bin/google-chrome", f"--app={url}"], starter, browser), "app-mode")
+        starter.assert_called_once_with(["/usr/bin/google-chrome", f"--app={self.URL}"])
+        browser.assert_not_called()
+        self.assertIn("app window: google-chrome", self.log())
+        self.assertEqual(launch.open_fallback(self.URL, self.work, lambda url: None, starter, browser), "browser")
+        browser.assert_called_once_with(self.URL)
+        self.assertIn("No Chrome, Edge, Chromium or Brave", self.log())
+        browser.reset_mock()
+        failing = Mock(return_value=False)
+        self.assertEqual(launch.open_fallback(self.URL, self.work, lambda url: ["x"], failing, browser), "browser")
+        self.assertIn("could not start", self.log())
+        self.assertEqual(launch.open_fallback(self.URL, self.work, lambda url: None, starter, Mock(return_value=False)), "")
+        self.assertIn("did not open the page", self.log())
+
+    def test_the_window_command_runs_window_py_through_uv(self):
+        self.assertEqual(launch.window_command("/opt/uv", self.work, 8765, "macos"),
+                         ["/opt/uv", "run", "--quiet", "--script", str(self.work / "tools/tasks-web/window.py"), "--port", "8765", "--no-fallback"])
+        uvw = self.work / "uvw.exe"
+        uvw.write_bytes(b"")
+        windows = launch.window_command(str(self.work / "uv.exe"), self.work, 9000, "windows", no_fallback=False)
+        self.assertEqual(windows[:4], [str(uvw), "run", "--quiet", "--gui-script"])
+        self.assertEqual(windows[-2:], ["--port", "9000"])
+        self.assertEqual(launch.window_command(str(self.work / "uv.exe"), self.work, 9000, "linux")[3], "--script")
+
+    def open_window(self, process: FakeWindow, **options) -> tuple[bool, Mock, Mock]:
+        starter = Mock(return_value=process)
+        stopper = Mock()
+        result = launch.open_native_window(8765, self.work, "/opt/uv", starter=starter, delay=0.001, system="linux", stopper=stopper, **options)
+        return result, starter, stopper
+
+    def test_the_native_window_is_waited_for_until_its_ready_file(self):
+        agents = self.work / "agents"
+        agents.mkdir()
+        (agents / launch.READY_FILE).write_text("stale\n", encoding="utf-8")  # a stale file must not count
+        result, starter, stopper = self.open_window(FakeWindow(agents / launch.READY_FILE, shows_after=3), wait=5)
+        self.assertTrue(result)
+        command, cwd, log = starter.call_args.args
+        self.assertEqual(command[:5], ["/opt/uv", "run", "--quiet", "--script", str(self.work / "tools/tasks-web/window.py")])
+        self.assertIn("--no-fallback", command)  # launch.py runs the fallback itself
+        self.assertEqual((cwd, log, starter.call_args.kwargs["append"]), (self.work, agents / "tasks-web.log", True))
+        self.assertTrue((agents / launch.PREPARED_FILE).exists())
+        stopper.assert_not_called()
+        self.assertIn("native window", self.log())
+
+    def test_a_window_that_fails_times_out_or_cannot_start_is_reported_without_stopping_the_launch(self):
+        result, _, _ = self.open_window(FakeWindow(exits_with=1, exits_after=2), wait=5)
+        self.assertFalse(result)
+        self.assertIn("stopped with code 1", self.log())
+        (self.work / "agents" / launch.PREPARED_FILE).write_text("x\n", encoding="utf-8")
+        result, _, stopper = self.open_window(FakeWindow(), wait=0.05)
+        self.assertFalse(result)
+        stopper.assert_called_once()
+        self.assertFalse((self.work / "agents" / launch.PREPARED_FILE).exists())  # the next start waits long again
+        self.assertIn("did not show within", self.log())
+        with patch.object(launch, "find_uv", return_value=None):
+            self.assertFalse(launch.open_native_window(8765, self.work, system="linux"))
+        self.assertIn("uv was not found", self.log())
+        starter = Mock(side_effect=OSError(2, "No such file or directory"))
+        self.assertFalse(launch.open_native_window(8765, self.work, "/opt/uv", starter=starter, system="linux"))
+        self.assertIn("could not start", self.log())
+
+    def test_a_second_start_that_raised_the_open_window_counts_as_shown(self):
+        result, _, _ = self.open_window(FakeWindow(exits_with=0), wait=5)
+        self.assertTrue(result)
+        self.assertIn("raised", self.log())
+
+    def test_the_first_wait_is_long_and_the_next_ones_short(self):
+        with patch.object(launch, "WINDOW_FIRST_WAIT", 0.02), patch.object(launch, "WINDOW_WAIT", 0.0):
+            first, _, _ = self.open_window(FakeWindow())  # never shows
+            self.assertFalse(first)
+            self.assertIn("within 0.02 s", self.log())
+            (self.work / "agents" / launch.PREPARED_FILE).write_text("x\n", encoding="utf-8")
+            second, _, _ = self.open_window(FakeWindow())
+            self.assertFalse(second)
+            self.assertIn("within 0 s", self.log())
+
+    def test_macos_opens_the_installed_bundle_first_and_only_spawns_window_py_without_it(self):
+        agents = self.work / "agents"
+        agents.mkdir()
+        ready = agents / launch.READY_FILE
+        starter = Mock()
+        def installed(bundle_id):
+            self.assertEqual(bundle_id, "local.work.tasks-brain")
+            ready.write_text(f"{os.getpid()}\n", encoding="utf-8")  # the bundle's window shows
+            return True
+        opener = Mock(side_effect=installed)
+        self.assertTrue(launch.open_native_window(8765, self.work, "/opt/uv", starter=starter, wait=2, delay=0.001, system="macos", bundle_opener=opener))
+        starter.assert_not_called()
+        self.assertIn("Corvus.app", self.log())
+        # Already running: `open -b` only activates it, and the ready file of a live process counts at once.
+        opener = Mock(return_value=True)
+        self.assertTrue(launch.open_native_window(8765, self.work, "/opt/uv", starter=starter, wait=2, delay=0.001, system="macos", bundle_opener=opener))
+        opener.assert_called_once()
+        starter.assert_not_called()
+        # A stale ready file (dead process) does not count: the app did not show.
+        ready.write_text("999999999\n", encoding="utf-8")
+        self.assertFalse(launch.open_native_window(8765, self.work, "/opt/uv", starter=starter, wait=0.05, delay=0.001, system="macos", bundle_opener=Mock(return_value=True)))
+        self.assertIn("did not show", self.log())
+        starter.assert_not_called()
+        # No app installed: window.py runs as before.
+        starter = Mock(return_value=FakeWindow(ready, shows_after=1))
+        ready.unlink()
+        self.assertTrue(launch.open_native_window(8765, self.work, "/opt/uv", starter=starter, wait=2, delay=0.001, system="macos", bundle_opener=Mock(return_value=False)))
+        starter.assert_called_once()
+
+    def test_open_bundle_runs_open_with_the_bundle_id(self):
+        with patch.object(launch.subprocess, "run", return_value=Mock(returncode=0)) as run:
+            self.assertTrue(launch.open_bundle())
+        self.assertEqual(run.call_args.args[0], ["open", "-b", "local.work.tasks-brain"])
+        with patch.object(launch.subprocess, "run", return_value=Mock(returncode=1)):
+            self.assertFalse(launch.open_bundle())
+        with patch.object(launch.subprocess, "run", side_effect=OSError()):
+            self.assertFalse(launch.open_bundle())
+
+    def serve(self) -> int:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), StubActions)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 2)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server.server_port
+
+    def test_launch_tries_the_window_then_the_fallback_and_browser_mode_skips_the_window(self):
+        port = self.serve()
+        with patch.object(launch, "open_native_window", return_value=True) as window, patch.object(launch, "open_fallback") as fallback:
+            self.assertEqual(launch.launch(port, self.work), "opened")
+        window.assert_called_once_with(port, self.work)
+        fallback.assert_not_called()
+        with patch.object(launch, "open_native_window", return_value=False) as window, \
+                patch.object(launch, "open_fallback", return_value="app-mode") as fallback:
+            self.assertEqual(launch.launch(port, self.work), "opened")
+        fallback.assert_called_once_with(f"http://127.0.0.1:{port}/", self.work)
+        with patch.object(launch, "open_native_window") as window, patch.object(launch, "open_fallback", return_value="browser") as fallback:
+            self.assertEqual(launch.launch(port, self.work, native=False), "opened")
+        window.assert_not_called()
+        fallback.assert_called_once()
+        with patch.object(launch, "open_native_window", return_value=False), patch.object(launch, "open_fallback", return_value=""), \
+                self.assertRaises(launch.LaunchError):
+            launch.launch(port, self.work)
+
+    def test_the_browser_option_skips_the_native_window(self):
+        with patch.object(launch, "launch") as run:
+            self.assertEqual(launch.main(["--browser", "--no-dialog"]), 0)
+            self.assertEqual(run.call_args.kwargs["native"], False)
+            launch.main([])
+            self.assertEqual(run.call_args.kwargs["native"], True)
+
+
+class PrepareWindowTest(unittest.TestCase):
+    """--prepare-window prints the environment's Python on stdout and nothing else; on failure it opens the page itself."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.work = Path(self.temp.name)
+        for target, value in (("WORK", self.work), ):
+            patcher = patch.object(launch, target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        for name, kwargs in (("ensure_server", {"return_value": "running"}), ("find_uv", {"return_value": "/opt/uv"})):
+            patcher = patch.object(launch, name, **kwargs)
+            setattr(self, name, patcher.start())
+            self.addCleanup(patcher.stop)
+        dialog = patch.object(launch, "show_dialog")
+        self.dialog = dialog.start()
+        self.addCleanup(dialog.stop)
+
+    def run_main(self, *argv: str) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = launch.main(["--prepare-window", *argv])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_success_prints_only_the_python_path(self):
+        noisy = Mock(returncode=0, stdout=f"downloading pywebview\n{sys.executable}\n", stderr="progress")
+        with patch.object(launch.subprocess, "run", return_value=noisy) as run, patch.object(launch, "open_fallback") as fallback:
+            code, out, err = self.run_main()
+        self.assertEqual((code, out), (0, f"{sys.executable}\n"))
+        fallback.assert_not_called()
+        command = run.call_args.args[0]
+        self.assertEqual(command, ["/opt/uv", "run", "--quiet", "--script", str(self.work / "tools/tasks-web/window.py"), "--check"])
+        self.assertEqual(run.call_args.kwargs["timeout"], launch.CHECK_TIMEOUT)
+        self.assertGreaterEqual(launch.CHECK_TIMEOUT, 180)
+        self.assertTrue((self.work / "agents" / launch.PREPARED_FILE).exists())
+
+    def test_a_failed_check_opens_the_fallback_and_prints_nothing(self):
+        broken = Mock(returncode=1, stdout="", stderr="no matching wheel\n")
+        timeout = subprocess.TimeoutExpired("uv", 180)
+        for outcome in (dict(return_value=broken), dict(side_effect=timeout), dict(side_effect=OSError(2, "No such file")),
+                        dict(return_value=Mock(returncode=0, stdout="/no/such/python\n", stderr=""))):
+            with patch.object(launch.subprocess, "run", **outcome), patch.object(launch, "open_fallback", return_value="app-mode") as fallback:
+                code, out, err = self.run_main()
+            self.assertEqual((code, out), (0, ""), outcome)
+            fallback.assert_called_once_with("http://127.0.0.1:8765/", self.work)
+        self.assertIn("Native window unavailable", (self.work / "agents/tasks-web.log").read_text(encoding="utf-8"))
+
+    def test_nothing_to_open_the_page_is_an_error_with_an_empty_stdout(self):
+        with patch.object(launch.subprocess, "run", return_value=Mock(returncode=1, stdout="", stderr="")), \
+                patch.object(launch, "open_fallback", return_value=""):
+            code, out, err = self.run_main()
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("Could not open Corvus", err)
+
+    def test_a_server_that_cannot_start_is_an_error_with_an_empty_stdout(self):
+        self.ensure_server.side_effect = launch.LaunchError("Corvus did not start.")
+        with patch.object(launch.subprocess, "run") as run:
+            code, out, err = self.run_main("--no-dialog")
+        self.assertEqual((code, out), (1, ""))
+        run.assert_not_called()
+        self.assertIn("did not start", err)
+        self.dialog.assert_not_called()
+
+
+class WindowHelpersTest(unittest.TestCase):
+    """The parts of window.py that need no GUI: the port watcher, the lock, the raise file and the error path."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.agents = Path(self.temp.name) / "agents"
+
+    def watch(self, sequence: list[bool], limit: int = 3) -> tuple[list[int], int, bool]:
+        stop, gone, it = threading.Event(), [], iter(sequence)
+        checks = []
+
+        def check() -> bool:
+            try:
+                checks.append(next(it))
+            except StopIteration:  # nothing left to say: the window "closed by itself"
+                stop.set()
+                return True
+            return checks[-1]
+        result = window.watch_port(lambda: gone.append(len(checks)), check, stop, 0.0, limit)
+        return gone, len(checks), result
+
+    def test_the_mac_window_asks_the_page_for_room_under_its_title_bar(self):
+        self.assertEqual(window.window_url(8765, "darwin"), "http://127.0.0.1:8765/?shell=mac")
+        self.assertEqual(window.window_url(8765, "win32"), "http://127.0.0.1:8765/")
+        self.assertEqual(window.window_url(8770, "linux"), "http://127.0.0.1:8770/")
+
+    def test_the_mac_title_bar_is_transparent_over_full_size_content(self):
+        calls = []
+
+        class Native:
+            def styleMask(self):
+                return 0b1111
+
+            def setStyleMask_(self, mask):
+                calls.append(("mask", mask))
+
+            def setTitlebarAppearsTransparent_(self, value):
+                calls.append(("transparent", value))
+
+            def setTitleVisibility_(self, value):
+                calls.append(("title", value))
+
+            def setToolbar_(self, toolbar):
+                calls.append(("toolbar", toolbar.identifier, toolbar.separator))
+
+            def setToolbarStyle_(self, style):
+                calls.append(("toolbar style", style))
+
+            def contentView(self):
+                return content
+
+        class Toolbar:
+            def __init__(self):
+                self.identifier = self.separator = None
+
+            @classmethod
+            def alloc(cls):
+                return cls()
+
+            def initWithIdentifier_(self, identifier):
+                self.identifier = identifier
+                return self
+
+            def setShowsBaselineSeparator_(self, value):
+                self.separator = value
+
+        class View:
+            def __init__(self, name, paints=True):
+                self.name, self.paints, self.subviews_ = name, paints, []
+
+            def superview(self):
+                return frame
+
+            def subviews(self):
+                return self.subviews_
+
+            def respondsToSelector_(self, selector):
+                return self.paints and selector == "setBackgroundColor:"
+
+            def setBackgroundColor_(self, color):
+                calls.append(("background", self.name, color))
+
+        frame, content = View("frame"), View("content")
+        frame.subviews_ = [content, View("titlebar"), View("other", paints=False)]
+        appkit = types.SimpleNamespace(NSWindowStyleMaskFullSizeContentView=1 << 15, NSWindowTitleHidden=1, NSToolbar=Toolbar,
+                                       NSWindowToolbarStyleUnified=1, NSColor=types.SimpleNamespace(clearColor=lambda: "clear"))
+        with patch.dict(sys.modules, {"AppKit": appkit}):
+            window.blend_title_bar(Native())
+        # A 52 px title row (an empty unified toolbar, no separator); the title bar's grey (painted by pywebview) is cleared and the
+        # page's own view is left alone.
+        self.assertEqual(calls, [("mask", 0b1111 | 1 << 15), ("transparent", True), ("title", 1), ("toolbar", "corvus", False),
+                                 ("toolbar style", 1), ("background", "titlebar", "clear")])
+
+    def test_the_window_closes_after_three_failed_checks_in_a_row(self):
+        self.assertEqual(self.watch([True, False, False, False, True]), ([4], 4, True))  # closed on the third failure, no more checks
+        self.assertEqual(self.watch([False, False, False]), ([3], 3, True))
+
+    def test_a_success_resets_the_count(self):
+        gone, checks, result = self.watch([False, False, True, False, False, True, False])
+        self.assertEqual((gone, result), ([], False))
+        self.assertEqual(self.watch([False, False, True, False, False, False])[0], [6])
+
+    def watch_server(self, ports: list[bool], states: list, no_pid_wait: float = 90.0, step: float = 1.0) -> tuple[list, bool]:
+        """A fake clock advances `step` per check; `states` gives process() per call (the last one repeats)."""
+        stop, gone, now, it, calls = threading.Event(), [], [0.0], iter(ports), []
+
+        def check() -> bool:
+            try:
+                value = next(it)
+            except StopIteration:
+                stop.set()
+                return True
+            now[0] += step
+            return value
+
+        def process():
+            calls.append(1)
+            return states[min(len(calls), len(states)) - 1]
+        result = window.watch_port(lambda: gone.append(now[0]), check, stop, 0.0, 3, process, no_pid_wait, lambda: now[0])
+        return gone, result
+
+    def test_a_restart_keeps_the_window_while_the_server_process_lives(self):
+        # An in-page Update: the port is closed for a long time, the process (same PID after the exec) is alive.
+        gone, result = self.watch_server([False] * 200 + [True], [True])
+        self.assertEqual((gone, result), ([], False))
+
+    def test_a_quit_closes_the_window_once_the_process_is_gone(self):
+        gone, result = self.watch_server([False] * 10, [False])
+        self.assertEqual(gone, [3.0])  # the third failed check, process dead
+        gone, result = self.watch_server([False] * 10, [True, True, False])  # alive for two looks, then gone
+        self.assertEqual((len(gone), result), (1, True))
+        self.assertGreater(gone[0], 3.0)
+
+    def test_without_a_pid_the_port_must_stay_closed_for_the_long_delay(self):
+        gone, _ = self.watch_server([False] * 200, [None], no_pid_wait=90.0)
+        self.assertEqual(gone, [91.0])  # closed since t=1 s, 90 s later
+        gone, _ = self.watch_server([False] * 50 + [True] + [False] * 50, [None], no_pid_wait=90.0)
+        self.assertEqual(gone, [])  # the page came back: the count starts over, never reaching 90 s
+
+    def test_the_pid_file_says_alive_dead_or_unknown(self):
+        pid_file = self.agents / "tasks-web.pid"
+        self.assertIsNone(window.server_alive(pid_file))
+        pid_file.parent.mkdir(parents=True)
+        for text in ("", "abc\n", "0\n", "-5\n"):
+            pid_file.write_text(text, encoding="utf-8")
+            self.assertIsNone(window.server_alive(pid_file), text)
+        pid_file.write_text("4242\n", encoding="utf-8")
+        self.assertTrue(window.server_alive(pid_file, lambda pid: pid == 4242))
+        self.assertFalse(window.server_alive(pid_file, lambda pid: False))
+        self.assertTrue(window.pid_alive(os.getpid()))
+        self.assertFalse(window.pid_alive(2 ** 22 + 12345 if os.name != "nt" else 0xFFFFFFF0))
+
+    def test_the_watcher_stops_when_the_window_closed_first(self):
+        stop = threading.Event()
+        stop.set()
+        called = Mock()
+        self.assertFalse(window.watch_port(called, lambda: False, stop, 0.0))
+        called.assert_not_called()
+
+    def test_port_open_tells_a_listening_port_from_a_closed_one(self):
+        with socket.socket() as server:
+            server.bind(("127.0.0.1", 0))
+            server.listen()
+            self.assertTrue(window.port_open(server.getsockname()[1]))
+        self.assertFalse(window.port_open(free_port()))
+
+    def test_one_instance_holds_the_lock_until_it_lets_go(self):
+        first, second = window.InstanceLock(self.agents / "w.lock"), window.InstanceLock(self.agents / "w.lock")
+        self.assertTrue(first.acquire())
+        self.assertFalse(second.acquire())
+        first.release()
+        self.assertTrue(second.acquire())
+        second.release()
+        second.release()  # twice is harmless
+
+    def test_a_raise_request_is_consumed_once_and_wakes_the_watcher(self):
+        path = self.agents / "w.raise"
+        self.assertFalse(window.take_raise_request(path))
+        window.request_raise(path)
+        self.assertTrue(path.exists())
+        self.assertTrue(window.take_raise_request(path))
+        self.assertFalse(window.take_raise_request(path))
+        stop, woke = threading.Event(), threading.Event()
+        thread = threading.Thread(target=window.watch_raise, args=(path, woke.set, stop, 0.01), daemon=True)
+        thread.start()
+        self.assertFalse(woke.wait(0.05))
+        window.request_raise(path)
+        self.assertTrue(woke.wait(2))
+        stop.set()
+        thread.join(2)
+        self.assertFalse(path.exists())
+
+    def test_a_second_start_raises_the_first_window_and_exits_cleanly(self):
+        holder = window.InstanceLock(self.agents / window.LOCK_FILE)
+        self.assertTrue(holder.acquire())
+        self.addCleanup(holder.release)
+        with patch.object(window, "AGENTS", self.agents), patch.object(window.sys, "platform", "linux"), \
+                patch.object(window, "run_window") as run:
+            self.assertEqual(window.main(["--port", "9"]), 0)
+        run.assert_not_called()
+        self.assertTrue((self.agents / window.RAISE_FILE).exists())
+
+    def test_a_window_that_fails_logs_the_error_and_opens_the_fallback_unless_told_not_to(self):
+        with patch.object(window, "AGENTS", self.agents), patch.object(window.sys, "platform", "linux"), \
+                patch.object(window, "run_window", side_effect=RuntimeError("no GTK")), patch.object(window, "fall_back") as fall_back:
+            self.assertEqual(window.main(["--port", "9"]), 1)
+            fall_back.assert_called_once_with(9)
+            self.assertEqual(window.main(["--port", "9", "--no-fallback"]), 1)
+            fall_back.assert_called_once()
+        self.assertIn("RuntimeError: no GTK", (self.agents / "tasks-web.log").read_text(encoding="utf-8"))
+        self.assertTrue(window.InstanceLock(self.agents / window.LOCK_FILE).acquire())  # the lock was released
+
+    def test_check_prints_the_interpreter_and_needs_only_the_import(self):
+        out = io.StringIO()
+        with patch.dict(sys.modules, {"webview": Mock()}), redirect_stdout(out):
+            self.assertEqual(window.main(["--check"]), 0)
+        self.assertEqual(out.getvalue(), f"{sys.executable}\n")
+
+    def test_the_window_settings_are_corvuss(self):
+        self.assertEqual((window.TITLE, window.SIZE, window.MIN_SIZE, window.APP_ID), ("Corvus", (1280, 840), (720, 480), install.BUNDLE_ID))
+        self.assertTrue(window.ICON.is_file())
+        self.assertEqual(window.page_url(8765), "http://127.0.0.1:8765/")
 
 
 if __name__ == "__main__":
