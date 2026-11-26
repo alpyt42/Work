@@ -682,6 +682,7 @@ class TasksWebTest(unittest.TestCase):
         self.assertEqual(self.raw(), original)
 
     def test_shutdown_requires_local_token_and_origin(self):
+        self.server.work = Path(self.temp.name)  # the quit marker goes to <work>/agents/: never this checkout's
         status, _ = self.request("POST", "/api/shutdown", {}, token=False)
         self.assertEqual(status, 403)
         status, _ = self.request("POST", "/api/shutdown", {}, origin=False)
@@ -1993,7 +1994,8 @@ class GitViewTest(unittest.TestCase):
         self.assertEqual((clean["state"], clean["message"], clean["pending"], clean["action"], clean["count"], clean["unsent"]),
                          ("clean", "Everything is saved and sent.", False, None, 0, 0))
         self.assertRegex(clean["last_saved"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$")
-        self.assertEqual(set(clean), {"name", "label", "state", "message", "pending", "action", "count", "unsent", "changes", "more", "last_saved", "version", "url", "web_url"})
+        self.assertEqual(set(clean), {"name", "label", "state", "message", "pending", "action", "count", "unsent", "changes", "more", "last_saved", "version", "url", "web_url",
+                                    "behind", "pullable", "fetched_at", "fetch_error"})
         self.write(self.acme, f"{self.NOTES}/2026-10-01-kickoff.md", "# Kickoff meeting\n\nChanged\n")
         one = self.card()
         self.assertEqual((one["state"], one["message"], one["pending"], one["action"]), ("changes", "1 note changed since the last save.", True, "save"))
@@ -2013,12 +2015,13 @@ class GitViewTest(unittest.TestCase):
         self.assertEqual(self.card()["state"], "clean")  # no automatic network call: the page does not fetch
         self.git(self.acme, "fetch", "-q", "origin")
         behind = self.card()
-        self.assertEqual((behind["state"], behind["message"], behind["action"], behind["pending"]),
-                         ("behind", "This brain was changed on another computer. Ask your agent to bring those changes here before saving.", None, False))
+        self.assertEqual((behind["state"], behind["message"], behind["action"], behind["pending"], behind["behind"], behind["pullable"]),
+                         ("behind", "1 change is on another computer, not here yet.", "pull", False, 1, True))
         # With notes to save, the brain is behind all the same, and still has something waiting.
         self.write(self.acme, f"{self.NOTES}/2026-10-04-risks.md", "# Risks\n")
         both = self.card()
-        self.assertEqual((both["state"], both["count"], both["action"], both["pending"]), ("behind", 1, None, True))
+        self.assertEqual((both["state"], both["count"], both["action"], both["pending"]), ("behind", 1, "pull", True))
+        self.assertEqual(both["message"], "1 change is on another computer, not here yet. Your unsaved notes stay as they are.")
 
     def test_saving_is_unavailable_where_it_cannot_be_done_safely(self):
         plain = self.work / "brain-plain"
@@ -2211,6 +2214,415 @@ class GitViewTest(unittest.TestCase):
             self.assertEqual((kwargs["env"]["GIT_TERMINAL_PROMPT"], kwargs["env"]["GIT_OPTIONAL_LOCKS"]), ("0", "0"))
             self.assertEqual(kwargs["stdin"], tasks_web.subprocess.DEVNULL)
         self.assertEqual(self.snapshot(self.acme), before)
+
+    # --- check online and pull
+
+    def fetch(self, payload=None, query="", **kwargs):
+        return self.request("POST", f"/api/git/fetch{query}", {} if payload is None else payload, **kwargs)
+
+    def pull(self, name="brain-acme", version=None, **kwargs):
+        return self.request("POST", f"/api/git/pull?brain={name}", {"version": version or self.card(name)["version"]}, **kwargs)
+
+    def spy_fetches(self):
+        """Count the real fetches (the only network call of GIT_FETCH) while the test runs."""
+        calls = []
+        real = web_git.run_git_write
+
+        def spy(repo, args, timeout):
+            if "fetch" in args[:3]:  # after the `-c core.sshCommand=…` of the check
+                calls.append((repo.name, args, timeout))
+            return real(repo, args, timeout)
+
+        patcher = patch.object(web_git, "run_git_write", side_effect=spy)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return calls
+
+    def test_checking_online_finds_what_others_sent_and_the_listing_stays_local(self):
+        self.other_clone_pushes()
+        self.assertEqual(self.card()["state"], "clean")
+        self.assertEqual((self.card()["fetched_at"], self.card()["fetch_error"]), (None, ""))
+        status, data = self.fetch(query="?brain=brain-acme")
+        self.assertEqual((status, data["fetch"]), (200, {"brain-acme": "fetched"}))
+        card = {item["name"]: item for item in data["brains"]}["brain-acme"]
+        self.assertEqual((card["state"], card["behind"], card["pullable"], card["action"], card["fetch_error"]), ("behind", 1, True, "pull", ""))
+        self.assertTrue(card["fetched_at"])
+        self.assertEqual(self.card()["fetched_at"], card["fetched_at"])  # the listing reports the last check from memory
+        self.assertEqual(self.card("brain-globex")["fetched_at"], None)  # the other brain was not asked
+
+    def test_every_brain_is_checked_without_a_brain_parameter(self):
+        status, data = self.fetch()
+        self.assertEqual((status, data["fetch"]), (200, {"brain-acme": "fetched", "brain-globex": "fetched"}))
+        self.assertEqual(sorted(card["name"] for card in data["brains"]), ["brain-acme", "brain-globex"])
+
+    def test_a_check_is_throttled_unless_forced(self):
+        calls = self.spy_fetches()
+        self.assertEqual(self.fetch(query="?brain=brain-acme")[1]["fetch"], {"brain-acme": "fetched"})
+        self.assertEqual(self.fetch(query="?brain=brain-acme")[1]["fetch"], {"brain-acme": "throttled"})
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.fetch({"force": True}, "?brain=brain-acme")[1]["fetch"], {"brain-acme": "fetched"})
+        self.assertEqual(len(calls), 2)
+        # No core.sshCommand here: plain `ssh`, which never asks anything (BatchMode).
+        self.assertEqual(calls[0][1], ["-c", "core.sshCommand=ssh -o BatchMode=yes", "fetch", "--quiet", "--prune", "--", "origin"])
+        self.assertEqual(calls[0][2], web_git.GIT_FETCH_TIMEOUT)
+
+    def test_a_check_waits_for_nothing_and_skips_a_busy_brain(self):
+        calls = self.spy_fetches()
+        self.assertTrue(tasks_web.GIT_LOCK.acquire(blocking=False))
+        try:
+            status, data = self.fetch({"force": True}, "?brain=brain-acme")
+        finally:
+            tasks_web.GIT_LOCK.release()
+        self.assertEqual((status, data["fetch"], calls), (200, {"brain-acme": "busy"}, []))
+
+    def test_a_failed_check_is_recorded_not_raised(self):
+        self.git(self.acme, "remote", "set-url", "origin", str(self.remotes / "missing.git"))
+        status, data = self.fetch({"force": True}, "?brain=brain-acme")
+        self.assertEqual((status, data["fetch"]), (200, {"brain-acme": "failed"}))
+        card = {item["name"]: item for item in data["brains"]}["brain-acme"]
+        self.assertEqual(card["state"], "clean")
+        self.assertTrue(card["fetch_error"].startswith("Could not check the online copy: "), card["fetch_error"])
+        self.assertTrue(card["fetched_at"])
+        self.assertEqual(self.card()["fetch_error"], card["fetch_error"])
+        self.git(self.acme, "remote", "set-url", "origin", str(self.remotes / "brain-acme.git"))
+        self.assertEqual(self.fetch({"force": True}, "?brain=brain-acme")[1]["fetch"], {"brain-acme": "fetched"})
+        self.assertEqual(self.card()["fetch_error"], "")
+
+    def test_a_brain_with_no_online_copy_is_not_fetched(self):
+        self.make_brain("brain-local", "acme", {}, remote=False)
+        calls = self.spy_fetches()
+        status, data = self.fetch({"force": True}, "?brain=brain-local")
+        self.assertEqual((status, data["fetch"], calls), (200, {"brain-local": "unavailable"}, []))
+        self.assertEqual(self.fetch({"force": True}, "?brain=brain-nope")[0], 400)
+
+    def test_check_and_pull_need_the_token_the_origin_and_a_valid_body(self):
+        for token, origin, expected in ((False, True, 403), (True, False, 403)):
+            self.assertEqual(self.fetch(token=token, origin=origin)[0], expected)
+            self.assertEqual(self.pull(version="0" * 32, token=token, origin=origin)[0], expected)
+        self.assertEqual(self.fetch(origin=False, headers={"Origin": "http://evil.example"})[0], 403)
+        self.assertEqual(self.fetch({"force": "yes"})[0], 400)
+        self.assertEqual(self.fetch({"other": True})[0], 400)
+        self.assertEqual(self.request("POST", "/api/git/pull?brain=brain-acme", {"version": "nope"})[0], 400)
+        self.assertEqual(self.request("POST", "/api/git/pull", {"version": "0" * 32})[0], 400)  # the brain is required
+        self.assertEqual(self.request("POST", "/api/git/pull?brain=../x", {"version": "0" * 32})[0], 400)
+
+    def test_pull_fast_forwards_and_the_card_turns_clean(self):
+        self.other_clone_pushes()
+        self.fetch({"force": True}, "?brain=brain-acme")
+        status, data = self.pull()
+        self.assertEqual((status, data["ok"], data["message"], data["pulled"]), (200, True, "Brought 1 change here.", 1))
+        self.assertEqual((data["brain"]["state"], data["brain"]["behind"], data["brain"]["action"]), ("clean", 0, None))
+        self.assertEqual(self.head(self.acme), self.remote_head())
+        self.assertTrue((self.acme / "elsewhere.md").is_file())
+        self.assertEqual(self.git(self.acme, "rev-list", "--merges", "--count", "HEAD").strip(), "0")
+
+    def test_pull_fetches_on_its_own_and_keeps_unsaved_notes_that_do_not_clash(self):
+        self.other_clone_pushes()
+        self.fetch({"force": True}, "?brain=brain-acme")
+        other = self.root / "other"  # a second commit, not yet fetched when the person looked
+        self.write(other, "elsewhere-too.md", "# Elsewhere too\n")
+        self.git(other, "add", "-A")
+        self.git(other, "-c", "user.name=Other Person", "-c", "user.email=other@acme.example", "-c", f"core.hooksPath={self.no_hooks}", "commit", "-q", "-m", "chore: more")
+        self.git(other, "push", "-q", "origin", "main")
+        mine = self.write(self.acme, f"{self.NOTES}/2026-10-04-risks.md", "# Risks\n")
+        card = self.card()
+        self.assertEqual((card["state"], card["pullable"], card["count"]), ("behind", True, 1))
+        status, data = self.pull(version=card["version"])
+        self.assertEqual((status, data["pulled"]), (200, 2))
+        self.assertEqual((data["brain"]["state"], data["brain"]["count"]), ("changes", 1))
+        self.assertEqual(mine.read_text(encoding="utf-8"), "# Risks\n")
+
+    def test_pull_is_refused_when_both_sides_have_commits(self):
+        self.other_clone_pushes()
+        self.write(self.acme, f"{self.NOTES}/2026-10-04-risks.md", "# Risks\n")
+        self.commit(self.acme)
+        self.fetch({"force": True}, "?brain=brain-acme")
+        card = self.card()
+        self.assertEqual((card["state"], card["pullable"], card["action"], card["unsent"]), ("behind", False, None, 1))
+        self.assertIn("Ask your agent", card["message"])
+        before = self.snapshot(self.acme)
+        status, data = self.pull()
+        self.assertEqual((status, data["error"]), (409, card["message"]))
+        self.assertEqual(self.snapshot(self.acme), before)
+
+    def test_pull_is_refused_when_a_local_change_would_be_overwritten(self):
+        self.write(self.acme, "elsewhere.md", "# Mine\n")
+        self.other_clone_pushes()
+        self.fetch({"force": True}, "?brain=brain-acme")
+        before = self.snapshot(self.acme)
+        status, data = self.pull()
+        self.assertEqual(status, 409, data)
+        self.assertTrue(data["error"].startswith("Not brought here: your changes to “elsewhere” would be overwritten"), data["error"])
+        self.assertTrue(data["error"].endswith("Nothing was changed."), data["error"])
+        self.assertEqual(self.snapshot(self.acme), before)
+        self.assertEqual(self.card()["state"], "behind")
+
+    def test_pull_is_refused_when_the_brain_is_not_behind_or_the_notes_changed(self):
+        self.assertEqual(self.pull(), (409, {"error": "Nothing to bring here: this brain is up to date."}))
+        self.other_clone_pushes()
+        self.fetch({"force": True}, "?brain=brain-acme")
+        stale = self.card()["version"]
+        self.write(self.acme, f"{self.NOTES}/2026-10-04-risks.md", "# Risks\n")
+        self.assertEqual(self.pull(version=stale), (409, {"error": tasks_web.GIT_STALE}))
+        self.assertEqual(self.pull("brain-local", version="0" * 32)[0], 400)
+
+    def test_pull_says_so_when_the_online_copy_cannot_be_reached(self):
+        self.other_clone_pushes()
+        self.fetch({"force": True}, "?brain=brain-acme")
+        version = self.card()["version"]
+        self.git(self.acme, "remote", "set-url", "origin", str(self.remotes / "missing.git"))
+        status, data = self.pull(version=version)
+        self.assertEqual(status, 502, data)
+        self.assertTrue(data["error"].startswith("Not brought here: Could not check the online copy"), data["error"])
+        self.assertNotEqual(self.head(self.acme), self.remote_head())
+
+    def test_a_pull_is_refused_when_a_save_keeps_running(self):
+        self.other_clone_pushes()
+        self.fetch({"force": True}, "?brain=brain-acme")
+        version = self.card()["version"]
+        self.assertTrue(tasks_web.GIT_LOCK.acquire(blocking=False))
+        try:
+            with patch.object(web_git, "GIT_LOCK_WAIT", 0.3):
+                status, data = self.pull(version=version)
+        finally:
+            tasks_web.GIT_LOCK.release()
+        self.assertEqual((status, data), (409, {"error": "Another save is already running."}))
+
+    def hold(self, lock, seconds):
+        """Hold `lock` from another thread for `seconds` (a check of the online copy, an edit or a tool of the page)."""
+        taken = threading.Event()
+
+        def run():
+            with lock:
+                taken.set()
+                time.sleep(seconds)
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        self.assertTrue(taken.wait(5))
+        self.addCleanup(thread.join, 10)
+        return thread
+
+    def test_a_save_or_a_pull_waits_for_a_check_of_the_online_copy(self):
+        self.write(self.acme, f"{self.NOTES}/2026-10-04-risks.md", "# Risks\n")
+        self.hold(web_git.GIT_LOCK, 1)  # the background check of another brain, still running
+        status, result = self.save()
+        self.assertEqual((status, result["ok"]), (200, True), result)
+        self.other_clone_pushes()
+        self.fetch({"force": True}, "?brain=brain-acme")
+        version = self.card()["version"]
+        self.hold(web_git.GIT_LOCK, 1)
+        status, data = self.pull(version=version)
+        self.assertEqual((status, data["ok"]), (200, True), data)
+
+    def test_a_check_skips_a_brain_while_a_save_waits(self):
+        self.write(self.acme, f"{self.NOTES}/2026-10-04-risks.md", "# Risks\n")
+        version = self.card()["version"]
+        calls = self.spy_fetches()
+        answers = []
+        self.assertTrue(web_git.GIT_LOCK.acquire(blocking=False))  # a check of another brain is running
+        try:
+            saving = threading.Thread(target=lambda: answers.append(self.save(version=version)), daemon=True)
+            saving.start()
+            for _ in range(250):
+                if web_git.GIT_WAITING:
+                    break
+                time.sleep(0.02)
+            self.assertEqual(web_git.GIT_WAITING, 1)
+            self.assertEqual(self.fetch({"force": True}, "?brain=brain-acme")[1]["fetch"], {"brain-acme": "busy"})
+        finally:
+            web_git.GIT_LOCK.release()
+        saving.join(60)
+        self.assertEqual(len(answers), 1)
+        self.assertEqual((answers[0][0], answers[0][1]["ok"]), (200, True), answers)  # waited, then saved: no false "already running"
+        self.assertEqual(web_git.GIT_WAITING, 0)
+        # The lock free but a write waiting for it: the check still steps aside, so it never cuts in before the write.
+        with patch.object(web_git, "GIT_WAITING", 1):
+            self.assertEqual(self.fetch({"force": True}, "?brain=brain-acme")[1]["fetch"], {"brain-acme": "busy"})
+        self.assertEqual(calls, [])
+
+    def spy_writes(self):
+        """Each Git write with whether the page's write lock and tool lock were held while it ran."""
+        calls = []
+        real = web_git.run_git_write
+
+        def spy(repo, args, timeout):
+            calls.append((list(args), web_git.WRITE_LOCK.locked(), web_git.TOOL_LOCK.locked()))
+            return real(repo, args, timeout)
+
+        patcher = patch.object(web_git, "run_git_write", side_effect=spy)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return calls
+
+    def test_the_fast_forward_and_the_staging_hold_off_the_page_writes(self):
+        self.other_clone_pushes()
+        self.fetch({"force": True}, "?brain=brain-acme")
+        calls = self.spy_writes()
+        self.assertEqual(self.pull()[0], 200)
+        held = [(next(part for part in args if part in ("fetch", "merge")), write, tool) for args, write, tool in calls]
+        self.assertEqual(held, [("fetch", False, False), ("merge", True, True)])  # the network part never stalls an edit
+        self.write(self.acme, f"{self.NOTES}/2026-10-04-risks.md", "# Risks\n")
+        calls.clear()
+        self.assertEqual(self.save()[1]["ok"], True)
+        self.assertEqual([(args[0], write, tool) for args, write, tool in calls], [("add", True, True), ("commit", False, False), ("push", False, False)])
+        self.assertFalse(web_git.WRITE_LOCK.locked() or web_git.TOOL_LOCK.locked() or web_git.GIT_LOCK.locked())
+
+    def test_a_pull_or_a_save_waits_for_an_edit_or_a_tool_then_says_so(self):
+        self.other_clone_pushes()
+        self.fetch({"force": True}, "?brain=brain-acme")
+        version = self.card()["version"]
+        head = self.head(self.acme)
+        with patch.object(web_git, "GIT_PAGE_LOCK_WAIT", 0.3):
+            for lock in (web_git.WRITE_LOCK, web_git.TOOL_LOCK):
+                self.assertTrue(lock.acquire(blocking=False))
+                try:
+                    self.assertEqual(self.pull(version=version), (409, {"error": "Corvus is saving a change; try again in a moment."}))
+                finally:
+                    lock.release()
+                self.assertEqual(self.head(self.acme), head)
+        # A short edit is simply waited for.
+        self.hold(web_git.WRITE_LOCK, 0.5)
+        self.assertEqual(self.pull(version=version)[0], 200)
+        self.write(self.acme, f"{self.NOTES}/2026-10-04-risks.md", "# Risks\n")
+        before = self.snapshot(self.acme)
+        with patch.object(web_git, "GIT_PAGE_LOCK_WAIT", 0.3):
+            self.assertTrue(web_git.TOOL_LOCK.acquire(blocking=False))
+            try:
+                self.assertEqual(self.save(), (409, {"error": "Corvus is saving a change; try again in a moment."}))
+            finally:
+                web_git.TOOL_LOCK.release()
+        self.assertEqual(self.snapshot(self.acme), before)
+        self.assertEqual(self.save()[1]["ok"], True)
+
+    def test_a_pull_never_stashes_the_unsaved_notes(self):
+        # merge.autoStash=true would stash a clashing note, fast-forward, then leave conflict markers in it and report success.
+        self.git(self.acme, "config", "merge.autoStash", "true")
+        kickoff = f"{self.NOTES}/2026-10-01-kickoff.md"
+        other = self.root / "other"
+        subprocess.run(["git", "clone", "-q", str(self.remotes / "brain-acme.git"), str(other)], check=True)
+        self.write(other, kickoff, "# Kickoff meeting\n\nAgenda one\nAgenda two, online\n")
+        self.git(other, "-c", "user.name=Other Person", "-c", "user.email=other@acme.example", "-c", f"core.hooksPath={self.no_hooks}", "commit", "-q", "-am", "chore: online")
+        self.git(other, "push", "-q", "origin", "main")
+        self.fetch({"force": True}, "?brain=brain-acme")
+        self.write(self.acme, kickoff, "# Kickoff meeting\n\nAgenda one\nAgenda two, here\n")
+        before = self.snapshot(self.acme)
+        calls = self.spy_writes()
+        status, data = self.pull()
+        self.assertEqual(status, 409, data)
+        self.assertEqual(data["error"], "Not brought here: your changes to “2026-10-01-kickoff” would be overwritten by the online version. Ask your agent to bring them here. Nothing was changed.")
+        self.assertEqual(self.snapshot(self.acme), before)
+        self.assertEqual(self.git(self.acme, "stash", "list"), "")
+        merge = next(args for args, _, _ in calls if "merge" in args)
+        self.assertEqual(merge, ["-c", "merge.autoStash=false", "merge", "--ff-only", "--no-autostash", "--no-overwrite-ignore", "@{upstream}"])
+
+    def test_a_file_that_leaves_git_stays_here_when_the_brain_ignores_it(self):
+        local = self.write(self.acme, ".data/machine.json", '{"inbox": "/somewhere/on/this/computer"}\n')
+        gone = self.write(self.acme, f"{self.NOTES}/2026-10-05-old.md", "# Old\n")
+        self.commit(self.acme)
+        self.git(self.acme, "-c", f"core.hooksPath={self.no_hooks}", "push", "-q", "origin", "main")
+        other = self.root / "other"
+        subprocess.run(["git", "clone", "-q", str(self.remotes / "brain-acme.git"), str(other)], check=True)
+        self.git(other, "rm", "-q", "--cached", ".data/machine.json")  # moved out of Git, kept on the other computer
+        self.git(other, "rm", "-q", f"{self.NOTES}/2026-10-05-old.md")  # really deleted
+        with (other / ".gitignore").open("a", encoding="utf-8") as handle:
+            handle.write("/.data/machine.json\n")
+        self.git(other, "add", ".gitignore")
+        self.git(other, "-c", "user.name=Other Person", "-c", "user.email=other@acme.example", "-c", f"core.hooksPath={self.no_hooks}", "commit", "-q", "-m", "chore: keep machine.json local")
+        self.git(other, "push", "-q", "origin", "main")
+        self.fetch({"force": True}, "?brain=brain-acme")
+        status, data = self.pull()
+        self.assertEqual((status, data["ok"]), (200, True), data)
+        self.assertEqual(self.head(self.acme), self.remote_head())
+        self.assertEqual(local.read_text(encoding="utf-8"), '{"inbox": "/somewhere/on/this/computer"}\n')
+        self.assertFalse(gone.exists())
+        self.assertEqual(self.git(self.acme, "ls-files", ".data/machine.json"), "")
+        self.assertEqual(data["brain"]["state"], "clean")  # ignored: nothing to save
+
+    def reference_hook(self, ref_prefix):
+        """A reference-transaction hook that stops Git while it holds the lock of a ref under `ref_prefix` (and says it got there)."""
+        reached = self.root / "reached"
+        hook = self.acme / ".git/hooks/reference-transaction"
+        hook.write_text(f"#!/bin/sh\n[ \"$1\" = prepared ] || exit 0\nif grep -q ' {ref_prefix}'; then touch '{reached.as_posix()}'; sleep 60; fi\nexit 0\n",
+                        encoding="utf-8", newline="\n")
+        hook.chmod(0o755)
+        return reached
+
+    def stale_locks(self, brain):
+        return sorted(str(path.relative_to(brain / ".git")) for path in (brain / ".git").rglob("*.lock"))
+
+    def test_a_pull_stopped_at_its_time_limit_clears_its_locks_and_says_so(self):
+        self.other_clone_pushes()
+        self.fetch({"force": True}, "?brain=brain-acme")
+        version = self.card()["version"]
+        reached = self.reference_hook("refs/heads/")  # the fast-forward stops while it holds the branch's lock
+        with patch.object(web_git, "GIT_PULL_TIMEOUT", 5):
+            status, data = self.pull(version=version)
+        self.assertTrue(reached.exists())
+        self.assertEqual((status, data), (504, {"error": "The update was interrupted (time limit). Ask your agent to check this brain."}))
+        self.assertEqual(self.stale_locks(self.acme), [])
+        self.assertNotEqual(self.head(self.acme), self.remote_head())
+        self.assertFalse(web_git.WRITE_LOCK.locked() or web_git.TOOL_LOCK.locked() or web_git.GIT_LOCK.locked())
+
+    def test_a_check_stopped_at_its_time_limit_clears_its_locks(self):
+        self.other_clone_pushes()
+        reached = self.reference_hook("refs/remotes/")
+        stale = self.write(self.acme, ".git/refs/remotes/origin/other.lock", "")  # a lock older than the check: never removed
+        os.utime(stale, (time.time() - 3600, time.time() - 3600))
+        with patch.object(web_git, "GIT_FETCH_TIMEOUT", 5):
+            status, data = self.fetch({"force": True}, "?brain=brain-acme")
+        self.assertTrue(reached.exists())
+        self.assertEqual((status, data["fetch"]), (200, {"brain-acme": "failed"}))
+        card = {item["name"]: item for item in data["brains"]}["brain-acme"]
+        self.assertEqual(card["fetch_error"], "Could not check the online copy: the online copy did not answer in time.")
+        self.assertEqual(self.stale_locks(self.acme), ["refs/remotes/origin/other.lock"])
+        (self.acme / ".git/hooks/reference-transaction").unlink()
+        stale.unlink()
+        self.assertEqual(self.fetch({"force": True}, "?brain=brain-acme")[1]["fetch"], {"brain-acme": "fetched"})
+        self.assertEqual(self.pull()[0], 200)
+
+    def test_a_check_never_lets_ssh_ask_and_keeps_the_brain_identity(self):
+        recorded = self.root / "ssh-args"
+        fake = self.root / "fake-ssh" / "ssh"  # named ssh, so Git passes it OpenSSH options
+        fake.parent.mkdir()
+        fake.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{recorded.as_posix()}'\nexit 255\n", encoding="utf-8", newline="\n")
+        fake.chmod(0o755)
+        self.git(self.acme, "config", "core.sshCommand", f"'{fake.as_posix()}' -i /keys/id_acme -o IdentitiesOnly=yes")
+        self.git(self.acme, "remote", "set-url", "origin", "ssh://git@example.invalid/acme/brain-acme.git")
+        status, data = self.fetch({"force": True}, "?brain=brain-acme")
+        self.assertEqual((status, data["fetch"]), (200, {"brain-acme": "failed"}))
+        arguments = recorded.read_text(encoding="utf-8").splitlines()
+        for option in (["-i", "/keys/id_acme"], ["-o", "IdentitiesOnly=yes"], ["-o", "BatchMode=yes"]):
+            self.assertTrue(any(arguments[index:index + 2] == option for index in range(len(arguments))), (option, arguments))
+        # The environment's own SSH command is left alone: no -c, and the variable reaches Git as it is.
+        calls = []
+        real = tasks_web.subprocess.Popen
+
+        def spy(command, **kwargs):
+            calls.append((command, kwargs))
+            return real(command, **kwargs)
+
+        own = f"'{fake.as_posix()}' -o IdentitiesOnly=yes"
+        with patch.dict(os.environ, {"GIT_SSH_COMMAND": own}), patch.object(tasks_web.subprocess, "Popen", side_effect=spy):
+            self.fetch({"force": True}, "?brain=brain-acme")
+            self.assertEqual(web_git.git_fetch_ssh(self.acme), [])
+        fetches = [(command, kwargs) for command, kwargs in calls if "fetch" in command]
+        self.assertEqual(len(fetches), 1)
+        self.assertFalse(any(part.startswith("core.sshCommand") for part in fetches[0][0]), fetches[0][0])
+        self.assertEqual(fetches[0][1]["env"]["GIT_SSH_COMMAND"], own)
+        with patch.dict(os.environ, {"GIT_SSH": "plink.exe"}):
+            self.assertEqual(web_git.git_fetch_ssh(self.acme), ["-c", f"core.sshCommand='{fake.as_posix()}' -i /keys/id_acme -o IdentitiesOnly=yes -o BatchMode=yes"])
+        self.git(self.acme, "config", "--unset", "core.sshCommand")
+        with patch.dict(os.environ, {"GIT_SSH": "plink.exe"}):
+            self.assertEqual(web_git.git_fetch_ssh(self.acme), [])  # GIT_SSH is the command Git uses: left alone
+
+    def test_listing_never_fetches_even_when_behind(self):
+        self.other_clone_pushes()
+        calls = self.spy_fetches()
+        with patch.object(web_git, "run_git_write", side_effect=AssertionError("no write")):
+            self.card()
+            self.request("GET", "/api/git?brain=brain-globex")
+        self.assertEqual(calls, [])
 
     # --- See changes
 
@@ -2464,7 +2876,7 @@ class GitViewTest(unittest.TestCase):
         for route in ("save", "send"):
             status, data = self.request("POST", f"/api/git/{route}?brain=brain-acme", {"version": self.card()["version"]})
             self.assertEqual(status, 409, route)
-            self.assertEqual(data["error"], "This brain was changed on another computer. Ask your agent to bring those changes here before saving.")
+            self.assertEqual(data["error"], "This brain was changed on another computer. Sync those changes here before saving.")
         self.assertEqual(self.head(self.acme), head)
         self.assertEqual(self.git(self.acme, "diff", "--cached", "--name-only"), "")
         self.assertNotEqual(version, self.card()["version"])
@@ -2497,11 +2909,13 @@ class GitViewTest(unittest.TestCase):
         version = self.card()["version"]
         self.assertTrue(tasks_web.GIT_LOCK.acquire(blocking=False))
         try:
-            status, data = self.save(version=version)
+            with patch.object(web_git, "GIT_LOCK_WAIT", 0.3):  # waited for, then refused (20 s and more in real use)
+                status, data = self.save(version=version)
         finally:
             tasks_web.GIT_LOCK.release()
         self.assertEqual((status, data), (409, {"error": "Another save is already running."}))
         self.assertEqual(self.card()["state"], "changes")
+        self.assertEqual(web_git.GIT_LOCK_WAIT, web_git.GIT_FETCH_TIMEOUT + 5)
 
     def test_send_pushes_what_is_saved_even_with_notes_still_to_save(self):
         self.write(self.acme, f"{self.NOTES}/2026-10-04-risks.md", "# Risks\n")
@@ -2770,6 +3184,103 @@ class GitViewPageTest(unittest.TestCase):
         self.script = app_script()
         self.styles = (self.STATIC / "app.css").read_text(encoding="utf-8")
 
+    def test_the_mac_window_has_a_title_row_and_two_sidebar_columns(self):
+        # window-shell.js runs before the first paint (no defer) and marks only the page that the macOS window opened.
+        self.assertIn('<script src="/window-shell.js"></script>', self.page)
+        self.assertLess(self.page.index('href="/app.css"'), self.page.index('src="/window-shell.js"'))
+        shell = (self.STATIC / "window-shell.js").read_text(encoding="utf-8")
+        self.assertIn("get('shell')", shell)
+        self.assertIn("if (shell !== 'mac') return;", shell)
+        self.assertIn("classList.add('mac-window')", shell)
+        # The empty parts of the sidebar and of the view's bar move the window (pywebview); their controls do not.
+        self.assertIn('<aside id="sidebar" class="sidebar pywebview-drag-region"', self.page)
+        self.assertIn('<header class="view-header pywebview-drag-region">', self.page)
+        self.assertIn('<div class="view-bar pywebview-drag-region">', self.page)
+        self.assertNotIn("window-drag", self.page + self.styles)
+        # A 52 px title row; wide, a rail of icons beside the brain's card, which folds away and peeks on hover.
+        self.assertIn(".mac-window { --titlebar-h: 52px; --sidebar-rail-w: 56px; --list-w: 236px; }", self.styles)
+        self.assertIn(".mac-window .app.sidebar-collapsed .sidebar::after {", self.styles)  # the hairline between the rail and the page
+        self.assertIn(".mac-window .panel-head { padding-top: calc(14px + var(--titlebar-h)); }", self.styles)
+        self.assertIn(".mac-window .app { --sidebar-w: calc(var(--sidebar-rail-w) + var(--list-w) + 8px); }", self.styles)
+        self.assertIn(".mac-window .app.sidebar-collapsed, .mac-window .app.sidebar-peek { --sidebar-w: var(--sidebar-rail-w); }", self.styles)
+        self.assertIn(".mac-window .sidebar-scroll { display: contents; }", self.styles)
+        self.assertIn(".mac-window .sidebar .nav .lucide, .mac-window .sidebar-footer .lucide { width: 20px; height: 20px; }", self.styles)
+        self.assertIn(".mac-window #sidebarToggle { position: fixed; top: 10px; left: 84px; z-index: 56; margin: 0; }", self.styles)
+        self.assertNotIn(".mac-window #newNoteButton", self.styles)  # New note keeps its words, as New action does
+        # Above the projects, the card names the view they open; a project chosen while the card peeks opens the hovered view.
+        self.assertIn('<p id="cardView" class="card-view" aria-live="polite"></p>', self.page)
+        self.assertLess(self.page.index('id="cardView"'), self.page.index('id="projectsHeading"'))
+        self.assertIn("function pendingPeekView() { return peeking() ? peekView : ''; }", self.script)
+        self.assertIn("const target = pendingPeekView();", self.script)
+        self.assertIn("if (target && target !== view) setView(target);", self.script)
+        self.assertNotIn("showCardView(); // the view named above its projects", self.script)  # only shown while peeking
+        self.assertIn("const icon = ids[NAV_BUTTONS[peekView]]?.querySelector('svg')?.cloneNode(true);", self.script)
+        self.assertIn("'app', 'sidebar', 'cardView', 'sidebarResizer',", self.script)
+        self.assertIn(".card-view { display: none; }", self.styles)
+        # Only while the card peeks: pinned, the view header names the view already.
+        self.assertIn(".mac-window .app.sidebar-peek .card-view:not(:empty) {", self.styles)
+        self.assertNotIn(".card-view:empty, .mac-window .app:not(.sidebar-peek) .card-view", self.styles)
+        # Back to a wide window, the card follows the view again (it stayed away from the remembered choice while narrow).
+        self.assertIn("endPeek(); fitCardToView(); updateSidebarToggle(); });", self.script)
+        # The detail panel's head keeps the room of the title row only when it runs under the window buttons (a narrow window).
+        self.assertNotIn("\n.mac-window .panel-head {", self.styles)
+        # The action's title grows again when its width changes (the panel's handle, the window): no line is cut.
+        self.assertIn("if (entry.contentRect.width === titleFieldWidth) return;", self.script)
+        self.assertIn("}).observe(ids.editorActionTitle);", self.script)
+        # The brain's sticker stays at the top of the rail when the card is unfolded or peeks.
+        self.assertIn(".mac-window .app:not(.sidebar-collapsed) .sidebar::before {", self.styles)
+        # The views of the rail (not Archives, Tools, Sync or Settings) show the folded card while the pointer is on them.
+        self.assertIn("for (const entry of ids.sidebar.querySelectorAll('.nav[aria-labelledby=\"viewsHeading\"] .nav-item')) {", self.script)
+        self.assertIn("entry.addEventListener('mouseenter', () => {\n    startPeek();", self.script)
+        self.assertNotIn("ids.sidebarToggle.addEventListener('mouseenter', startPeek);", self.script)
+        self.assertIn("entry.addEventListener('mouseleave', () => {", self.script)
+        self.assertNotIn("part.addEventListener('mouseleave', leavePeek);", self.script)  # the per-move check covers the card
+        self.assertIn("peekTimer = setTimeout(() => { peekTimer = 0; endPeek(); }, 120);", self.script)
+        # WebKit may miss the pointer leaving: every move is checked, and leaving the window or its focus ends the peek.
+        self.assertIn("const PEEK_KEEPERS = '.nav[aria-labelledby=\"viewsHeading\"] .nav-item, .sidebar-top, .projects';", self.script)
+        self.assertIn("if (event.target instanceof Element && event.target.closest(PEEK_KEEPERS)) keepPeek(); else leavePeek();", self.script)
+        self.assertIn("document.documentElement.addEventListener('mouseleave', () => { if (!brainMenuOpen()) endPeek(); });", self.script)
+        self.assertIn("window.addEventListener('blur', () => endPeek());", self.script)
+        # The highlight follows the pointer while the card peeks.
+        self.assertIn("if (pendingPeekView()) ids[NAV_BUTTONS[peekView]]?.classList.add('is-peeked');", self.script)
+        self.assertIn(".mac-window .app.sidebar-peek .sidebar .nav-item.is-peeked { background: var(--accent-soft);", self.styles)
+        self.assertIn("grid-template-rows: 60px minmax(0, 1fr) auto;", self.styles)  # the rail's icons never move under the pointer
+        # The projects filter neither Archives, Tools, Sync nor Settings: there the card steps aside, the remembered choice untouched.
+        self.assertIn("const NO_PROJECT_VIEWS = ['archives', 'tools', 'git', 'settings'];", self.script)
+        self.assertIn("ids.app.classList.toggle('sidebar-collapsed', off || readSidebarCollapsed());", self.script)
+        self.assertIn("fitCardToView(); // the Mac window's card: away on the views without projects", self.script)
+        self.assertIn("ids.app.classList.remove('card-off'); // and on a view without projects, a click asks for the card all the same", self.script)
+
+    def test_the_sidebar_and_the_panel_resize_with_a_handle(self):
+        # A handle on the sidebar's edge (its card's in the Mac window) and on the detail panel's; the width is remembered.
+        self.assertIn('<div id="sidebarResizer" class="resizer sidebar-resizer" role="separator" aria-orientation="vertical"', self.page)
+        self.assertIn('<div id="panelResizer" class="resizer panel-resizer" role="separator" aria-orientation="vertical"', self.page)
+        self.assertIn("'sidebarResizer', 'panelResizer',", self.script)
+        self.assertIn("makeResizable(ids.sidebarResizer, macWindow ? {variable: '--list-w', min: 180, max: () => 440} : {variable: '--sidebar-full-w', min: 200, max: () => 440});", self.script)
+        # The panel keeps the list at 480 px at least, and has no handle where it is laid out between the sidebar and the edge.
+        self.assertIn("max: () => Math.max(PANEL_MIN, Math.min(innerWidth * .6, innerWidth - ids.sidebar.getBoundingClientRect().width - LIST_MIN)),", self.script)
+        self.assertIn("const LIST_MIN = 480;", self.script)
+        self.assertIn("@media (max-width: 1243px) { .app:not(.sidebar-collapsed) .panel-resizer { display: none; } }", self.styles)
+        self.assertIn("@media (max-width: 1027px) { .app.sidebar-collapsed .panel-resizer { display: none; } }", self.styles)
+        # A drag ends once, whatever ends it: the handle can go away mid-drag (the sidebar folds, the panel closes).
+        self.assertIn("handle.addEventListener('lostpointercapture', end);", self.script)
+        self.assertIn("handle.removeEventListener('lostpointercapture', end);", self.script)
+        self.assertIn("if (ended) return;", self.script)
+        # A file or a link dropped outside the zones that take drops does not replace the app.
+        self.assertIn("types.includes('Files') || types.includes('text/uri-list')", self.script)
+        self.assertIn("event.dataTransfer.dropEffect = 'none';", self.script)
+        self.assertIn("document.addEventListener('drop', event => { if (foreignDrop(event)) event.preventDefault(); });", self.script)
+        self.assertIn("handle.addEventListener('dblclick', () => resetWidth(variable));", self.script)
+        self.assertIn("localStorage.setItem(`corvus-width${variable}`", self.script)
+        shell = (self.STATIC / "window-shell.js").read_text(encoding="utf-8")
+        self.assertIn("for (const variable of ['--sidebar-full-w', '--list-w', '--panel-w']) {", shell)  # set back before the first paint
+        self.assertIn("if (/^\\d{2,4}px$/.test(width)) document.documentElement.style.setProperty(variable, width);", shell)
+        self.assertIn(".resizer { display: none; }", self.styles)  # none in the drawer of a narrow window
+        self.assertIn(".app.sidebar-collapsed .sidebar-resizer, .app.sidebar-peek .sidebar-resizer { display: none; }", self.styles)
+        self.assertIn("endPeek(); // a click on the button while the card peeks keeps it open", self.script)
+        self.assertIn("if (macWindow && !narrowQuery.matches) ids.app.before(ids.sidebarToggle);", self.script)
+        self.assertIn("return macWindow && item !== ids.brainButton;", self.script)
+
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_the_script_parses(self):
         self.assertTrue(app_scripts())
@@ -2795,6 +3306,37 @@ class GitViewPageTest(unittest.TestCase):
         self.assertIn('data-view="git"', self.page)
         self.assertIn("Nothing is saved or sent until you click.", self.page)
         self.assertNotIn("Read only", self.page)
+
+    def test_check_online_and_pull_are_wired_in_the_sync_view_and_the_sidebar(self):
+        self.assertIn('id="gitCheckButton"', self.page)
+        self.assertIn('id="gitCheckInfo"', self.page)
+        sidebar = self.page[self.page.index('id="syncPullButton"'):self.page.index('id="archivesButton"')]
+        self.assertIn('class="update-button"', sidebar)
+        self.assertIn("hidden", sidebar.split(">", 1)[0])
+        self.assertIn('id="syncPullButtonLabel"', sidebar)
+        self.assertLess(self.page.index('id="updateButton"'), self.page.index('id="syncPullButton"'))
+        self.assertIn("'syncPullButton'", self.script)
+        self.assertIn("updatePost('/api/git/fetch'", self.script)
+        self.assertIn("/api/git/${action}", self.script)
+        self.assertIn("runGit(card, 'pull')", self.script)
+        self.assertIn("ids.syncPullButton.addEventListener('click', pullCurrentBrain)", self.script)
+        self.assertIn("ids.gitCheckButton.addEventListener('click', () => fetchGit({force: true}))", self.script)
+        self.assertIn("fetchGitInBackground();\nsetInterval(fetchGitInBackground, GIT_FETCH_EVERY);", self.script)
+        self.assertIn("function fetchGitIfStale() { if (Date.now() - gitLastFetchAt > GIT_FOCUS_AFTER) fetchGitInBackground(); }", self.script)
+        self.assertIn("window.addEventListener('focus', fetchGitIfStale);", self.script)
+        # A page loaded in a background tab skips the check at start: it runs when the page is first shown.
+        self.assertIn("document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchGitIfStale(); });", self.script)
+        # The card's button runs the card's own action: Pull pulls, it never sends.
+        self.assertIn("runGit(card, card.action === 'pull' ? 'pull' : 'send')", self.script)
+        self.assertNotIn("askGitSave(card) : runGit(card, 'send'))", self.script)
+        self.assertIn("GIT_FETCH_EVERY = 10 * 60 * 1000", self.script)
+        self.assertIn("GIT_FOCUS_AFTER = 5 * 60 * 1000", self.script)
+        self.assertIn("refresh(); // the actions and the notes changed", self.script)  # a pull reloads everything
+        self.assertIn("renderSyncPullButton();", self.script)
+        self.assertIn("syncPullButtonLabel", (self.STATIC / "app/shell.js").read_text(encoding="utf-8"))  # the rail tip reads its label
+        self.assertIn(".update-button", (self.STATIC / "app/shell.js").read_text(encoding="utf-8"))
+        self.assertIn("#syncPullButtonLabel", self.styles)  # the label is hidden in the icon rail
+        self.assertIn("The online copies are checked from time to time.", self.page)
 
     def test_the_view_lists_the_brains_and_never_work(self):
         self.assertIn("await request('/api/git')", self.script)
@@ -2872,8 +3414,8 @@ class GitViewPageTest(unittest.TestCase):
         self.assertNotIn("aria-expanded", title)
 
     def test_one_primary_button_per_card_and_a_confirmation_before_saving(self):
-        self.assertIn("const label = card.action === 'save' ? 'Save and send' : 'Send';", self.script)
-        self.assertIn("card.action === 'save' ? askGitSave(card) : runGit(card, 'send')", self.script)
+        self.assertIn("const label = {save: 'Save and send', send: 'Send', pull: 'Sync'}[card.action] || 'Send';", self.script)
+        self.assertIn("card.action === 'save' ? askGitSave(card) : runGit(card, card.action === 'pull' ? 'pull' : 'send')", self.script)
         self.assertIn("Save ${plural(count, 'changed note')} of ${card.label} and send ${count === 1 ? 'it' : 'them'} to its online copy?", self.script)
         self.assertIn("runGit(card, 'save');", self.script)
         # The write names its brain explicitly and carries the token and the version of the card the person confirmed.
@@ -4448,8 +4990,8 @@ class PixelLookTest(unittest.TestCase):
         self.assertIn(".lucide { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }", self.styles)
         self.assertIn("function svgIcon(markup, className = '', viewBox = '0 0 24 24') {", script)
         sidebar = self.page[self.page.index('<aside id="sidebar"'):self.page.index("</aside>")]
-        self.assertEqual(sidebar.count("<svg"), 14)  # the caret, the close cross, six views, the update button, four in the footer and the ⋯ button
-        self.assertEqual(sidebar.count('class="lucide nav-icon"'), 11)
+        self.assertEqual(sidebar.count("<svg"), 15)  # the caret, the close cross, six views, the update and pull buttons, four in the footer and the ⋯ button
+        self.assertEqual(sidebar.count('class="lucide nav-icon"'), 12)
         # The licence of the set ships with the app, the former one is gone.
         licences = self.STATIC / "licenses"
         self.assertIn("ISC License", (licences / "Lucide-ISC.txt").read_text(encoding="utf-8"))
@@ -5754,6 +6296,59 @@ class PortabilityTest(unittest.TestCase):
 
     def test_the_port_is_never_shared_on_windows(self):
         self.assertEqual(tasks_web.TaskServer.allow_reuse_address, os.name != "nt")
+
+
+class QuitMarkerTest(unittest.TestCase):
+    """`/api/shutdown` writes agents/tasks-web.quit (a time stamp) in the served Work before it stops: the native window
+    (window.py) closes at once only after it, so that a restart (an Update), which writes none, keeps the window open."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)  # last: the server is stopped first
+        self.work = Path(self.temp.name).resolve() / "Work"
+        brain = self.work / "brain-acme"
+        (brain / ".data").mkdir(parents=True)
+        (brain / "AGENTS.md").write_text("# Brain\n", encoding="utf-8")
+        (brain / "projects").mkdir()
+        self.server = tasks_web.TaskServer(("127.0.0.1", 0), tasks_web.Store(brain), work=self.work)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self.stop)
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+        self.marker = self.work / "agents/tasks-web.quit"
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+    def request(self, method, path, payload=None, token=True, origin=True):
+        return TasksWebTest.request(self, method, path, payload, token, origin)
+
+    def test_a_quit_writes_the_marker_before_the_server_stops(self):
+        before = time.time()
+        status, result = self.request("POST", "/api/shutdown", {})
+        self.assertEqual((status, result), (200, {"stopping": True}))
+        stamp = float(self.marker.read_text(encoding="utf-8").split()[0])
+        self.assertTrue(before <= stamp <= time.time())
+        self.thread.join(timeout=2)
+        self.assertFalse(self.thread.is_alive())
+
+    def test_a_refused_quit_writes_nothing(self):
+        for options in ({"token": False}, {"origin": False}):
+            status, _ = self.request("POST", "/api/shutdown", {}, **options)
+            self.assertEqual(status, 403)
+        status, _ = self.request("POST", "/api/shutdown", {"now": True})
+        self.assertEqual(status, 400)
+        self.assertFalse(self.marker.exists())
+        self.assertTrue(self.thread.is_alive())
+
+    def test_a_marker_that_cannot_be_written_does_not_stop_the_quit(self):
+        self.work.joinpath("agents").write_text("a file where the folder should be\n", encoding="utf-8")
+        status, result = self.request("POST", "/api/shutdown", {})
+        self.assertEqual((status, result), (200, {"stopping": True}))
+        self.thread.join(timeout=2)
+        self.assertFalse(self.thread.is_alive())
 
 
 class UpdateRoutesTest(unittest.TestCase):

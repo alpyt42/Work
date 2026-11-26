@@ -3,23 +3,34 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""Install the Actions Brain launcher: a macOS app, a Windows Start Menu shortcut or a Linux menu entry.
+"""Install the Corvus launcher: a macOS app, a Windows Start Menu shortcut or a Linux menu entry.
 
 Run from Work with: uv run tools/tasks-web/install-app.py [--dry-run] [--uninstall]
-Each entry runs `<uv> run ... tools/tasks-web/launch.py`, which starts the local server when needed and opens the page.
+Each entry opens Corvus, the local actions app: launch.py starts the local server when needed and opens the page in a
+native window (window.py; macOS and Windows), else in a Chrome app window, else in the default browser.
 The absolute path of uv is written into the entry, because desktop launchers get a minimal PATH: run the
 installer again after moving Work or uv. Standard library only.
 
-- macOS: "Actions Brain.app" (an AppleScript app, bundle id local.work.tasks-brain, the icon of static/icon.icns)
-  in <artifacts>/internal/setup/tasks-dock-app/, with its launch.applescript and a README.md. Nothing in the
-  artifacts folder is ever overwritten or deleted: when the app is already there the installer refuses, and
-  --replace first moves the existing files into <artifacts>/archive/tasks-dock-app-<date>/; --uninstall moves the
-  app it made there too.
-- Windows: "Actions Brain.lnk" in the Start Menu (%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs), and on the
-  Desktop with --desktop, made by PowerShell (WScript.Shell). Its target is the windowless uvw.exe next to uv.exe
-  when there is one (else uv.exe, in a minimized window) with `run --gui-script <launch.py>`.
-- Linux: actions-brain.desktop in $XDG_DATA_HOME/applications (default ~/.local/share), the icon in
-  $XDG_DATA_HOME/icons/hicolor/256x256/apps, then update-desktop-database when it is installed.
+- macOS: "Corvus.app" in <artifacts>/internal/setup/tasks-dock-app/, with a README.md: a real bundle (bundle id
+  local.work.tasks-brain, the icon of static/icon.icns, ad-hoc signed) whose Contents/MacOS/Corvus is a zsh script. It
+  checks that uv and launch.py are still there, runs `launch.py --prepare-window` (server started, pywebview ready) and
+  execs the Python of window.py with CFProcessPath set to the bundle (on that exec only: the server and Git never see
+  it), so the Dock, Cmd+Tab and the app menu show Corvus and its icon. No AppleScript. When uv or Work moved, or
+  launch.py stops with an unexpected code, it shows a dialog and writes a line to <Work>/agents/tasks-web.log.
+  Once built, the installer runs `window.py --check` so that the first click does not download pywebview (non-fatal).
+  Nothing in the artifacts folder is ever overwritten or deleted: when the app is already there the installer refuses,
+  and --replace first moves the existing files into <artifacts>/archive/tasks-dock-app-<date>/ (an "Actions Brain.app"
+  of an earlier install and its launch.applescript included); --uninstall moves the app it made there too.
+- Windows: "Corvus.lnk" in the Start Menu (%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs), and on the
+  Desktop with --desktop, made by PowerShell (WScript.Shell). Its target is the windowless uvw.exe next to uv.exe, or
+  next to the file uv.exe links to, when there is one (else uv.exe, in a minimized window) with
+  `run --gui-script <launch.py>`. Then `window.py --check` runs once, as on macOS (non-fatal).
+- Linux: corvus.desktop in $XDG_DATA_HOME/applications (default ~/.local/share), the icon in
+  $XDG_DATA_HOME/icons/hicolor/256x256/apps, then update-desktop-database when it is installed. No pywebview download:
+  Linux has no native window, the page opens in a Chrome app window.
+
+An entry of an earlier install named "Actions Brain" (Windows shortcut, Linux menu entry and its icon) is removed when
+it carries the installer's mark, by an install and by --uninstall.
 
 Every file the installer writes carries MARKER (or ICON_MARKER for an icon); --uninstall touches only those, and an
 existing file without it is never replaced. --dry-run prints what would be done and changes nothing. --platform
@@ -47,20 +58,27 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 WORK = HERE.parents[1]
 LAUNCH = HERE / "launch.py"
+WINDOW = HERE / "window.py"
 STATIC = HERE / "static"
-APP_NAME = "Actions Brain"
-BUNDLE_ID = "local.work.tasks-brain"
+APP_NAME = "Corvus"
+LEGACY_APP_NAME = "Actions Brain"  # what the app was called before; entries with this name and our mark are still ours
+BUNDLE_ID = "local.work.tasks-brain"  # unchanged: it names the web view's data store (localStorage) and the Dock identity
 MARKER = "installed by tools/tasks-web/install-app.py"
 ICON_MARKER = b"actions-brain-icon"  # written into every icon by make-icon.py
 PLIST_MARKER_KEY = "LocalWorkInstaller"
 MAC_FOLDER = Path("internal/setup/tasks-dock-app")
-MAC_FILES = (f"{APP_NAME}.app", "launch.applescript", "README.md")
+MAC_FILES = (f"{APP_NAME}.app", "README.md")
+LEGACY_MAC_FILES = (f"{LEGACY_APP_NAME}.app", "launch.applescript")
 LINK_NAME = f"{APP_NAME}.lnk"
-DESKTOP_ID = "actions-brain"
-DESCRIPTION = f"Open the local actions page ({MARKER})"
-OSACOMPILE = Path("/usr/bin/osacompile")
+LEGACY_LINK_NAME = f"{LEGACY_APP_NAME}.lnk"
+DESKTOP_ID = "corvus"
+LEGACY_DESKTOP_ID = "actions-brain"
+DESCRIPTION = f"Open Corvus, the local actions app ({MARKER})"
+BUNDLE_VERSION = "1.0"
+MIN_MACOS = "11.0"
 PLACEHOLDER_UV = {"macos": "<uv>", "linux": "<uv>", "windows": "<uv.exe>"}  # shown by a dry run for another system
-STAGING_ROOT = WORK / "agents"  # where the macOS app is compiled and finished before it moves into the artifacts folder
+STAGING_ROOT = WORK / "agents"  # where the macOS app is assembled and signed before it moves into the artifacts folder
+PREWARM_TIMEOUT = 300
 
 
 def _load(name: str, path: Path):
@@ -160,71 +178,116 @@ def archive_folder(artifacts: Path) -> Path:
 # --- macOS
 
 
-def applescript_string(value: str) -> str:
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+def shell_quote(value: str) -> str:
+    """A zsh single-quoted word: a quote inside becomes '\\'' (close, escaped quote, reopen)."""
+    no_line_breaks(value)
+    return "'" + value.replace("'", "'\\''") + "'"
 
 
-def applescript_source(uv: str, launch: Path) -> str:
-    no_line_breaks(uv, str(launch))
-    command = (f"(quoted form of {applescript_string(uv)}) & \" run --quiet --script \" & "
-               f"(quoted form of {applescript_string(str(launch))}) & \" --no-dialog\"")
-    return (f"-- {APP_NAME}: {MARKER}.\n"
-            "-- Opens the local actions page, starting its server first when needed (tools/tasks-web/launch.py).\n"
-            "on run\n"
-            "    try\n"
-            f"        do shell script ({command})\n"
-            "    on error errorMessage\n"
-            f'        display dialog ("Could not open Actions. " & errorMessage) with title "{APP_NAME}" '
-            'buttons {"OK"} default button "OK" with icon stop\n'
-            "    end try\n"
-            "end run\n")
+MOVED_DIALOG = (f'display dialog "{APP_NAME} cannot start: uv or Work moved; run install-app.py --replace" '
+                f'with title "{APP_NAME}" buttons {{"OK"}} default button "OK" with icon stop')
+
+
+def bundle_script(uv: str, launch: Path, window: Path, port: int = launch_tool.PORT, log: Path | None = None) -> str:
+    """Contents/MacOS/Corvus: prepare the server and the window's Python, then exec it as this very process.
+
+    CFProcessPath, set on the exec only, makes LaunchServices register the process as the bundle (Dock icon and name,
+    Cmd+Tab, app menu, one instance: opening the bundle again activates it); launch.py, the server and Git never see it.
+    When uv or launch.py is gone (uv or Work moved) or launch.py stops with a code other than 0 or 1, a dialog says so
+    and a line goes to `log` (<Work>/agents/tasks-web.log). The script ends silently when launch.py printed no Python
+    (code 1, or 0 without a path): it has then opened the page elsewhere, or shown its own dialog.
+    """
+    log = WORK / "agents/tasks-web.log" if log is None else log
+    return ("#!/bin/zsh\n"
+            f"# {APP_NAME}: {MARKER}.\n"
+            "# Starts the local server (launch.py), then becomes the native window (window.py) in this same process.\n"
+            f"uv_bin={shell_quote(uv)}\n"
+            f"launch_py={shell_quote(str(launch))}\n"
+            f"window_py={shell_quote(str(window))}\n"
+            f"log_file={shell_quote(str(log))}\n"
+            "fail() {\n"
+            f'  {{ print -r -- "[{APP_NAME}.app $(/bin/date +%Y-%m-%dT%H:%M:%S)] $1" >> "$log_file"; }} 2>/dev/null\n'
+            f"  /usr/bin/osascript -e {shell_quote(MOVED_DIALOG)} >/dev/null 2>&1\n"
+            "  exit 1\n"
+            "}\n"
+            '[[ -f $uv_bin && -x $uv_bin && -f $launch_py ]] || fail "Cannot start: uv ($uv_bin) or launch.py ($launch_py) is missing."\n'
+            'python=$("$uv_bin" run --quiet --script "$launch_py" --prepare-window)\n'
+            "code=$?\n"
+            '(( code == 0 || code == 1 )) || fail "launch.py --prepare-window stopped with code $code."\n'
+            "[[ $python == /* && -x $python ]] || exit 0\n"
+            f'CFProcessPath="${{0:A}}" exec "$python" "$window_py" --port {port}\n')
+
+
+def info_plist() -> dict:
+    return {"CFBundleInfoDictionaryVersion": "6.0", "CFBundleExecutable": APP_NAME, "CFBundleName": APP_NAME,
+            "CFBundleDisplayName": APP_NAME, "CFBundleIdentifier": BUNDLE_ID, "CFBundleIconFile": "icon",
+            "CFBundlePackageType": "APPL", "CFBundleSignature": "????", "CFBundleShortVersionString": BUNDLE_VERSION,
+            "CFBundleVersion": "1", "NSHighResolutionCapable": True, "LSMinimumSystemVersion": MIN_MACOS,
+            PLIST_MARKER_KEY: MARKER}
 
 
 def mac_readme() -> str:
     return (f"# {APP_NAME} app\n\n"
-            f"Local app {MARKER} (`uv run tools/tasks-web/install-app.py` from the Work repository). It runs "
-            "`tools/tasks-web/launch.py` with the uv found when it was built: the script starts the tasks server if needed "
-            "and opens the local page in the default browser. The code and the data stay in Work; this app is a local "
-            "deliverable that is not versioned. `launch.applescript` is its source.\n\n"
+            f"Local app {MARKER} (`uv run tools/tasks-web/install-app.py` from the Work repository). It is a macOS bundle "
+            "whose `Contents/MacOS/Corvus` script runs `tools/tasks-web/launch.py --prepare-window` with the uv found when it "
+            "was built (the local tasks server starts if needed) and then becomes the native window of "
+            "`tools/tasks-web/window.py`. When the window cannot run, the page opens in a Chrome app window or the default "
+            "browser. The code and the data stay in Work; this app is a local deliverable that is not versioned. The first "
+            "launch on a computer downloads pywebview (the installer does it once).\n\n"
             "To rebuild it (after moving Work or uv), run `uv run tools/tasks-web/install-app.py --replace`: the existing "
-            "app, its source and this README move to `archive/` in the artifacts folder first, nothing is deleted. The "
-            "**Quit** item in the page stops the local server. Restarting the Mac stops it too.\n")
+            "app and this README move to `archive/` in the artifacts folder first, nothing is deleted. Closing the window "
+            "leaves the server running; the **Quit** item in the page stops it and closes the window. Restarting the Mac "
+            "stops the server too.\n")
 
 
-def mark_app(app: Path) -> None:
-    """Bundle id, marker and icon of a freshly compiled app (still in the staging folder), then an ad-hoc signature."""
-    info = app / "Contents/Info.plist"
-    with open(info, "rb") as handle:
-        plist = plistlib.load(handle)
-    plist["CFBundleIdentifier"] = BUNDLE_ID
-    plist[PLIST_MARKER_KEY] = MARKER
-    plist.pop("CFBundleIconName", None)  # the icon of Assets.car would win over CFBundleIconFile
-    plist["CFBundleIconFile"] = "applet"
-    with open(info, "wb") as handle:
-        plistlib.dump(plist, handle)
-    resources = app / "Contents/Resources"
-    (resources / "Assets.car").unlink(missing_ok=True)
-    (resources / "applet.icns").write_bytes((STATIC / "icon.icns").read_bytes())
-    if shutil.which("codesign") or Path("/usr/bin/codesign").is_file():
-        run_command([shutil.which("codesign") or "/usr/bin/codesign", "--force", "--sign", "-", str(app)])
+def sign(app: Path) -> None:
+    program = shutil.which("codesign") or ("/usr/bin/codesign" if Path("/usr/bin/codesign").is_file() else None)
+    if program:
+        run_command([program, "--force", "--sign", "-", str(app)])
 
 
-def build_app(source_text: str, app: Path) -> Callable[[], None]:
+def build_app(uv: str, app: Path) -> Callable[[], None]:
+    """Assemble the bundle in the staging folder (no symlink, which OneDrive does not sync), sign it, move it in place."""
     def build() -> None:
         STAGING_ROOT.mkdir(parents=True, exist_ok=True)
-        staging = Path(tempfile.mkdtemp(prefix="actions-brain-app-", dir=STAGING_ROOT))
+        staging = Path(tempfile.mkdtemp(prefix="corvus-app-", dir=STAGING_ROOT))
         try:
-            source = staging / "launch.applescript"
-            source.write_text(source_text, encoding="utf-8")
             built = staging / app.name
-            run_command([str(OSACOMPILE), "-o", str(built), str(source)])
-            mark_app(built)
+            for folder in ("Contents/MacOS", "Contents/Resources"):
+                (built / folder).mkdir(parents=True)
+            with open(built / "Contents/Info.plist", "wb") as handle:
+                plistlib.dump(info_plist(), handle)
+            executable = built / "Contents/MacOS" / APP_NAME
+            executable.write_text(bundle_script(uv, LAUNCH, WINDOW), encoding="utf-8")
+            executable.chmod(0o755)
+            (built / "Contents/Resources/icon.icns").write_bytes((STATIC / "icon.icns").read_bytes())
+            sign(built)
             if app.exists() or app.is_symlink():
                 raise InstallError(f"{app} appeared meanwhile: it was left as it is.")
             shutil.move(str(built), str(app))
         finally:
             shutil.rmtree(staging, ignore_errors=True)
     return build
+
+
+def prewarm(uv: str) -> Callable[[], None]:
+    """Run `window.py --check` once so that uv downloads pywebview now, not on the first click. Never fatal."""
+    def warm() -> None:
+        try:
+            result = subprocess.run([uv, "run", "--quiet", "--script", str(WINDOW), "--check"], capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, timeout=PREWARM_TIMEOUT,
+                                    cwd=WORK, check=False)
+        except subprocess.TimeoutExpired:
+            print(f"warning: window.py --check took more than {PREWARM_TIMEOUT} s: the first click will finish the download.")
+        except OSError as error:
+            print(f"warning: window.py --check could not run ({error.strerror or error}): the first click will try again.")
+        else:
+            if result.returncode:
+                detail = ((result.stderr or result.stdout).strip().splitlines() or ["no message"])[-1]
+                print(f"warning: window.py --check failed ({detail}): the app will open the page in a Chrome app window or the browser.")
+            else:
+                print(f"window.py --check passed: pywebview is ready ({result.stdout.strip().splitlines()[-1] if result.stdout.strip() else 'python'}).")
+    return warm
 
 
 def app_is_ours(app: Path) -> bool:
@@ -246,42 +309,48 @@ def macos_plan(args: argparse.Namespace) -> Plan:
     artifacts = Path(args.artifacts_dir).expanduser().absolute() if args.artifacts_dir else work_config.artifacts_dir(WORK)
     folder = artifacts / MAC_FOLDER
     app = folder / MAC_FILES[0]
-    present = [folder / name for name in MAC_FILES if (folder / name).exists() or (folder / name).is_symlink()]
+    names = (*MAC_FILES, *LEGACY_MAC_FILES)
+    present = [folder / name for name in names if (folder / name).exists() or (folder / name).is_symlink()]
     if args.uninstall:
         plan = Plan(f"{APP_NAME} for macOS: uninstall")
-        if not app.exists():
+        apps = [folder / name for name in (MAC_FILES[0], LEGACY_MAC_FILES[0]) if (folder / name).exists()]
+        if not apps:
             plan.notes.append(f"No app at {app}: nothing to do.")
             return plan
-        if not app_is_ours(app):
-            plan.notes.append(f"{app} was not made by install-app.py: it was left as it is.")
+        ours = [path for path in apps if app_is_ours(path)]
+        for path in apps:
+            if path not in ours:
+                plan.notes.append(f"{path} was not made by install-app.py: it was left as it is.")
+        if not ours:
             return plan
         archive = archive_folder(artifacts)
         for path in present:
-            if path == app or text_is_ours(path):
+            if path in ours or (path not in apps and text_is_ours(path)):
                 plan.add("move", f"{path} -> {archive / path.name}", moved_to(archive / path.name, path))
         plan.notes.append(f"Nothing is deleted in the artifacts folder: the app moves to {archive}. Delete that folder "
                           "yourself when you no longer need it, and take the app out of the Dock.")
         return plan
-    if not args.dry_run and not OSACOMPILE.is_file():
-        raise InstallError("osacompile was not found: the macOS app can only be built on macOS (use --dry-run to see it).")
+    if not args.dry_run and launch_tool.system_name() != "macos":
+        raise InstallError("The macOS app can only be built on macOS (use --dry-run to see it).")
     uv = resolve_uv(args.uv, "macos", args.dry_run)
-    source = applescript_source(uv, LAUNCH)
+    script = bundle_script(uv, LAUNCH, WINDOW)
     plan = Plan(f"{APP_NAME} for macOS")
     if present:
         if not args.replace:
             raise InstallError(f"{app if app in present else present[0]} already exists. Nothing in the artifacts folder is "
-                               "overwritten or deleted: run again with --replace to move the existing app, its source and "
-                               f"its README into {artifacts / 'archive'} first.")
+                               "overwritten or deleted: run again with --replace to move the existing app and its README "
+                               f"(and the app of an earlier install, named {LEGACY_APP_NAME}) into {artifacts / 'archive'} first.")
         archive = archive_folder(artifacts)
         for path in present:
             plan.add("move", f"{path} -> {archive / path.name}", moved_to(archive / path.name, path))
         plan.notes.append(f"The previous files moved to {archive} (nothing deleted). If the old app is in the Dock, "
                           "remove it and drag the new one there.")
     plan.add("folder", folder, make_folder(folder))
-    plan.add("write", folder / "launch.applescript", write_bytes(folder / "launch.applescript", source.encode("utf-8")))
-    plan.add("build", f"{app} (osacompile, bundle id {BUNDLE_ID}, icon static/icon.icns, ad-hoc signature)", build_app(source, app))
+    plan.add("build", f"{app} (bundle id {BUNDLE_ID}, icon static/icon.icns, ad-hoc signature)", build_app(uv, app))
     plan.add("write", folder / "README.md", write_bytes(folder / "README.md", mac_readme().encode("utf-8")))
-    plan.texts.append(("launch.applescript", source))
+    plan.add("prewarm", "window.py --check (downloads pywebview once)", prewarm(uv))
+    plan.texts.append((f"{app.name}/Contents/MacOS/{APP_NAME}", script))
+    plan.texts.append((f"{app.name}/Contents/Info.plist", plistlib.dumps(info_plist()).decode("utf-8")))
     plan.notes += [f"uv: {uv}", f"App: {app} (add it to the Dock by dragging it there)."]
     return plan
 
@@ -334,12 +403,12 @@ def link_is_ours(path: Path) -> bool:
     return MARKER.encode("utf-16-le") in data or MARKER.encode("utf-8") in data
 
 
-def windows_links(desktop: bool) -> list[Path]:
+def windows_links(desktop: bool, name: str = LINK_NAME) -> list[Path]:
     appdata = os.environ.get("APPDATA")
     if not appdata:
         raise InstallError("APPDATA is not set: the Start Menu folder cannot be found.")
-    links = [Path(appdata) / "Microsoft/Windows/Start Menu/Programs" / LINK_NAME]
-    return links + [windows_desktop() / LINK_NAME] if desktop else links
+    links = [Path(appdata) / "Microsoft/Windows/Start Menu/Programs" / name]
+    return links + [windows_desktop() / name] if desktop else links
 
 
 def create_link(script: str, link: Path) -> Callable[[], None]:
@@ -352,7 +421,7 @@ def create_link(script: str, link: Path) -> Callable[[], None]:
 def windows_plan(args: argparse.Namespace) -> Plan:
     if args.uninstall:
         plan = Plan(f"{APP_NAME} for Windows: uninstall")
-        for link in windows_links(True):
+        for link in (*windows_links(True), *windows_links(True, LEGACY_LINK_NAME)):
             if link_is_ours(link):
                 plan.add("remove", link, removed(link))
             elif link.exists():
@@ -368,17 +437,21 @@ def windows_plan(args: argparse.Namespace) -> Plan:
     if not args.dry_run and launch_tool.system_name() != "windows":
         raise InstallError("The Windows shortcut can only be created on Windows (use --dry-run to see it).")
     uv = resolve_uv(args.uv, "windows", args.dry_run)
-    windowless = Path(uv).with_name("uvw.exe")
     if uv == PLACEHOLDER_UV["windows"]:
         target, style = "<uvw.exe next to uv.exe>", 1
     else:
-        target, style = (str(windowless), 1) if windowless.is_file() else (uv, 7)  # 7: minimized, when only uv.exe exists
+        windowless = launch_tool.windowless_uv(uv)  # next to uv.exe, or next to what a WinGet link points to
+        target, style = (str(windowless), 1) if windowless else (uv, 7)  # 7: minimized, when only uv.exe exists
     arguments = f'run --gui-script "{LAUNCH}"'
     plan = Plan(f"{APP_NAME} for Windows")
+    for link in windows_links(True, LEGACY_LINK_NAME):
+        if link_is_ours(link):  # the shortcut of an earlier install, named Actions Brain
+            plan.add("remove", link, removed(link))
     for link in links:
         script = powershell_script(link, target, arguments, WORK, STATIC / "icon.ico", style)
         plan.add("shortcut", link, create_link(script, link))
         plan.texts.append((f"PowerShell script for {link} (powershell.exe -NoProfile -NonInteractive -EncodedCommand)", script))
+    plan.add("prewarm", "window.py --check (downloads pywebview once)", prewarm(uv))
     plan.notes.append(f"Target: {target} {arguments}")
     if style == 7:
         plan.notes.append("uvw.exe was not found next to uv.exe: the shortcut runs uv.exe in a minimized window. "
@@ -413,7 +486,7 @@ def desktop_entry(uv: str, launch: Path, work: Path, icon: Path) -> str:
             "Type=Application\n"
             "Version=1.5\n"
             f"Name={APP_NAME}\n"
-            "Comment=Open the local actions page of the Work brains\n"
+            "Comment=Open Corvus, the local actions app of the Work brains\n"
             f"Exec={command}\n"
             f"Path={desktop_value(str(work))}\n"
             f"Icon={desktop_value(str(icon))}\n"
@@ -446,9 +519,11 @@ def linux_plan(args: argparse.Namespace) -> Plan:
     applications = data / "applications"
     entry = applications / f"{DESKTOP_ID}.desktop"
     icon = data / "icons/hicolor/256x256/apps" / f"{DESKTOP_ID}.png"
+    legacy = ((applications / f"{LEGACY_DESKTOP_ID}.desktop", text_is_ours), (data / "icons/hicolor/256x256/apps" / f"{LEGACY_DESKTOP_ID}.png", icon_is_ours))
+    legacy_ours = [path for path, is_ours in legacy if is_ours(path)]  # the entry of an earlier install, named Actions Brain
     if args.uninstall:
         plan = Plan(f"{APP_NAME} for Linux: uninstall")
-        for path, ours in ((entry, text_is_ours(entry)), (icon, icon_is_ours(icon))):
+        for path, ours in ((entry, text_is_ours(entry)), (icon, icon_is_ours(icon)), *((path, True) for path in legacy_ours)):
             if ours:
                 plan.add("remove", path, removed(path))
             elif path.exists():
@@ -465,6 +540,8 @@ def linux_plan(args: argparse.Namespace) -> Plan:
     uv = resolve_uv(args.uv, "linux", args.dry_run)
     text = desktop_entry(uv, LAUNCH, WORK, icon)
     plan = Plan(f"{APP_NAME} for Linux")
+    for path in legacy_ours:
+        plan.add("remove", path, removed(path))
     plan.add("folder", applications, make_folder(applications))
     plan.add("write", entry, write_bytes(entry, text.encode("utf-8")))
     plan.add("folder", icon.parent, make_folder(icon.parent))
@@ -487,7 +564,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="print what would be done, change nothing")
     parser.add_argument("--uninstall", action="store_true", help="remove what this installer made (macOS: move the app to archive/)")
     parser.add_argument("--desktop", action="store_true", help="Windows: also put the shortcut on the Desktop")
-    parser.add_argument("--replace", action="store_true", help="macOS: move an existing app into <artifacts>/archive/ first")
+    parser.add_argument("--replace", action="store_true", help="macOS: move an existing app (Corvus or Actions Brain) into <artifacts>/archive/ first")
     parser.add_argument("--artifacts-dir", metavar="DIR", help="macOS: this folder instead of the configured artifacts folder")
     parser.add_argument("--uv", metavar="PATH", help="this uv instead of the one found")
     return parser

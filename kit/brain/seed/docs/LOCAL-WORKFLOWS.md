@@ -8,7 +8,7 @@ The reusable procedures (public scripts and skills) live in the workspace; only 
 
 ## Meetings
 
-- Transcripts to read: the `transcripts_dir` folder of [`.data/local-paths.json`](../.data/local-paths.json) (path relative to `$HOME`, outside the workspace, never cited in a Markdown file). Audio recordings: `recordings_dir`; do not open, move or delete them without an explicit request.
+- Transcripts to read: the `transcripts_dir` folder of `.data/local-paths.json`, local to each machine and ignored by Git (template: [`.data/local-paths.example.json`](../.data/local-paths.example.json)); the path is relative to `$HOME`, outside the workspace, and never cited in a Markdown file. Audio recordings: `recordings_dir`; do not open, move or delete them without an explicit request.
 - The transcript and the audio stay where they are; only the Markdown minutes (CR) enter the brain, with a provenance described in words (tool, recorder, date). Tracking of the processed files: `.data/transcripts.json`.
 - Format of a transcript line: (to be completed according to the recording tool).
 

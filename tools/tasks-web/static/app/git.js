@@ -1,11 +1,13 @@
 'use strict';
 
-// ---------- Git: save and send ----------
+// ---------- Git: save and send (and check online, pull) ----------
 // One card per brain of the Work, the chosen one first (never Work itself). The server says what is possible (`state`, `action`)
 // and writes the sentences; this draws them, with the changed notes in plain words (title, project, New / Edited / Deleted / Renamed),
 // and runs the one button of a card after a confirmation. No path, branch, hash or line count is shown.
 const GIT_STATE_ICONS = {clean: 'gitSaved', changes: 'gitEdited', unsent: 'gitSend', behind: 'gitBehind', unavailable: 'gitOff'};
 const GIT_VISIBLE_NOTES = 8;
+const GIT_FETCH_EVERY = 10 * 60 * 1000; // background check of the online copies (the server also throttles to one per 5 minutes)
+const GIT_FOCUS_AFTER = 5 * 60 * 1000; // back on the window: check again when the last check is older than this
 const GIT_VISIBLE_LINES = 3000; // the server cuts a comparison there
 const GIT_CHANGE_TEXT = {New: 'New', Edited: 'Edited', Deleted: 'Deleted', Renamed: 'Renamed'};
 let gitCards = [];
@@ -17,6 +19,8 @@ let gitConfirmCard = null; // the card the open confirmation is about, as the pe
 const gitResults = new Map(); // brain name -> what the last save or send said (shown in its card)
 const gitBusy = new Set(); // brain names being saved or sent
 const gitExpanded = new Set(); // brain names whose whole list of notes is shown
+let gitFetching = false; // a check of the online copies is running (a pull is `gitBusy`)
+let gitLastFetchAt = 0; // when this page last got an answer from a check (milliseconds)
 // "2 hours ago", "yesterday", "3 days ago"; a date after a month.
 function relativeTime(value) {
   const date = new Date(value);
@@ -32,6 +36,27 @@ function orderedGitCards() {
   return [...gitCards].sort((a, b) => Number(b.name === currentBrain) - Number(a.name === currentBrain));
 }
 function gitPendingCount() { return gitCards.filter(card => card.pending).length; }
+function gitPullPlural(count) { return plural(count, 'change'); }
+// The sidebar button: shown only when the current brain is behind its online copy and can simply be brought up to date.
+function renderSyncPullButton() {
+  const card = gitLoaded ? gitCards.find(item => item.name === currentBrain) : null;
+  const show = Boolean(card && card.pullable && card.behind > 0);
+  ids.syncPullButton.hidden = !show;
+  if (!show) return;
+  const busy = gitBusy.has(card.name);
+  ids.syncPullButtonLabel.textContent = busy ? 'Syncing…' : `Sync ${gitPullPlural(card.behind)}`;
+  ids.syncPullButton.disabled = busy;
+  ids.syncPullButton.setAttribute('aria-busy', String(busy));
+  ids.syncPullButton.title = `${gitPullPlural(card.behind)} from another computer ${card.behind === 1 ? 'is' : 'are'} waiting online. Click to bring ${card.behind === 1 ? 'it' : 'them'} into ${card.label}.`;
+}
+// "Checked online 3 minutes ago", from the newest check of any brain; a failed one is named quietly.
+function gitCheckText() {
+  const stamps = gitCards.map(card => card.fetched_at).filter(Boolean).sort();
+  const failed = gitCards.filter(card => card.fetch_error);
+  const parts = [stamps.length ? `Checked online ${relativeTime(stamps[stamps.length - 1])}` : 'Not checked online yet'];
+  if (failed.length) parts.push(failed.length === 1 && gitCards.length === 1 ? failed[0].fetch_error : `${plural(failed.length, 'brain')} could not be checked`);
+  return parts.join(' · ');
+}
 function gitNoteRow(card, note) {
   const row = element('button', 'git-note');
   row.type = 'button';
@@ -88,6 +113,11 @@ function gitCardNode(card) {
     last.title = formatStamp(card.last_saved.slice(0, 16).replace('T', ' '));
     text.append(last);
   }
+  if (card.fetch_error) {
+    const problem = element('p', 'git-last git-fetch-error', card.fetch_error);
+    if (card.fetched_at) problem.title = `Tried ${formatStamp(card.fetched_at.slice(0, 16).replace('T', ' '))}`;
+    text.append(problem);
+  }
   status.append(badge, text);
   section.append(head, status);
   const result = gitResults.get(card.name);
@@ -122,15 +152,15 @@ function gitCardNode(card) {
   if (card.action) {
     const busy = gitBusy.has(card.name);
     const actions = element('div', 'git-actions');
-    const label = card.action === 'save' ? 'Save and send' : 'Send';
-    const verb = card.action === 'save' ? 'Saving and sending' : 'Sending';
+    const label = {save: 'Save and send', send: 'Send', pull: 'Sync'}[card.action] || 'Send';
+    const verb = {save: 'Saving and sending', send: 'Sending', pull: 'Syncing'}[card.action] || 'Sending';
     const button = element('button', 'button button-primary', busy ? `${verb}…` : label);
     button.type = 'button';
     button.dataset.focusKey = `go:${card.name}`;
     button.disabled = busy;
     button.setAttribute('aria-busy', String(busy));
-    button.setAttribute('aria-label', busy ? `${verb} ${card.label}` : `${label} for ${card.label}`);
-    button.addEventListener('click', () => card.action === 'save' ? askGitSave(card) : runGit(card, 'send'));
+    button.setAttribute('aria-label', busy ? `${verb} ${card.label}` : card.action === 'pull' ? `Sync ${gitPullPlural(card.behind)} into ${card.label}` : `${label} for ${card.label}`);
+    button.addEventListener('click', () => card.action === 'save' ? askGitSave(card) : runGit(card, card.action === 'pull' ? 'pull' : 'send'));
     actions.append(button);
     section.append(actions);
   }
@@ -139,10 +169,15 @@ function gitCardNode(card) {
 // Draws the cards again, keeping the scroll position and the focus (`fallbackKey`: where the focus goes when its control is gone).
 function renderGit(fallbackKey = '') {
   const pending = gitPendingCount();
+  renderSyncPullButton();
   ids.gitCount.textContent = gitLoaded && pending ? String(pending) : '';
   ids.gitButton.setAttribute('aria-label', gitLoaded && pending ? `Sync, ${plural(pending, 'brain')} to save or send` : 'Sync');
   if (view !== 'git') return;
-  ids.resultCount.textContent = !gitLoaded ? '' : pending ? `${plural(pending, 'brain')} to save or send` : 'Everything is saved';
+  ids.gitCheckInfo.textContent = gitLoaded ? gitCheckText() : '';
+  ids.gitCheckButton.disabled = gitFetching;
+  ids.gitCheckButton.textContent = gitFetching ? 'Checking…' : 'Check online';
+  const behind = gitCards.filter(card => card.pullable).length;
+  ids.resultCount.textContent = !gitLoaded ? '' : pending ? `${plural(pending, 'brain')} to save or send` : behind ? `${plural(behind, 'brain')} to update` : 'Everything is saved';
   if (!gitLoaded) return;
   const focused = ids.gitCards.contains(document.activeElement) ? document.activeElement.dataset.focusKey || '' : '';
   const scroll = ids.gitView.scrollTop;
@@ -211,10 +246,37 @@ function askGitSave(card) {
   gitConfirmCard = card;
   ids.gitConfirmDialog.showModal();
 }
+// Asks every brain's online copy whether it has newer changes (`force`: the person asked, so the server's 5-minute throttle is skipped).
+// Not `request()`: a check can take a while and must not hold back a brain switch; the cards it returns are the same for every brain.
+async function fetchGit({force = false} = {}) {
+  if (gitFetching) return;
+  gitFetching = true;
+  if (view === 'git') renderGit();
+  try {
+    const data = await updatePost('/api/git/fetch', force ? {force: true} : {});
+    if (Array.isArray(data.brains)) {
+      gitCards = data.brains;
+      gitLoaded = true;
+      dropStaleGitResults();
+    }
+    gitLastFetchAt = Date.now();
+  } catch (error) {
+    if (force) showToast(`Check online: ${error.message}`);
+  } finally {
+    gitFetching = false;
+    renderGit();
+  }
+}
+// Background checks: at start, every 10 minutes and when the window comes back after a while. Quiet: nothing is shown but the cards.
+function fetchGitInBackground() {
+  if (document.hidden || gitFetching || gitBusy.size) return;
+  fetchGit();
+}
 async function runGit(card, action) {
-  if (gitBusy.has(card.name)) return;
+  if (gitBusy.has(card.name)) return false;
   gitBusy.add(card.name);
   gitResults.delete(card.name);
+  let succeeded = false;
   renderGit(`go:${card.name}`);
   try {
     const result = await request(`/api/git/${action}`, {
@@ -223,6 +285,11 @@ async function runGit(card, action) {
     }, card.name);
     replaceGitCard(result.brain);
     gitResults.set(card.name, {ok: result.ok, saved: result.saved, message: result.message, details: result.details, version: result.ok ? '' : result.brain.version});
+    succeeded = result.ok;
+    if (succeeded && action === 'pull') {
+      showToast(result.message);
+      refresh(); // the actions and the notes changed under the page
+    }
   } catch (error) {
     // Refused before anything ran (the notes changed, the brain is behind, another save is running…): say so, and show the brain as it is now.
     gitResults.set(card.name, {ok: false, saved: false, message: error.message, details: '', version: ''});
@@ -231,7 +298,21 @@ async function runGit(card, action) {
     gitBusy.delete(card.name);
     renderGit(`card:${card.name}`);
   }
+  return succeeded;
 }
+// The sidebar button: pull the current brain; on a refusal, open the Sync view where the reason is written.
+async function pullCurrentBrain() {
+  const card = gitCards.find(item => item.name === currentBrain);
+  if (!card || !card.pullable || gitBusy.has(card.name)) return;
+  const done = await runGit(card, 'pull');
+  if (!done) setView('git');
+}
+ids.syncPullButton.addEventListener('click', pullCurrentBrain);
+ids.gitCheckButton.addEventListener('click', () => fetchGit({force: true}));
+// Also when a page loaded hidden (a background tab) is first shown: the check at start was skipped then.
+function fetchGitIfStale() { if (Date.now() - gitLastFetchAt > GIT_FOCUS_AFTER) fetchGitInBackground(); }
+window.addEventListener('focus', fetchGitIfStale);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchGitIfStale(); });
 async function openGitChanges(card, note) {
   const requestId = ++gitChangesRequest;
   ids.gitChangesTitle.textContent = note.title;

@@ -67,6 +67,7 @@ class SetupTestCase(unittest.TestCase):
         (brain / "AGENTS.md").write_text(f"# {name}\n", encoding="utf-8")
         self.write_json(f"{name}/.data/brain.json", EMPTY_BOUNDARY)
         self.write_json(f"{name}/.data/doctor.json", {"owner": ""})
+        (brain / ".gitignore").write_text("/.data/local-paths.json\n", encoding="utf-8")  # as kit/brain/seed/.gitignore
         self.git(brain, "init", "-q")
         return brain
 
@@ -168,6 +169,47 @@ class StatusTest(SetupTestCase):
         self.assertEqual({item["key"]: item["state"] for item in report["items"] if item["state"] != "done"}, {})
         self.assertIn("Setup: 0 missing, 0 to do by the owner", self.ok("status"))
 
+    def test_local_paths_tracked_or_not_ignored_is_an_owner_action(self) -> None:
+        self.complete()
+        self.git(self.work / "brain-acme", "add", "-f", ".data/local-paths.json")
+        (self.work / "brain-perso/.gitignore").write_text("*.tmp\n", encoding="utf-8")
+        item = self.items()["local-paths-ignored"]
+        self.assertEqual(item["state"], "owner-action")
+        self.assertEqual(item["detail"], "brain-acme: tracked by Git; brain-perso: not ignored by its .gitignore")
+        self.assertIn("rm --cached .data/local-paths.json", item["instruction"])
+        self.assertIn("Move local-paths.json out of Git", item["instruction"])
+        self.git(self.work / "brain-acme", "rm", "-q", "--cached", ".data/local-paths.json")
+        self.assertEqual(self.items()["local-paths-ignored"]["detail"], "brain-perso: not ignored by its .gitignore")
+
+    def test_a_malformed_template_does_not_block_an_existing_local_paths(self) -> None:
+        self.two_brains()
+        self.write_json("work-config.local.json", {"version": 1, "defaultBrain": "brain-acme"})
+        self.write_json("brain-acme/.data/local-paths.json", {"recordings_dir": ""})
+        (self.work / "brain-acme/.data/local-paths.example.json").write_text("{not json", encoding="utf-8")
+        self.ok("set", "brains", "brain-acme, brain-perso")
+        self.assertEqual(self.read_json("brain-acme/.data/local-paths.json"), {"brains": ["brain-acme", "brain-perso"], "recordings_dir": ""})
+
+    def test_git_that_cannot_run_is_not_reported_as_a_missing_ignore(self) -> None:
+        self.complete()
+        item = self.items()["local-paths-ignored"]
+        self.assertEqual(item["state"], "done")
+        # A broken repository (a broken .git/config) makes git itself fail, which is not the same as an unignored file.
+        for name in ("brain-acme", "brain-perso"):
+            (self.work / name / ".git/config").write_text("[broken\n", encoding="utf-8")
+        item = self.items()["local-paths-ignored"]
+        self.assertIn("git could not run", item["detail"])
+        self.assertNotIn("not ignored", item["detail"])
+
+    def test_missing_local_paths_says_it_is_local_to_the_machine(self) -> None:
+        self.two_brains()
+        self.write_json("work-config.local.json", {"version": 1, "defaultBrain": "brain-acme"})
+        items = self.items()
+        for key in ("brains", "transcripts_dir"):
+            self.assertEqual(items[key]["state"], "missing")
+            self.assertIn("local to each machine", items[key]["detail"])
+        self.write_json("brain-acme/.data/local-paths.json", {"brains": ["brain-acme"]})
+        self.assertEqual(self.items()["transcripts_dir"]["detail"], "not set")
+
     def test_status_prints_no_configured_value(self) -> None:
         self.complete()
         self.git(self.work / "brain-acme", "remote", "add", "origin", "git@git.acme.example:acme/brain-acme.git")
@@ -244,6 +286,25 @@ class SetTest(SetupTestCase):
         for name, text in perso_before.items():
             self.assertEqual((self.work / "brain-perso/.data" / name).read_text(encoding="utf-8"), text)
         self.assertEqual([key for key in self.missing() if key.startswith("brain-acme.")], [])
+
+    def test_missing_local_paths_is_created_from_the_template_without_the_asked_keys(self) -> None:
+        self.make_brain("brain-acme")
+        template = {"_note": "Template.", "brains": ["brain-acme", "brain-globex"], "transcripts_dir": "Library/Transcripts",
+                    "recordings_dir": "Library/Recordings", "toolkit_folder": "Documents/Toolkit"}
+        self.write_json("brain-acme/.data/local-paths.example.json", template)
+        self.ok("set", "transcripts_dir", "inbox/transcripts")
+        self.assertEqual(self.read_json("brain-acme/.data/local-paths.json"), {
+            "_note": "Template.", "recordings_dir": "Library/Recordings", "toolkit_folder": "Documents/Toolkit", "transcripts_dir": "inbox/transcripts",
+        })
+        self.assertEqual(self.read_json("brain-acme/.data/local-paths.example.json"), template)
+        self.assertEqual(self.items()["brains"]["detail"], "not set")
+        self.ok("set", "brains", "brain-acme")
+        self.assertEqual(self.read_json("brain-acme/.data/local-paths.json")["brains"], ["brain-acme"])
+
+    def test_missing_local_paths_without_template_holds_only_the_answer(self) -> None:
+        self.make_brain("brain-acme")
+        self.ok("set", "brains", "brain-acme")
+        self.assertEqual(self.read_json("brain-acme/.data/local-paths.json"), {"brains": ["brain-acme"]})
 
     def test_writes_keep_layout_order_and_other_keys(self) -> None:
         self.make_brain("brain-acme")

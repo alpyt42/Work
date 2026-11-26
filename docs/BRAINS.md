@@ -1,6 +1,6 @@
 # Brains, skills and tools
 
-Brains and their trust boundaries, skills, repositories, Obsidian and the Actions app. Back to the [README](../README.md).
+Brains and their trust boundaries, skills, repositories, Obsidian and Corvus, the local app. Back to the [README](../README.md).
 
 ## Brains and trust boundaries
 
@@ -20,7 +20,7 @@ The new folder is a copy of `kit/brain/seed/` with a fresh Git repository on `ma
 - `remote` and `email`: `fnmatch` patterns that the clone's `origin` URL and effective `user.email` must match, checked by `doctor.py`.
 - `allow`: client names of another brain that may appear in this one.
 
-Where data goes: each brain holds its own projects, people, actions, sources and skill states (`.data/`); the shared settings (expected `brains`, input folders) live in the default brain's `.data/local-paths.json`. Rules: no Markdown link from one brain to another and no client name of another brain in a brain's paths or content. `uv run tools/brain/check-links.py`, `check-no-client.py --brain` and the brain's pre-commit hook enforce both. Conventions: [`kit/brain/AGENTS.md`](../kit/brain/AGENTS.md).
+Where data goes: each brain holds its own projects, people, actions, sources and skill states (`.data/`); the shared settings (expected `brains`, input folders) live in the default brain's `.data/local-paths.json`, a file local to each machine and ignored by Git (versioned template: `.data/local-paths.example.json`; see [Move local-paths.json out of Git](SETUP.md#move-local-pathsjson-out-of-git) for an older brain). Rules: no Markdown link from one brain to another and no client name of another brain in a brain's paths or content. `uv run tools/brain/check-links.py`, `check-no-client.py --brain` and the brain's pre-commit hook enforce both. Conventions: [`kit/brain/AGENTS.md`](../kit/brain/AGENTS.md).
 
 ## Skills
 
@@ -48,6 +48,6 @@ Outside Obsidian, `uv run tools/brain/action.py board` prints a complete project
 
 Closed actions older than 30 days move to `state/actions-archive-YYYY.md` with `uv run tools/brain/action.py archive` (dry-run) then `--write`; agents run it without asking when the doctor flags them or at the start of a month. See [tools/brain/action.md](../tools/brain/action.md).
 
-## The Actions app
+## Corvus, the local app
 
-Run `uv run tools/tasks-web/tasks-web.py` and open `http://127.0.0.1:8765/`: a sidebar with the views Today, Actions, Board, Timeline, Docs, Archives, Tools, Sync and Settings, a search field in the header that searches the actions and the documents, the **New action** and **New note** buttons, and a selector at the top left that switches between the brains of the Work without a restart. The Sync view shows one card per brain and, after a confirmation, saves its changed notes and sends them to the brain's own online copy, through the brain's Git hooks. An **Update** button appears when a newer release exists. `uv run tools/tasks-web/install-app.py` installs an **Actions Brain** entry (macOS app, Windows Start Menu shortcut, Linux applications menu); on macOS, `./tools/tasks-web/build-dock-app.sh` runs the same installer. Both routes read and edit the same Markdown files; details are in [the local task manager guide](../tools/tasks-web/README.md). The server binds only to `127.0.0.1` and publishes nothing by itself: a brain leaves this computer only when you click **Save and send** or **Send** in the Sync view.
+Run `uv run tools/tasks-web/tasks-web.py` and open `http://127.0.0.1:8765/`: a sidebar with the views Today, Actions, Board, Timeline, Docs, Archives, Tools, Sync and Settings, a search field in the header that searches the actions and the documents, the **New action** and **New note** buttons, and a selector at the top left that switches between the brains of the Work without a restart. The Sync view shows one card per brain and, after a confirmation, saves its changed notes and sends them to the brain's own online copy, through the brain's Git hooks. An **Update** button appears when a newer release exists. `uv run tools/tasks-web/install-app.py` installs a **Corvus** entry (macOS app, Windows Start Menu shortcut, Linux applications menu) that opens the page in a window of its own (a native one on macOS and Windows, a Chrome or Edge app window on Linux); on macOS, `./tools/tasks-web/build-dock-app.sh` runs the same installer. Both routes read and edit the same Markdown files; details are in [the local task manager guide](../tools/tasks-web/README.md). The server binds only to `127.0.0.1` and publishes nothing by itself: a brain leaves this computer only when you click **Save and send** or **Send** in the Sync view.

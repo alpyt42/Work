@@ -1,0 +1,8 @@
+{
+  "_note": "Settings of one machine: .data/local-paths.json is ignored by Git and created from the versioned template .data/local-paths.example.json (by `uv run tools/machine/setup.py`, or copied by hand). Expected brains and input folders of the skills; input paths are relative to $HOME and stay outside the workspace: never cite them in a Markdown file.",
+  "brains": [
+    "{{BRAIN}}"
+  ],
+  "transcripts_dir": "",
+  "recordings_dir": ""
+}

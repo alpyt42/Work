@@ -174,7 +174,11 @@ function projectButton(scope, label, count, className = '') {
   button.setAttribute('aria-current', String(scope === projectScope));
   button.append(element('span', 'nav-label', label), element('span', 'nav-count', count ? String(count) : ''));
   button.title = scope ? `${label}: ${plural(count, 'open action')}` : 'All the actions of the brain';
-  button.addEventListener('click', () => setProjectScope(scope));
+  button.addEventListener('click', () => {
+    const target = pendingPeekView(); // Corvus's Mac window: the view hovered in the rail while the card peeks (app/shell.js)
+    if (target && target !== view) setView(target);
+    setProjectScope(scope);
+  });
   return button;
 }
 // The "⋯" of a sidebar entry or of an archived one: a small menu in the popover of the status menu (arrows, Home, End, Esc back to

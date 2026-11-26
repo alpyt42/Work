@@ -233,6 +233,7 @@ function renderFilterChips() {
 }
 function render() {
   closePopover(false);
+  renderSyncPullButton();
   if (view === 'priorities') renderPriorities();
   else if (view === 'tools') countTools();
   else if (view === 'git') renderGit();
@@ -272,6 +273,7 @@ function setView(next, persist = true) {
     if (name === next) ids[id].setAttribute('aria-current', 'page'); else ids[id].removeAttribute('aria-current');
   }
   ids.viewTitle.textContent = VIEW_TITLES[next];
+  fitCardToView(); // the Mac window's card: away on the views without projects (app/shell.js)
   if (next !== 'search' && ids.searchInput.value) { // any other view ends the search: the field never says something the page does not show
     ids.searchInput.value = '';
     clearTimeout(docTimer);

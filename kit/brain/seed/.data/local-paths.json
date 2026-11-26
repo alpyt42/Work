@@ -1,8 +1,0 @@
-{
-  "_note": "Expected brains and input folders of the skills. Input paths are relative to $HOME and stay outside the workspace: never cite them in a Markdown file.",
-  "brains": [
-    "brain"
-  ],
-  "transcripts_dir": "",
-  "recordings_dir": ""
-}

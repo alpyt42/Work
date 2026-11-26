@@ -60,6 +60,29 @@ class MachineDoctorTest(unittest.TestCase):
         self.assertNotIn('input folder "transcripts_dir" not found', result.stdout)
         self.assertNotIn("inbox/missing", result.stdout)
 
+    def test_local_paths_kept_out_of_git_is_not_reported(self) -> None:
+        (self.work / "brain/.gitignore").write_text("/.data/local-paths.json\n", encoding="utf-8")
+        out = self.run_doctor().stdout
+        self.assertNotIn("is tracked by Git", out)
+        self.assertNotIn("does not ignore", out)
+
+    def test_local_paths_not_ignored_or_tracked_is_a_warning(self) -> None:
+        out = self.run_doctor().stdout
+        self.assertIn("WARN: brain/.gitignore does not ignore .data/local-paths.json: add /.data/local-paths.json to it", out)
+        self.assertIn('"Move local-paths.json out of Git" in docs/SETUP.md', out)
+        subprocess.run(["git", "-C", str(self.work / "brain"), "add", ".data/local-paths.json"], check=True)
+        (self.work / "brain/.gitignore").write_text("/.data/local-paths.json\n", encoding="utf-8")
+        out = self.run_doctor().stdout
+        self.assertIn("WARN: brain/.data/local-paths.json is tracked by Git, but its paths differ per machine", out)
+        self.assertNotIn("does not ignore", out)
+
+    def test_missing_local_paths_says_how_to_recreate_it(self) -> None:
+        (self.work / "brain/.data/local-paths.json").unlink()
+        out = self.run_doctor().stdout
+        self.assertIn("WARN: brain/.data/local-paths.json missing", out)
+        self.assertIn("setup.py status", out)
+        self.assertIn("brain/.data/local-paths.example.json", out)
+
     def test_missing_expected_brain_is_an_error(self) -> None:
         self.write_config({"brains": ["brain", "brain-perso"]})
         result = self.run_doctor()

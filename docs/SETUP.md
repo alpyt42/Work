@@ -19,7 +19,7 @@ How Work is laid out, how to set it up on a machine, move it to another one, upd
 | `artifacts/`                              | Human-readable outputs and large inputs                                       | Local files, ignored                 |
 | `agents/`                                 | Scratch; an agent removes only its own session's files                        | Local files, ignored                 |
 
-Local to each machine and ignored: `.agents/` and `.claude/skills/` (skills exposed to the agents), `.obsidian/`, `work-config.local.json`, the generated `skills-lock.json` and `.work-state.json`, and `tools/.env`.
+Local to each machine and ignored: `.agents/` and `.claude/skills/` (skills exposed to the agents), `.obsidian/`, `work-config.local.json`, each brain's `.data/local-paths.json` (paths of this machine; template `.data/local-paths.example.json`), the generated `skills-lock.json` and `.work-state.json`, and `tools/.env`.
 
 The rule README files in `repos/`, `artifacts/`, and `agents/` are tracked. Their working contents are ignored. `artifacts/` is an ordinary local directory: there is no cloud link or automatic restore on a new machine.
 
@@ -31,12 +31,12 @@ The rule README files in `repos/`, `artifacts/`, and `agents/` are tracked. Thei
 2. Clone this repository as `Work/` (or copy it with a fresh history) using the Git identity meant for your personal tooling.
 3. Get your private brain: create a blank one with `uv run tools/brain/new-brain.py brain` (from `kit/brain/seed/`) and give it a private remote yourself, or clone an existing one into `brain/` (bootstrap does it when `BRAIN_REMOTE=<private-brain-git-url>` is set). Other brains are created the same way (see [Brains](BRAINS.md#brains-and-trust-boundaries)).
 4. Run `./tools/machine/bootstrap.sh` from `Work/` (with `BRAIN_REMOTE` set when `brain/` is not cloned yet), then check that each brain is the intended private repository and that `./tools/machine/check-links.sh` passes.
-5. Clone each other brain listed under `brains` in the default brain's `.data/local-paths.json` yourself, with the identity of its own boundary; bootstrap clones only `brain/`, and only when no brain exists yet. Run `bootstrap.sh` again to install the Git hooks in a brain cloned by hand (`new-brain.py` installs them in a brain it creates).
-6. Adjust the input folders in the default brain's `.data/local-paths.json` (relative to the home directory) if this machine stores transcripts or recordings elsewhere.
+5. Clone each other brain listed under `brains` in the default brain's `.data/local-paths.example.json` (or in this machine's `.data/local-paths.json`, if it exists) yourself, with the identity of its own boundary; bootstrap clones only `brain/`, and only when no brain exists yet. Run `bootstrap.sh` again to install the Git hooks in a brain cloned by hand (`new-brain.py` installs them in a brain it creates).
+6. Create the default brain's `.data/local-paths.json` on this machine (ignored by Git, paths relative to the home directory): answer `uv run tools/machine/setup.py status`, which creates it from `.data/local-paths.example.json`, or copy that template by hand and adjust the paths (Windows paths differ from macOS ones).
 7. Restore `artifacts/` from your own backup if you need past deliverables.
 8. Run `uv run tools/machine/doctor.py`: it reports, read-only and without network access, missing commands and brains, repositories without upstream or with unpushed commits, brains whose remote or e-mail leaves their declared boundary, a skill configuration changed since the last update, skills not adopted or not installed, broken skill links, missing input folders, unreadable `.data/*.json` states, and the number of files in the unbacked `artifacts/`.
 
-`bootstrap.sh` needs Git and `uv`; `uv` runs the Python tools. Node.js (`npx`) is needed only when third-party skills are enabled. The brain remotes are intentionally not stored in this repository. Each brain's `.data/` is versioned with that brain. `artifacts/` starts empty on a new machine.
+`bootstrap.sh` needs Git and `uv`; `uv` runs the Python tools. Node.js (`npx`) is needed only when third-party skills are enabled. The brain remotes are intentionally not stored in this repository. Each brain's `.data/` is versioned with that brain, except `.data/local-paths.json`, local to each machine. `artifacts/` starts empty on a new machine.
 
 On Windows:
 
@@ -49,7 +49,7 @@ On Windows:
 ## Another computer
 
 1. On the first machine, commit and push each brain yourself (a new skill, a changed `.data/work-config.json`).
-2. On the other machine, clone Work and every brain as in [Set up a new machine](SETUP.md#set-up-a-new-machine), or `git pull` in each existing one.
+2. On the other machine, clone Work and every brain as in [Set up a new machine](SETUP.md#set-up-a-new-machine), or `git pull` in each existing one. A pull that stops tracking a brain's `.data/local-paths.json` deletes it: see [Move local-paths.json out of Git](#move-local-pathsjson-out-of-git) first.
 3. Run `tools/machine/update.sh`: it validates the configuration, rewrites the lock, installs the third-party skills, refreshes the links and copies, checks the links, records the resolved configuration, and reports the Git state of Work and of each brain. It never pulls, commits, or pushes.
 
 `uv run tools/machine/doctor.py` warns when the resolved configuration changed since the last `update.sh`, so a pulled brain that adds or removes a skill is never silent. `artifacts/` is not synchronised.
@@ -63,7 +63,25 @@ uv run tools/machine/work.py update --check   # is a newer release available, an
 uv run tools/machine/work.py update --apply --to vX.Y.Z   # fast-forward to that release, then run update.sh
 ```
 
-The Update button of the Actions app does the same. The shared conventions, guides, templates, and tools follow; your brains, your configuration, and your local files are not touched. An update is blocked, with its reasons, by local commits, by modified files the release also changes, by a new major version, by a detached HEAD or by a missing upstream.
+The Update button of Corvus does the same. The shared conventions, guides, templates, and tools follow; your brains, your configuration, and your local files are not touched. An update is blocked, with its reasons, by local commits, by modified files the release also changes, by a new major version, by a detached HEAD or by a missing upstream.
+
+## Move local-paths.json out of Git
+
+A brain created before `.data/local-paths.json` became local to each machine may still track it. `uv run tools/machine/doctor.py` and `setup.py status` (check `local-paths-ignored`) report every brain that still tracks the file or does not ignore it. To fix one:
+
+1. On one machine, add `/.data/local-paths.json` to the brain's `.gitignore` and create `.data/local-paths.example.json` from the current file (same keys; keep the paths as a hint or blank them). Then stop tracking the file, which stays on disk, and commit when ready:
+
+   ```bash
+   git -C <brain> rm --cached .data/local-paths.json
+   ```
+
+2. On every other machine, pulling that commit deletes the file there, since Git removes a file the commit stops tracking. Copy it aside before pulling (for example into `agents/`, outside the brain) and put it back afterwards, or restore it right after the pull, from the Work root:
+
+   ```bash
+   git -C <brain> show ORIG_HEAD:.data/local-paths.json > <brain>/.data/local-paths.json
+   ```
+
+   Without a copy, rebuild it from the template: answer the `brains` and `transcripts_dir` questions of `uv run tools/machine/setup.py status`; the first answer creates the file with the template's other keys. Then adjust the paths for that machine.
 
 ## Checks
 

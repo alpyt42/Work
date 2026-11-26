@@ -3,28 +3,42 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""Open the local actions page, starting its server first when it is not running (macOS, Windows, Linux).
+"""Open Corvus (the local actions app), starting its server first when it is not running (macOS, Windows, Linux).
 
 Run from Work with: uv run --script tools/tasks-web/launch.py
-The entries that install-app.py creates (macOS app, Windows shortcut, Linux .desktop file) and launcher.sh run it.
-Standard library only.
+The entries that install-app.py creates (Windows shortcut, Linux .desktop file, the macOS bundle through --prepare-window)
+and launcher.sh run it. Standard library only.
 
-1. When http://127.0.0.1:8765/api/actions answers like the actions server, open the page in the default browser.
+1. When http://127.0.0.1:8765/api/actions answers like the actions server, the page is opened (step 4).
 2. When another program owns port 8765, wait 5 seconds for it to become the actions server, else refuse:
    never a second server, never someone else's page.
 3. Otherwise start `uv run tools/tasks-web/tasks-web.py --port 8765` from the Work root, detached (its own session
    on macOS and Linux; on Windows its own process group and a console with no window, so neither it nor the Git
-   and uv commands it runs ever show a window), output in agents/tasks-web.log, PID in agents/tasks-web.pid; wait up
-   to 10 seconds for it to answer, then open the page.
+   and uv commands it runs ever show a window), output in agents/tasks-web.log (emptied first, then only appended to),
+   PID in agents/tasks-web.pid (for information: nothing reads it); wait up to 10 seconds for it to answer, then open
+   the page.
+4. The page opens through a chain, the first step that works, each outcome written to agents/tasks-web.log:
+   (a) the native window, tools/tasks-web/window.py (pywebview, run by uv; the first run downloads pywebview), on
+       macOS and Windows. On macOS the Corvus.app that install-app.py built is opened first, by its path in the
+       artifacts folder (never by bundle id, which an archived copy shares), and the launcher is done: the bundle
+       shows its own window, or its own fallback. window.py is run directly only when that app is not there. Linux
+       skips (a): uv's isolated environment cannot reach the system's GTK or Qt bindings;
+   (b) a Chrome app window (`--app=URL`): Google Chrome, else Microsoft Edge, else Chromium or Brave;
+   (c) the default browser.
+
+Modes: --browser skips (a). --prepare-window (the macOS bundle) starts the server, makes sure window.py can run
+(`window.py --check`, which may download pywebview) and prints only the path of the Python that runs it, for the bundle
+to exec; when that fails it opens (b) or (c) itself and prints nothing.
 
 uv is the one running this script (the UV variable uv sets), else the one on PATH, else the usual install places.
 An error goes to stderr, to agents/tasks-web.log and to a native dialog (osascript on macOS, a message box on
-Windows, zenity, kdialog or notify-send on Linux); --no-dialog leaves the dialog out (the macOS app shows its own).
+Windows, zenity, kdialog or notify-send on Linux); --no-dialog leaves the dialog out.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import shutil
 import socket
@@ -40,7 +54,14 @@ WORK = Path(__file__).resolve().parents[2]
 SERVER_SCRIPT = Path("tools/tasks-web/tasks-web.py")
 PORT = 8765
 HOST = "127.0.0.1"
-TITLE = "Actions Brain"
+TITLE = "Corvus"
+MAC_APP = Path("internal/setup/tasks-dock-app/Corvus.app")  # in the artifacts folder: where install-app.py builds it
+WINDOW_SCRIPT = Path("tools/tasks-web/window.py")
+WINDOW_WAIT = 20.0  # seconds a prepared window may take to show
+WINDOW_FIRST_WAIT = 180.0  # the same when its environment is not prepared yet: uv may download pywebview
+CHECK_TIMEOUT = 180.0  # seconds for `window.py --check`, which may download pywebview
+READY_FILE = "tasks-web-window.ready"  # in agents/: window.py writes it once its window is shown
+PREPARED_FILE = "tasks-web-window.prepared"  # in agents/: window.py has run here, so its environment is in uv's cache
 BUSY_ATTEMPTS = 25  # x DELAY: how long a busy port may take to become the actions server
 START_ATTEMPTS = 50  # x DELAY: how long a new server may take to answer
 DELAY = 0.2
@@ -125,6 +146,18 @@ def console_uv(path: Path) -> Path:
     return sibling if path.name.lower() == "uvw.exe" and sibling.is_file() else path
 
 
+def windowless_uv(uv: str | Path) -> Path | None:
+    """Windows: the uvw.exe (no console window) next to uv.exe, else next to the file uv.exe links to (a WinGet link
+    or a Scoop shim seen through a symlink); None when there is none."""
+    path = Path(uv)
+    places = [path.with_name("uvw.exe")]
+    try:
+        places.append(path.resolve().with_name("uvw.exe"))
+    except (OSError, RuntimeError):  # a link loop, a drive that is gone
+        pass
+    return next((place for place in places if place.is_file()), None)
+
+
 def find_uv(environ: dict[str, str] | None = None, system: str | None = None, home: Path | None = None) -> str | None:
     """Absolute path of uv: the one running this script (UV), else PATH, else the usual install places."""
     environ = os.environ if environ is None else environ
@@ -186,10 +219,17 @@ def utf8_environment(base: dict[str, str] | None = None) -> dict[str, str]:
     return environment
 
 
-def start_detached(command: list[str], cwd: Path, log: Path, environment: dict[str, str] | None = None) -> subprocess.Popen:
-    """Start `command` so that it outlives this launcher and never holds its streams or its console."""
+def start_detached(command: list[str], cwd: Path, log: Path, environment: dict[str, str] | None = None,
+                   append: bool = False) -> subprocess.Popen:
+    """Start `command` so that it outlives this launcher and never holds its streams or its console.
+
+    Its output goes to `log`, which a fresh server start empties and the native window (`append`) only extends. The log
+    is always written in append mode, so that the lines launch.py and window.py add later are not overwritten by it.
+    """
     options: dict = {"cwd": cwd, "env": environment or utf8_environment(), "stdin": subprocess.DEVNULL, "stderr": subprocess.STDOUT}
-    with open(log, "wb") as output:
+    if not append:
+        open(log, "wb").close()
+    with open(log, "ab") as output:
         options["stdout"] = output
         if os.name != "nt":
             return subprocess.Popen(command, start_new_session=True, **options)
@@ -202,32 +242,267 @@ def start_detached(command: list[str], cwd: Path, log: Path, environment: dict[s
             return subprocess.Popen(command, creationflags=flags, **options)
 
 
+def log_line(work: Path, message: str) -> None:
+    """One line at the end of agents/tasks-web.log; never raises."""
+    try:
+        (work / "agents").mkdir(parents=True, exist_ok=True)
+        with open(work / "agents/tasks-web.log", "a", encoding="utf-8") as log:
+            log.write(f"[launch.py {datetime.now().isoformat(timespec='seconds')}] {message}\n")
+    except OSError:
+        pass
+
+
 def open_page(port: int, opener) -> None:
     if not opener(page_url(port)):
-        raise LaunchError(f"Could not open the browser. Open {page_url(port)} in your browser.")
+        raise LaunchError(f"Could not open Corvus. Open {page_url(port)} in your browser.")
 
 
-def launch(port: int = PORT, work: Path = WORK, command: list[str] | None = None, opener=webbrowser.open,
-           busy_attempts: int = BUSY_ATTEMPTS, start_attempts: int = START_ATTEMPTS, delay: float = DELAY) -> str:
-    """Open the page, starting the server first when needed: 'opened' or 'started'. LaunchError when it cannot.
+# --- the page: native window, else a Chrome app window, else the default browser
+
+MAC_BROWSERS = ("Google Chrome", "Microsoft Edge", "Chromium", "Brave Browser")
+LINUX_BROWSERS = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge", "brave-browser")
+WINDOWS_BROWSERS = ("Google/Chrome/Application/chrome.exe", "Microsoft/Edge/Application/msedge.exe", "Chromium/Application/chrome.exe",
+                    "BraveSoftware/Brave-Browser/Application/brave.exe")
+
+
+def app_mode_command(url: str, system: str | None = None, environ: dict[str, str] | None = None, home: Path | None = None,
+                     which=shutil.which, exists=Path.exists) -> list[str] | None:
+    """The command that opens `url` as an app window (`--app=URL`: no tabs, no address bar) in Google Chrome, else
+    Microsoft Edge, else Chromium or Brave; None when none of them is installed."""
+    environ = os.environ if environ is None else environ
+    system = system or system_name()
+    home = Path.home() if home is None else home
+    argument = f"--app={url}"
+    if system == "macos":
+        for name in MAC_BROWSERS:
+            for folder in (Path("/Applications"), home / "Applications"):
+                if exists(folder / f"{name}.app"):
+                    return ["open", "-na", name, "--args", argument]
+    elif system == "windows":
+        roots = [Path(environ[name]) for name in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA") if environ.get(name)]
+        for relative in WINDOWS_BROWSERS:
+            for root in roots:
+                if exists(root / relative):
+                    return [str(root / relative), argument]
+    else:
+        for name in LINUX_BROWSERS:
+            found = which(name, path=environ.get("PATH"))
+            if found:
+                return [found, argument]
+    return None
+
+
+def start_browser(command: list[str]) -> bool:
+    """Run a browser command (macOS `open` is waited for, the others are detached); True when it started."""
+    try:
+        if command[0] == "open":
+            return subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, timeout=15, check=False).returncode == 0
+        options: dict = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+        if os.name == "nt":
+            options["creationflags"] = CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+        else:
+            options["start_new_session"] = True
+        subprocess.Popen(command, **options)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
+def open_fallback(url: str, work: Path = WORK, command_for=app_mode_command, starter=start_browser, browser=webbrowser.open) -> str:
+    """Open the page without the native window: a Chrome app window ('app-mode'), else the default browser ('browser');
+    '' when neither worked. The step used is written to agents/tasks-web.log."""
+    command = command_for(url)
+    if command is None:
+        log_line(work, "No Chrome, Edge, Chromium or Brave found for an app window.")
+    elif starter(command):
+        log_line(work, f"Page opened in an app window: {command[2] if command[0] == 'open' else Path(command[0]).name}.")
+        return "app-mode"
+    else:
+        log_line(work, f"The app window ({command[0]}) could not start.")
+    if browser(url):
+        log_line(work, "Page opened in the default browser.")
+        return "browser"
+    log_line(work, "The default browser did not open the page.")
+    return ""
+
+
+def window_command(uv: str, work: Path, port: int, system: str | None = None) -> list[str]:
+    """`<uv> run --quiet --script window.py --port N --no-fallback` (launch.py runs the fallback itself); on Windows the
+    windowless uvw.exe (`--gui-script`) when there is one."""
+    system = system or system_name()
+    program, flag = uv, "--script"
+    windowless = windowless_uv(uv) if system == "windows" else None
+    if windowless is not None:
+        program, flag = str(windowless), "--gui-script"
+    return [program, "run", "--quiet", flag, str(work / WINDOW_SCRIPT), "--port", str(port), "--no-fallback"]
+
+
+def stop_process(process: subprocess.Popen) -> None:
+    """Stop a window that did not show, with the children uv started; never raises."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, creationflags=CREATE_NO_WINDOW, check=False)
+        else:
+            import signal
+
+            os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def artifacts_dir(work: Path) -> Path:
+    """The artifacts folder of `work`, resolved as install-app.py does (tools/machine/work_config.py of this checkout)."""
+    spec = importlib.util.spec_from_file_location("tasks_launch_work_config", WORK / "tools/machine/work_config.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.artifacts_dir(work)
+
+
+def installed_app(work: Path = WORK, folder=artifacts_dir) -> Path | None:
+    """macOS: the Corvus.app that install-app.py built in the artifacts folder; None when it is not there.
+
+    Found by its path, never by its bundle id: LaunchServices may pick an archived copy (an "Actions Brain.app" or an
+    older Corvus.app moved to archive/) that has the same id.
+    """
+    try:
+        app = folder(work) / MAC_APP
+    except Exception:  # noqa: BLE001 - an invalid configuration: no app to open, window.py runs instead
+        return None
+    return app if (app / "Contents/Info.plist").is_file() else None
+
+
+def open_bundle(app: Path) -> bool:
+    """macOS: `open <app>`: starts that Corvus.app, or activates it when it already runs; True when `open` succeeded."""
+    try:
+        return subprocess.run(["open", str(app)], stdin=subprocess.DEVNULL, capture_output=True, timeout=30,
+                              check=False).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def open_native_window(port: int = PORT, work: Path = WORK, uv: str | None = None, starter=start_detached, wait: float | None = None,
+                       delay: float = DELAY, system: str | None = None, stopper=stop_process, bundle_opener=open_bundle,
+                       app_finder=installed_app) -> bool:
+    """Open the native window; False (with the reason in the log) when it cannot show.
+
+    macOS with the installed Corvus.app: open it and return True at once (the bundle shows its own window, or its own
+    fallback). Linux: False (no native window). Otherwise run window.py detached and wait for its ready file. Without
+    `wait` the wait is WINDOW_WAIT, or WINDOW_FIRST_WAIT while no window ever showed here, because uv may then download
+    pywebview. A window.py that exits with 0 raised the window that was already open, or was closed at once.
+    """
+    system = system or system_name()
+    if system == "linux":
+        log_line(work, "Native window skipped: none on Linux (uv's environment has no GTK or Qt bindings).")
+        return False
+    if system == "macos":
+        app = app_finder(work)
+        if app is not None:
+            if bundle_opener(app):
+                log_line(work, f"Opened {app.name}: it shows the page in its own window.")
+                return True
+            log_line(work, f"{app.name} could not be opened: window.py runs directly.")
+    agents = work / "agents"
+    agents.mkdir(parents=True, exist_ok=True)
+    ready, prepared = agents / READY_FILE, agents / PREPARED_FILE
+    first_run = not prepared.exists()
+    wait = (WINDOW_FIRST_WAIT if first_run else WINDOW_WAIT) if wait is None else wait
+    uv = uv or find_uv()
+    if uv is None:
+        log_line(work, "Native window skipped: uv was not found.")
+        return False
+    ready.unlink(missing_ok=True)
+    environment = utf8_environment()
+    environment["PATH"] = tool_path(uv=uv)
+    try:
+        process = starter(window_command(uv, work, port, system), work, agents / "tasks-web.log", environment=environment, append=True)
+    except OSError as error:
+        log_line(work, f"Native window skipped: it could not start ({error.strerror or error}).")
+        return False
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        if ready.exists():
+            prepared.write_text("window.py ran here\n", encoding="utf-8")
+            log_line(work, "Page opened in the native window.")
+            return True
+        code = process.poll()
+        if code is not None:
+            if code == 0:  # a second start: the window that was open has been raised
+                log_line(work, "The native window was already open: it was raised.")
+                return True
+            log_line(work, f"Native window skipped: window.py stopped with code {code} (see above).")
+            return False
+        time.sleep(delay)
+    stopper(process)
+    if not first_run:
+        prepared.unlink(missing_ok=True)  # the next start waits long again: uv's cache may have been cleared
+    log_line(work, f"Native window skipped: it did not show within {wait:g} s.")
+    return False
+
+
+def default_opener(port: int, work: Path, native: bool = True):
+    """The opener of launch(): the native window when `native`, then the fallback chain."""
+    def opener(url: str) -> bool:
+        if native and open_native_window(port, work):
+            return True
+        return bool(open_fallback(url, work))
+    return opener
+
+
+def prepare_window(port: int = PORT, work: Path = WORK, command: list[str] | None = None, runner=None,
+                   opener=None, **options) -> str | None:
+    """For the macOS bundle: start the server if needed, then run `window.py --check` (uv may download pywebview).
+
+    Returns the path of the Python that runs window.py. When the window cannot run, opens the page through the fallback
+    chain (or `opener`) and returns None. LaunchError when the server cannot start.
+    """
+    ensure_server(port, work, command, **options)
+    uv = find_uv()
+    reason = "uv was not found"
+    if uv:
+        try:
+            result = (runner or subprocess.run)([uv, "run", "--quiet", "--script", str(work / WINDOW_SCRIPT), "--check"], cwd=work, env=utf8_environment(),
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            timeout=CHECK_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            reason = f"window.py --check took more than {CHECK_TIMEOUT:g} s"
+        except (OSError, subprocess.SubprocessError) as error:
+            reason = f"window.py --check could not run: {getattr(error, 'strerror', None) or error}"
+        else:
+            lines = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+            if result.returncode == 0 and lines and Path(lines[-1]).is_file():
+                (work / "agents").mkdir(parents=True, exist_ok=True)
+                (work / "agents" / PREPARED_FILE).write_text("window.py ran here\n", encoding="utf-8")
+                return lines[-1]
+            reason = f"window.py --check failed (code {result.returncode}): {((result.stderr or '').strip().splitlines() or ['no message'])[-1]}"
+    log_line(work, f"Native window unavailable ({reason}); using the fallback.")
+    if not (opener or (lambda url: open_fallback(url, work)))(page_url(port)):
+        raise LaunchError(f"Could not open Corvus. Open {page_url(port)} in your browser.")
+    return None
+
+
+def ensure_server(port: int = PORT, work: Path = WORK, command: list[str] | None = None, busy_attempts: int = BUSY_ATTEMPTS,
+                  start_attempts: int = START_ATTEMPTS, delay: float = DELAY) -> str:
+    """Make sure the actions server answers on `port`: 'running' when it already did, 'started' otherwise.
 
     `command` replaces the server command (tests); by default it is `<uv> run tools/tasks-web/tasks-web.py --port N`.
+    LaunchError when another program owns the port or the server cannot start.
     """
     if ready(port):
-        open_page(port, opener)
-        return "opened"
+        return "running"
     if port_owned(port):
         for _ in range(busy_attempts):
             if ready(port):
-                open_page(port, opener)
-                return "opened"
+                return "running"
             time.sleep(delay)
-        raise LaunchError(f"Port {port} is already used by another application. Close it before starting Actions.")
+        raise LaunchError(f"Port {port} is already used by another application. Close it before starting Corvus.")
     uv = None
     if command is None:
         uv = find_uv()
         if uv is None:
-            raise LaunchError("uv was not found. Install or restore uv, then start Actions again.")
+            raise LaunchError("uv was not found. Install or restore uv, then start Corvus again.")
         command = [uv, "run", str(work / SERVER_SCRIPT), "--port", str(port)]
     agents = work / "agents"
     agents.mkdir(parents=True, exist_ok=True)
@@ -236,16 +511,27 @@ def launch(port: int = PORT, work: Path = WORK, command: list[str] | None = None
     try:
         process = start_detached(command, work, agents / "tasks-web.log", environment=environment)
     except OSError as error:
-        raise LaunchError(f"Actions could not start: {error.strerror or error}.") from None
+        raise LaunchError(f"Corvus could not start: {error.strerror or error}.") from None
     (agents / "tasks-web.pid").write_text(f"{process.pid}\n", encoding="utf-8")
     for _ in range(start_attempts):
         if ready(port):
-            open_page(port, opener)
             return "started"
         if process.poll() is not None and not port_owned(port):  # it stopped, and no other start (a double click) is under way
             break
         time.sleep(delay)
-    raise LaunchError("Actions did not start. See agents/tasks-web.log in Work.")
+    raise LaunchError("Corvus did not start. See agents/tasks-web.log in Work.")
+
+
+def launch(port: int = PORT, work: Path = WORK, command: list[str] | None = None, opener=None, busy_attempts: int = BUSY_ATTEMPTS,
+           start_attempts: int = START_ATTEMPTS, delay: float = DELAY, native: bool = True) -> str:
+    """Open the page, starting the server first when needed: 'opened' or 'started'. LaunchError when it cannot.
+
+    `opener(url) -> bool` replaces the chain of default_opener (tests): the native window unless `native` is False, then a
+    Chrome app window, then the default browser.
+    """
+    state = ensure_server(port, work, command, busy_attempts, start_attempts, delay)
+    open_page(port, opener or default_opener(port, work, native))
+    return "opened" if state == "running" else state
 
 
 def show_dialog(message: str, system: str | None = None) -> None:
@@ -277,12 +563,7 @@ def report(message: str, work: Path, dialog: bool) -> None:
     """An error, on stderr, at the end of agents/tasks-web.log and, unless `dialog` is False, in a native dialog."""
     if sys.stderr is not None:  # None under a windowless interpreter (pythonw)
         print(message, file=sys.stderr)
-    try:
-        (work / "agents").mkdir(parents=True, exist_ok=True)
-        with open(work / "agents/tasks-web.log", "a", encoding="utf-8") as log:
-            log.write(f"[launch.py {datetime.now().isoformat(timespec='seconds')}] {message}\n")
-    except OSError:
-        pass
+    log_line(work, message)
     if dialog:
         show_dialog(message)
 
@@ -291,9 +572,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, default=PORT, help=f"local port (default: {PORT})")
     parser.add_argument("--no-dialog", action="store_true", help="report an error on stderr and in the log only")
+    parser.add_argument("--browser", action="store_true", help="skip the native window: a Chrome app window, else the default browser")
+    parser.add_argument("--prepare-window", action="store_true",
+                        help="macOS bundle: start the server, check window.py, print the path of the Python that runs it on stdout")
     args = parser.parse_args(argv)
     try:
-        launch(args.port)
+        if args.prepare_window:
+            python = prepare_window(args.port, WORK)
+            if python and sys.stdout is not None:
+                print(python, flush=True)  # the only thing ever printed on stdout in this mode
+        else:
+            launch(args.port, native=not args.browser)
     except LaunchError as error:
         report(str(error), WORK, not args.no_dialog)
         return 1

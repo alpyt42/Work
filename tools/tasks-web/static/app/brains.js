@@ -120,7 +120,7 @@ function renderBrainSwitch() {
   separator.setAttribute('role', 'separator');
   ids.brainMenu.replaceChildren(heading, ...brains.map(brainOption), separator, brainAddOption());
   if (brainMenuOpen()) setBrainActive(Math.max(0, brainMenuItems().findIndex(item => (item.dataset.brain || item.dataset.action) === active)));
-  document.title = brains.length > 1 && currentBrain ? `Actions – ${brainLabel(currentBrain)}` : 'Actions';
+  document.title = brains.length > 1 && currentBrain ? `Corvus – ${brainLabel(currentBrain)}` : 'Corvus';
 }
 function brainMenuOpen() { return !ids.brainMenu.hidden; }
 function setBrainActive(index) {
