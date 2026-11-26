@@ -82,6 +82,11 @@ class TimelineTest(unittest.TestCase):
         (self.mission / "journal").mkdir()
         (self.mission / "journal/2026-09.md").write_text(JOURNAL_SEPTEMBER, encoding="utf-8")
         self.page = self.mission / "rollout.md"
+        for name in ("sources/2026-09/2026-09-20-cr-late.md", "sources/2026-10/2026-10-14-cr-demo-with-a-very-long-slug.md"):
+            (self.mission / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.mission / name).write_text("x\n", encoding="utf-8")
+        (self.mission / "notes").mkdir()
+        (self.mission / "notes/plan.md").write_text("x\n", encoding="utf-8")
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -457,6 +462,35 @@ class TimelineTest(unittest.TestCase):
         before = self.snapshot()
         self.add(" ".join(["word"] * 41), "--dry-run", code=2)
         self.assertEqual(self.add("Ten words are fine here", "--dry-run")["dry_run"], True)
+        self.assertEqual(self.snapshot(), before)
+
+    # --- links to other projects ---
+
+    TARGET = "projects/internal/setup/setup.md"
+    RELATIVE = "../../../../internal/setup/setup.md"
+
+    def test_add_and_state_rewrite_links_to_another_project(self) -> None:
+        for form in (self.TARGET, f"brain-acme/{self.TARGET}", str(self.brain / self.TARGET)):
+            result = self.add(f"Tooling, see [setup]({form}#hooks)", "--dry-run")
+            self.assertIn(f"[setup]({self.RELATIVE}#hooks)", result["entry"])
+        self.add(f"Tooling, see [setup]({self.TARGET}) [web](https://example.com)")
+        self.state(f"Now [setup]({self.TARGET})", "Kept [plan](notes/plan.md)")
+        text = self.read(self.page)
+        self.assertIn(f"- 2026-10-20 — Tooling, see [setup]({self.RELATIVE}) [web](https://example.com) (Sonnet 5)", text)
+        self.assertIn(f"- Now [setup]({self.RELATIVE})\n- Kept [plan](notes/plan.md)", text)
+
+    def test_add_in_a_past_month_shifts_the_rewritten_link_for_the_journal(self) -> None:
+        self.add(f"Old, see [setup]({self.TARGET})", "--date", "2026-09-20")
+        self.assertIn(f"[setup](../{self.RELATIVE})", self.read(self.mission / "journal/2026-09.md"))
+
+    def test_missing_and_other_brain_links_are_refused_without_writing(self) -> None:
+        other = self.brain.parent / "brain-globex/projects/g.md"
+        other.parent.mkdir(parents=True)
+        other.write_text("g\n", encoding="utf-8")
+        before = self.snapshot()
+        self.assertIn("resolves nowhere", self.add("See [x](projects/nope.md)", code=2)["error"])
+        self.assertIn("another brain", self.add("See [x](brain-globex/projects/g.md)", code=2)["error"])
+        self.assertIn("another brain", self.state("See [x](brain-globex/projects/g.md)", code=2)["error"])
         self.assertEqual(self.snapshot(), before)
 
     def state(self, *texts: str, project: str = "globex/rollout", code: int = 0, extra: tuple[str, ...] = ()) -> dict | str:

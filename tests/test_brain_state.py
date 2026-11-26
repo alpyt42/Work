@@ -1007,7 +1007,7 @@ class BrainContextTest(unittest.TestCase):
         everything = self.hits("zurich", "--per-file", "0")
         self.assertEqual((len(everything), sum("in this file" in line for line in everything)), (15, 0))
         data = self.data("find", "zurich", "--limit", "4")
-        self.assertEqual(sorted(data), ["archived_projects_left_out", "archives_only", "brains", "files", "hits", "kinds", "more", "project", "scope", "term", "total"])
+        self.assertEqual(sorted(data), ["archived_projects_left_out", "archives_only", "brains", "files", "hits", "kinds", "more", "project", "scope", "suggestions", "term", "total"])
         self.assertEqual((data["term"], data["total"], len(data["hits"]), data["brains"], data["archives_only"]),
                          ("zurich", 15, 4, ["brain-acme", "brain-abacus"], False))
         self.assertEqual(data["kinds"], {"action": 1, "decision": 1, "page": 2, "workstream": 1, "note": 1, "journal": 2, "source": 7})

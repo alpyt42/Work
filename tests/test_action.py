@@ -289,6 +289,9 @@ class ActionCommandTest(unittest.TestCase):
         (self.folder / "state").mkdir(parents=True)
         (self.folder / "sources").mkdir()
         (self.folder / "sources/cr.md").write_text("Ancienne mention GAM-007\n", encoding="utf-8")
+        (self.folder / "sources/x.md").write_text("x\n", encoding="utf-8")
+        (self.folder / "sources/2026-10").mkdir()
+        (self.folder / "sources/2026-10/2026-10-12-cr-a-very-long-slug.md").write_text("x\n", encoding="utf-8")
         self.register = self.folder / "state/actions.md"
         self.register.write_text(REGISTER, encoding="utf-8")
         self.env = {**os.environ, "ACTION_NOW": "2026-10-13 14:32"}
@@ -1449,8 +1452,6 @@ class ActionArchivedClientTest(ActionArchivedProjectTest):
         self.assertEqual(self.create()["id"], "GAM-023")  # GAM-022 sits in clients/archive/acme
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 REGISTER = """# Actions — Gamma
@@ -1463,3 +1464,95 @@ REGISTER = """# Actions — Gamma
 
 ## Cancelled
 """
+
+
+class ActionLinkTest(unittest.TestCase):
+    """Links written by create, history and subtask commands are made relative to the register."""
+
+    tearDown = ActionCommandTest.tearDown
+    act = ActionCommandTest.act
+    text = ActionCommandTest.text
+
+    def setUp(self) -> None:
+        ActionCommandTest.setUp(self)
+        self.brain = self.brain.parent / "brain-acme"
+        (self.brain.parent / "brain").rename(self.brain)
+        self.folder = self.brain / "projects/clients/acme/missions/gamma"
+        self.register = self.folder / "state/actions.md"
+        other = self.brain / "projects/internal/acme/sources"
+        other.mkdir(parents=True)
+        (other / "m.md").write_text("m\n", encoding="utf-8")
+        (self.brain.parent / "brain-globex/projects").mkdir(parents=True)
+        (self.brain.parent / "brain-globex/projects/g.md").write_text("g\n", encoding="utf-8")
+
+    LINK = "projects/internal/acme/sources/m.md"
+    RELATIVE = "../../../../../internal/acme/sources/m.md"
+
+    def test_create_rewrites_source_and_due_note(self) -> None:
+        result = self.act("create", "--project", "acme/gamma", "--title", "T", "--owner", "Owner",
+                          "--source", f"[M]({self.LINK}#a)", "--due-note", f"after [M](brain-acme/{self.LINK})")
+        self.assertEqual(result["id"], "GAM-008")
+        self.assertIn(f"    - due: after [M]({self.RELATIVE})\n    - source: [M]({self.RELATIVE}#a)\n", self.text())
+
+    def test_history_and_subtask_rewrite_and_keep_urls_and_relative_links(self) -> None:
+        self.act("history", "add", "GAM-001", "--text", f"Seen in [M]({self.LINK}), [CR](../sources/cr.md), [w](https://example.com)")
+        self.act("subtask", "add", "GAM-001", "--text", f"Read [M]({str(self.brain / self.LINK)})")
+        text = self.text()
+        self.assertIn(f"Seen in [M]({self.RELATIVE}), [CR](../sources/cr.md), [w](https://example.com)", text)
+        self.assertIn(f"- [ ] Read [M]({self.RELATIVE})", text)
+
+    def test_missing_other_brain_and_dry_run(self) -> None:
+        before = self.text()
+        for target, word in (("projects/nope.md", "resolves nowhere"), ("brain-globex/projects/g.md", "another brain")):
+            error = self.act("history", "add", "GAM-001", "--text", f"See [x]({target})", code=2)
+            self.assertIn(word, error["error"])
+        error = self.act("subtask", "add", "GAM-001", "--text", "Read [x](projects/nope.md)", code=2)
+        self.assertIn("resolves nowhere", error["error"])
+        result = self.act("history", "add", "GAM-001", "--text", f"See [M]({self.LINK})", "--dry-run")
+        self.assertTrue(result["dry_run"])
+        self.assertEqual(self.text(), before)
+
+    def test_anchor_stays_inside_angle_brackets(self) -> None:
+        spaced = self.brain / "projects/internal/acme/sources/a b.md"
+        spaced.write_text("a\n", encoding="utf-8")
+        for given in ("projects/internal/acme/sources/a b.md", "projects/internal/acme/sources/a%20b.md"):
+            self.act("history", "add", "GAM-001", "--text", f"See [x](<{given}#sec>)" if " " in given else f"See [x]({given}#sec)")
+            self.assertIn("[x](<../../../../../internal/acme/sources/a b.md#sec>)", self.text())
+            self.assertNotIn(">#sec", self.text())
+
+    def test_unchanged_text_is_not_rechecked(self) -> None:
+        lines = self.text().splitlines()
+        row = next(i for i, line in enumerate(lines) if "**GAM-001**" in line)
+        lines[row] += " see [gone](../sources/gone.md)"
+        lines.insert(row + 1, "    - 01/01: old [gone](../sources/gone.md)")
+        lines.insert(row + 2, "    - [ ] step [gone](../sources/gone.md)")
+        self.register.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        title = self.act("show", "GAM-001")["title"] if isinstance(self.act("show", "GAM-001"), dict) else None
+        self.assertIn("gone", title)
+        self.act("update", "GAM-001", "--title", title, "--state", "in-progress")
+        self.act("history", "edit", "GAM-001", "--index", "0", "--text", "old [gone](../sources/gone.md)")
+        self.act("subtask", "edit", "GAM-001", "--index", "0", "--text", "step [gone](../sources/gone.md)")
+        error = self.act("update", "GAM-001", "--title", title + " [new](../sources/nope.md)", code=2)
+        self.assertIn("resolves nowhere", error["error"])
+
+    def test_artifacts_links_are_kept_and_other_work_folders_refused(self) -> None:
+        work = self.brain.parent
+        (work / "artifacts/2026-11-x").mkdir(parents=True)
+        (work / "artifacts/2026-11-x/README.md").write_text("r\n", encoding="utf-8")
+        (work / "repos/acme").mkdir(parents=True)
+        (work / "repos/acme/a.md").write_text("a\n", encoding="utf-8")
+        self.act("history", "add", "GAM-001", "--text", "See [x](artifacts/2026-11-x/README.md)")
+        self.assertIn("[x](../../../../../../../artifacts/2026-11-x/README.md)", self.text())
+        error = self.act("history", "add", "GAM-001", "--text", "See [x](repos/acme/a.md)", code=2)
+        self.assertIn("outside the brain", error["error"])
+        self.assertNotIn("resolves nowhere", error["error"])
+
+    def test_parentheses_in_a_target(self) -> None:
+        (self.folder / "sources").mkdir(exist_ok=True)
+        (self.folder / "sources/cr(1).md").write_text("c\n", encoding="utf-8")
+        self.act("history", "add", "GAM-001", "--text", "See [x](../sources/cr(1).md) and [y](https://example.com/a_(b))")
+        self.assertIn("[x](../sources/cr(1).md) and [y](https://example.com/a_(b))", self.text())
+
+
+if __name__ == "__main__":
+    unittest.main()

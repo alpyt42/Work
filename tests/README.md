@@ -10,10 +10,12 @@ Fictitious names only in tests and fixtures (`acme`, `globex`, `initech`, `brain
 - `test_preflight_push.py` — checks before a push (identity origin, `GIT_SSH*`, `brain.json` boundary, SSH account with a stub, fast-forward) and the `pre-push` hook through real pushes to a local bare remote.
 - `test_client_repos.py` — catalog and cloning of client repositories.
 - `test_brain_state.py` — list of the brains (scope, description), merge of the states across brains, and `map` (projects, pages, registers, counts, archived, JSON keys).
+- `test_brain_state_extras.py` — `brain-state.py`: transcript names in NFC and NFD, `transcripts --set` and `--preview`, `section` on the Markdown files of `kit/`, `find --fuzzy` and the suggestions after a `no match`.
+- `test_source.py` — `source.py`: minutes checks (duration parsing, word caps, summary and key points, sections and their order, tags, index line) and `index add` (both index styles, date and time order, dry run, creation from the template, refusals).
 - `test_new_brain.py` — creation of a blank brain from `kit/brain/seed/`, its boundary (`.data/brain.json`), its `.gitignore`, its Git hooks (absent with `--no-git`) and the rule of `skills/README.md` for finding the Work root.
 - `test_tasks_web_new_brain.py` — `POST /api/brains` of the local app: write guards, validation, conflicts, and a real creation (repository, Git hooks, boundary) in a temporary Work.
 - `test_brain_boundaries.py` — boundaries between brains: client names of another brain (`check-no-client.py`), the `brain-pre-commit` hook and the **New action** form; in Work, the names of every brain and the employer name, and the `work-pre-commit` hook.
-- `test_action.py`, `test_action_board.py`, `test_decision.py` — registers, views and transitions of actions and decisions.
+- `test_action.py`, `test_action_board.py`, `test_decision.py` — registers, views and transitions of actions and decisions, and the link targets given from the brain or Work root, rewritten relative to the register.
 - `test_timeline.py` — timeline entries at their date, past months rolled into `journal/YYYY-MM.md` (link correction, previous-months line, English wording written while the earlier French one is still read, idempotence) and the current-state block.
 - `test_migrate_english.py` — conversion of a brain from the French format to the English structure (`migrate-english.py`): register labels, headings, front matter, header labels, tags and boilerplate lines; content untouched, idempotent.
 - `test_tasks_web.py` — local interface, API, document search and the Sync view (saving and sending on scratch brains with local bare remotes and the real hooks).

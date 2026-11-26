@@ -530,6 +530,7 @@ def add(brain: Path, project: str, model: str, text: str, day: str = "", dry_run
     words = action.word_count(text)
     if words > ENTRY_WORDS:
         raise ActionError("bad_request", f"Entry has {words} words; the cap is {ENTRY_WORDS}. Say what changed and link the source once; the detail stays in the source.")
+    text = action.resolve_links(text, page, brain)
     when = action.parse_date(day, "Date") if day else action.today()
     line = f"- {when} — {text} ({model})"
     plan = Plan(brain, page, today_date())
@@ -577,6 +578,7 @@ def state(brain: Path, project: str, model: str, texts: list[str], day: str = ""
     words = sum(action.word_count(bullet) for bullet in bullets)
     if words > STATE_WORDS:
         raise ActionError("bad_request", f"Current state has {words} words; the cap is {STATE_WORDS}. Keep what a reader needs now and link the rest.")
+    bullets = [action.resolve_links(bullet, page, brain) for bullet in bullets]
     when = action.parse_date(day, "Date") if day else action.today()
     plan = Plan(brain, page, today_date())
     lines = plan.doc(page).lines
