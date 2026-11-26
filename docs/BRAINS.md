@@ -20,7 +20,7 @@ The new folder is a copy of `kit/brain/seed/` with a fresh Git repository on `ma
 - `remote` and `email`: `fnmatch` patterns that the clone's `origin` URL and effective `user.email` must match, checked by `doctor.py`.
 - `allow`: client names of another brain that may appear in this one.
 
-Where data goes: each brain holds its own projects, people, actions, sources and skill states (`.data/`); the shared settings (expected `brains`, input folders) live in the default brain's `.data/local-paths.json`. Rules: no Markdown link from one brain to another and no client name of another brain in a brain's paths or content. `uv run tools/brain/check-links.py`, `check-no-client.py --brain` and the brain's pre-commit hook enforce both. Conventions: [`kit/brain/AGENTS.md`](../kit/brain/AGENTS.md).
+Where data goes: each brain holds its own projects, people, actions, sources and skill states (`.data/`); the shared settings (expected `brains`, input folders) live in the default brain's `.data/local-paths.json`, a file local to each machine and ignored by Git (versioned template: `.data/local-paths.example.json`; see [Move local-paths.json out of Git](SETUP.md#move-local-pathsjson-out-of-git) for an older brain). Rules: no Markdown link from one brain to another and no client name of another brain in a brain's paths or content. `uv run tools/brain/check-links.py`, `check-no-client.py --brain` and the brain's pre-commit hook enforce both. Conventions: [`kit/brain/AGENTS.md`](../kit/brain/AGENTS.md).
 
 ## Skills
 

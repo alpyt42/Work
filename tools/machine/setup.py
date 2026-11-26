@@ -10,12 +10,15 @@ Two kinds of items:
 - settings, which an agent asks the user and writes itself (`set`, or `default` when the user says to skip):
   `defaultBrain` and `artifactsDir`, choices of this machine kept in the ignored `work-config.local.json`
   and validated by `work_config.py`; `brains` and `transcripts_dir`, in the default brain's
-  `.data/local-paths.json`; and for each brain `<brain>.owner` (`.data/doctor.json`) and `<brain>.scope`,
-  `<brain>.description`, `<brain>.remote`, `<brain>.email` (`.data/brain.json`);
+  `.data/local-paths.json`, local to each machine and ignored by Git (a missing file is created at the first
+  answer, from the brain's versioned `.data/local-paths.example.json` without the two asked keys); and for each
+  brain `<brain>.owner` (`.data/doctor.json`) and `<brain>.scope`, `<brain>.description`, `<brain>.remote`,
+  `<brain>.email` (`.data/brain.json`);
 - checks of what only the owner can do (`owner-action`, never written by this script): commands to install,
   the Git author and SSH key of each trust boundary in the home configuration, bootstrap (Git hooks, skills),
-  the link to a relocated artifacts folder, `tools/.env` when an enabled own skill reads it, expected brains not
-  cloned, a transcripts folder not available on this machine, Obsidian.
+  the link to a relocated artifacts folder, `tools/.env` when an enabled own skill reads it, a brain whose
+  `.data/local-paths.json` Git still tracks or does not ignore, expected brains not cloned, a transcripts folder
+  not available on this machine, Obsidian.
 
 A setting is done when its value is there and valid (`defaultBrain` also when the rule of `work_config.py`
 resolves it, `artifactsDir` when its folder exists). `recordings_dir` of local-paths.json is read by no tool and
@@ -59,6 +62,9 @@ LOCAL = work_config.LOCAL.name
 STATE = work_config.STATE.name
 ARTIFACTS_DEFAULT = work_config.ARTIFACTS
 TRANSCRIPTS_DEFAULT = "Documents/Transcripts"
+LOCAL_PATHS = ".data/local-paths.json"  # input folders and expected brains of this machine: ignored by the brain's Git
+LOCAL_PATHS_EXAMPLE = ".data/local-paths.example.json"  # its versioned template, next to it
+ASKED_PATHS = ("brains", "transcripts_dir")  # asked on each machine, never copied from the template
 BRAIN_FIELDS = ("owner", "scope", "description", "remote", "email")
 BRAIN_SEED = {"allow": [], "description": "", "email": "", "remote": "", "scope": "", "version": 1}
 PERSONAL_NAMES = ("brain-perso", "brain-personal")
@@ -199,7 +205,8 @@ class Workspace:
         for brain in self.brains:
             for name in ("brain.json", "doctor.json"):
                 self.files[(brain.name, name)] = read_object(root, brain / ".data" / name)[0]
-        self.paths = read_object(root, self.default / ".data/local-paths.json")[0] if self.default else {}
+        self.paths, paths_text = read_object(root, self.default / LOCAL_PATHS) if self.default else ({}, None)
+        self.paths_missing = self.default is not None and paths_text is None
         self.has_git = shutil.which("git") is not None
         self._git: dict[tuple[str, ...], str] = {}
 
@@ -235,7 +242,14 @@ class Workspace:
         return value.strip() if isinstance(value, str) else ""
 
     def paths_file(self) -> str:
-        return f"{self.default.name}/.data/local-paths.json" if self.default else "<default brain>/.data/local-paths.json"
+        return f"{self.default.name}/{LOCAL_PATHS}" if self.default else f"<default brain>/{LOCAL_PATHS}"
+
+    def paths_seed(self) -> dict[str, Any]:
+        """Content of a new local-paths.json: the default brain's template without the keys asked on each machine."""
+        if self.default is None:
+            return {}
+        example, _ = read_object(self.root, self.default / LOCAL_PATHS_EXAMPLE)
+        return {key: value for key, value in example.items() if key not in ASKED_PATHS}
 
 
 # --- Settings -----------------------------------------------------------------------------------------------
@@ -296,7 +310,7 @@ def brains_item(ws: Workspace) -> Item:
     if ws.default is None:
         item.state, item.detail = "missing", "answer defaultBrain first"
     elif not valid:
-        item.state, item.detail = "missing", "not set" if value is None else "not a list of brain folder names"
+        item.state, item.detail = "missing", paths_detail(ws) if value is None else "not a list of brain folder names"
     return item
 
 
@@ -312,8 +326,15 @@ def transcripts_item(ws: Workspace) -> Item:
     if ws.default is None:
         item.state, item.detail = "missing", "answer defaultBrain first"
     elif not isinstance(value, str) or not value.strip():
-        item.state, item.detail = "missing", "not set"
+        item.state, item.detail = "missing", paths_detail(ws) if value is None else "not set"
     return item
+
+
+def paths_detail(ws: Workspace) -> str:
+    """Why a key of local-paths.json is missing: the file itself is absent on a machine that has not answered yet."""
+    if not ws.paths_missing:
+        return "not set"
+    return f"{LOCAL_PATHS} is local to each machine and not created here yet: the first answer creates it"
 
 
 def scope_default(brain: Path) -> str | None:
@@ -418,6 +439,19 @@ def checks(ws: Workspace) -> list[Item]:
                 wrong.append(f"{label}: commit e-mail outside the email pattern of its brain.json")
         items.append(check("git-identity", not wrong, "home Git configuration", "commits and pushes use the identity of their trust boundary",
                            IDENTITY, "; ".join(wrong)))
+        versioned = []
+        for brain in ws.ordered:
+            if not (brain / ".git").exists():
+                continue
+            if ws.repo_git(brain, "ls-files", "--", LOCAL_PATHS):
+                versioned.append(f"{brain.name}: tracked by Git")
+            elif not ws.repo_git(brain, "check-ignore", "--", LOCAL_PATHS):
+                versioned.append(f"{brain.name}: not ignored by its .gitignore")
+        items.append(check("local-paths-ignored", not versioned, "each brain's .gitignore",
+                           f"{LOCAL_PATHS} holds paths of this machine, which differ from one computer to another",
+                           f"add /{LOCAL_PATHS} to the brain's .gitignore and, where Git tracks it, run "
+                           f"`git -C <brain> rm --cached {LOCAL_PATHS}`, then commit; on every other machine, copy the file aside "
+                           "before pulling that commit (docs/SETUP.md, « Move local-paths.json out of Git »)", "; ".join(versioned)))
 
     if "artifactsDir" in ws.local:
         try:
@@ -560,7 +594,7 @@ def set_brains(ws: Workspace, value: str) -> list[str]:
                 raise SetupError(str(error)) from None
     if ws.default.name not in names:
         raise SetupError(f"brains: the list must include the default brain {ws.default.name}")
-    update_file(ws.root, ws.default / ".data/local-paths.json", {"brains": names})
+    update_file(ws.root, ws.default / LOCAL_PATHS, {"brains": names}, seed=ws.paths_seed())
     absent = [name for name in names if not work_config.is_brain(ws.root / name)]
     return [f"not at the Work root yet: {', '.join(absent)} (clone it)"] if absent else []
 
@@ -586,7 +620,7 @@ def set_transcripts(ws: Workspace, value: str) -> list[str]:
     folder = home / relative
     if folder.resolve().is_relative_to(ws.root.resolve()):
         raise SetupError("transcripts_dir: input folders stay outside the workspace")
-    update_file(ws.root, ws.default / ".data/local-paths.json", {"transcripts_dir": relative.as_posix()})
+    update_file(ws.root, ws.default / LOCAL_PATHS, {"transcripts_dir": relative.as_posix()}, seed=ws.paths_seed())
     return [] if folder.is_dir() else ["the folder is not on this machine yet"]
 
 

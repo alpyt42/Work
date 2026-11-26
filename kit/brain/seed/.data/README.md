@@ -1,13 +1,14 @@
 # .data/
 
-Private states and settings of this brain and its skills. Versioned with the brain, never cited in a public tooling repository. No secrets here: tokens go in an ignored `.env` at the workspace level.
+Private states and settings of this brain and its skills. Versioned with the brain (except `local-paths.json`, local to each machine), never cited in a public tooling repository. No secrets here: tokens go in an ignored `.env` at the workspace level.
 
 | File | Role | Skill or tool |
 |---|---|---|
 | `brain.json` | boundary of the brain: `scope` (for example `personal`, `employer` or `client`), `description` (what it holds and must never hold), expected `remote` and `email` (`fnmatch` patterns), `allow` (client names of another brain that may appear here) | agents, `brain-state.py brains`, `check-no-client.py`, the machine doctor |
 | `work-config.json` | third-party skills to install (`skills.thirdParty`) and disabled skills (`skills.disabled`) | `tools/machine/work_config.py`, `update.sh` |
 | `doctor.json` | `owner`: display name of the brain's owner. Read by `tools/brain/action.py` (owner of the board and default owner of new actions) and by `tools/brain/decision.py` (default person who accepts or rejects a decision); also the default owner of the **New action** form | `tools/brain/action.py`, `tools/brain/decision.py` |
-| `local-paths.json` | expected brains and input folders outside the workspace, relative to `$HOME` (personal settings of the machine: only the default brain carries them) | `brain-state.py`, `cr-reunion` |
+| `local-paths.json` | settings of this machine, ignored by Git: expected brains and input folders outside the workspace, relative to `$HOME` (only the default brain's copy is read for these shared settings); created from the versioned template `local-paths.example.json` by `tools/machine/setup.py` or `new-brain.py`, or copied by hand | `brain-state.py`, `cr-reunion` |
+| `local-paths.example.json` | versioned template of `local-paths.json` | `tools/machine/setup.py`, `new-brain.py` |
 | `transcripts.json` | transcripts already handled, one entry per file: `status` (`processed`, `ignored`, `split`, `duplicate` or `undecided`), `processed_on` (date), `destinations` (where its content went) and `note` | `cr-reunion` |
 | `messages-state.json` | cursors and ids of processed messages (`status` of a message: `processed` or `ignored`) | `veille-messages` |
 | `client-repos.json` | private catalogue of the code repositories: path, Git URL and project (see [`kit/brain/docs/REPOSITORIES.md`](../../kit/brain/docs/REPOSITORIES.md)) | `tools/repos/client-repos.py` |

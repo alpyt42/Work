@@ -95,7 +95,7 @@ cat <<'EOF'
 Next steps:
   - Fill in <brain>/.data/brain.json for each brain (scope, description, and the remote and
     user.email patterns that tools/machine/doctor.py checks against Git).
-  - Fill in brain/me/about-me.md and review brain/AGENTS.md and brain/.data/local-paths.json.
+  - Fill in brain/me/about-me.md and review brain/AGENTS.md and brain/.data/local-paths.json (settings of this machine, ignored by Git; template: .data/local-paths.example.json).
   - Skills live in your brains: own skills in <brain>/skills/<name>/, third-party skills in
     <brain>/.data/work-config.json; machine-only choices (e.g. {"skills": {"disabled": [...]}}) in
     work-config.local.json. Then run tools/machine/update.sh.

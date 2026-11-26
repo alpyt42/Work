@@ -12,3 +12,6 @@ __pycache__/
 .cache/
 *.cache.json
 .*-cache.json
+# settings of this machine (input folders, expected brains): paths differ from one computer to another, never
+# committed; the versioned template is .data/local-paths.example.json
+/.data/local-paths.json

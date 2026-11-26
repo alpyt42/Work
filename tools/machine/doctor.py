@@ -7,7 +7,8 @@
 
 Checks the required commands, the default brain (work_config.py) and the brains expected by its
 .data/local-paths.json (present, Git repository, upstream, unpushed commits), the local input folders
-named there, the JSON state files of every brain, and the artifacts folder (location from `work_config.artifacts_dir`: path, inside the Work root or not,
+named there, that Git neither tracks nor offers to add a brain's .data/local-paths.json (it holds paths of
+this machine), the JSON state files of every brain, and the artifacts folder (location from `work_config.artifacts_dir`: path, inside the Work root or not,
 symlink status, files no repository backs up).
 It also checks the skill configuration (valid layers, changed since the last
 update.sh, skills of skills-lock.json no layer knows, enabled third-party skills not
@@ -40,6 +41,9 @@ BRAIN_NAME = re.compile(r"^brain(-[a-z0-9][a-z0-9-]*)?$")
 COMMANDS = ("git", "uv")  # node and npx are only needed when third-party skills are enabled
 BRAIN_FIELDS = ("scope", "description", "remote", "email")
 MANAGED_LINK = re.compile(r"\.\./\.\./(brain(-[a-z0-9][a-z0-9-]*)?|\.agents)/skills/[^/]+")
+LOCAL_PATHS = ".data/local-paths.json"  # paths of this machine, ignored by the brain's Git
+LOCAL_PATHS_EXAMPLE = ".data/local-paths.example.json"  # its versioned template
+MOVE_OUT = "see \"Move local-paths.json out of Git\" in docs/SETUP.md"
 findings: list[tuple[str, str]] = []
 
 
@@ -73,6 +77,16 @@ def repo_checks(repo: Path) -> None:
     ahead = git(repo, "rev-list", "--count", "@{upstream}..HEAD")
     if ahead and ahead != "0":
         report("WARN", f"{label}: {ahead} local commit(s) not pushed")
+
+
+def local_paths_checks(brain: Path) -> None:
+    """A brain's local-paths.json holds paths of this machine: Git must neither track it nor offer to add it."""
+    if not (brain / ".git").exists():
+        return
+    if git(brain, "ls-files", "--", LOCAL_PATHS):
+        report("WARN", f"{brain.name}/{LOCAL_PATHS} is tracked by Git, but its paths differ per machine: {MOVE_OUT}")
+    elif git(brain, "check-ignore", "-q", "--", LOCAL_PATHS) is None:
+        report("WARN", f"{brain.name}/.gitignore does not ignore {LOCAL_PATHS}: add /{LOCAL_PATHS} to it ({MOVE_OUT})")
 
 
 def load_json(path: Path) -> dict | list | None:
@@ -129,13 +143,15 @@ def brain_checks() -> None:
             report("WARN", f"several brains ({', '.join(brains)}) and no default brain: set \"defaultBrain\" in work-config.local.json")
 
     # The shared settings (input folders, expected brains) live in the default brain.
-    shared = f"{default.name}/.data/local-paths.json" if default else "local-paths.json"
+    shared = f"{default.name}/{LOCAL_PATHS}" if default else "local-paths.json"
     config: dict | list | None = {}
     if default is not None:
-        config_file = default / ".data/local-paths.json"
+        config_file = default / LOCAL_PATHS
         config = load_json(config_file) if config_file.is_file() else {}
         if not config_file.is_file():
-            report("WARN", f"{shared} missing: input folders and expected brains unknown")
+            report("WARN", f"{shared} missing: input folders and expected brains unknown on this machine. The file is local to "
+                           "each machine and ignored by Git: answer `uv run tools/machine/setup.py status`, which creates it, "
+                           f"or copy {default.name}/{LOCAL_PATHS_EXAMPLE} to it and adjust the paths")
     config = config if isinstance(config, dict) else {}
 
     present = sorted(p.name for p in WORK.iterdir() if p.is_dir() and BRAIN_NAME.fullmatch(p.name))
@@ -151,6 +167,7 @@ def brain_checks() -> None:
         if default is not None and name not in expected:
             report("INFO", f"{name}/ is present but not in the \"brains\" list of local-paths.json")
         repo_checks(brain)
+        local_paths_checks(brain)
         boundary_checks(brain)
         for state in sorted((brain / ".data").rglob("*.json")):
             load_json(state)

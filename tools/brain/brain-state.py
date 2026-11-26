@@ -13,7 +13,8 @@ new when no brain lists it.
 The default brain (`brain/`, else the only brain, or the one named by `defaultBrain`
 in work-config.local.json: see tools/machine/work_config.py) holds the shared
 configuration: the input folders in .data/local-paths.json and, optionally, the
-list of brains expected on every machine (`"brains": ["brain", "brain-perso"]`).
+list of brains expected on this machine (`"brains": ["brain", "brain-perso"]`).
+That file is local to each machine and ignored by Git (template: .data/local-paths.example.json).
 A missing expected brain stops the tool, so its transcripts never come back as new elsewhere.
 
 Each brain is a trust boundary declared in its own .data/brain.json (`scope`,
@@ -290,7 +291,8 @@ def transcripts_dir() -> Path:
     if not relative:
         default = default_brain()
         raise SystemExit(
-            f"transcripts_dir missing from {default.name}/.data/local-paths.json" if default
+            f"transcripts_dir missing from {default.name}/.data/local-paths.json (local to each machine, ignored by Git): "
+            "set it with `uv run tools/machine/setup.py set transcripts_dir <folder under your home folder>`" if default
             else "no default brain (several brains): set defaultBrain in work-config.local.json to read transcripts_dir"
         )
     return Path.home() / relative

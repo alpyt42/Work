@@ -190,8 +190,18 @@ class NewBrainTest(unittest.TestCase):
 
         for cache in (".cache/state.json", ".data/projects.cache.json", ".data/.projects-cache.json", ".data/sub/x.cache.json"):
             self.assertTrue(ignored(cache), cache)
-        for versioned in (".data/doctor.json", ".data/work-config.json", ".data/transcripts.json", "skills/README.md"):
+        for versioned in (".data/doctor.json", ".data/work-config.json", ".data/transcripts.json", ".data/local-paths.example.json", "skills/README.md"):
             self.assertFalse(ignored(versioned), versioned)
+        self.assertTrue(ignored(".data/local-paths.json"))  # paths of one machine
+
+    def test_local_paths_of_this_machine_come_from_the_versioned_template(self) -> None:
+        self.assertFalse((SEED / ".data/local-paths.json").exists())
+        self.assertEqual(self.run_tool("brain-perso").returncode, 0)
+        data = self.work / "brain-perso/.data"
+        local = json.loads((data / "local-paths.json").read_text(encoding="utf-8"))
+        self.assertEqual(local, json.loads((data / "local-paths.example.json").read_text(encoding="utf-8")))
+        self.assertEqual(local["brains"], ["brain-perso"])
+        self.assertEqual(local["transcripts_dir"], "")
 
     def test_boundary_options_fill_brain_json(self) -> None:
         result = self.run_tool("brain-asso", "--scope", "asso", "--description", "Association data; never any client.",

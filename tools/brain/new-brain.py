@@ -13,7 +13,9 @@ The shared conventions, guides and templates stay in kit/brain/ and are read
 from there, so they follow Work updates instead of being copied.
 
 `{{BRAIN}}` in the seed is replaced by the brain's folder name, which keeps the
-Tasks queries of tasks.md scoped to that brain. The new folder gets a fresh Git
+Tasks queries of tasks.md scoped to that brain. The versioned template
+.data/local-paths.example.json is also copied to .data/local-paths.json, the
+settings of this machine that the brain's .gitignore keeps out of Git. The new folder gets a fresh Git
 repository with no commit and no remote, and the same three Git hooks that
 tools/machine/bootstrap.sh installs in a brain (brain-pre-commit as pre-commit,
 commit-msg, pre-push), copied from tools/machine/hooks/ of the Work repository
@@ -51,6 +53,8 @@ NAME = re.compile(r"^brain(-[a-z0-9][a-z0-9-]*)?$")
 PLACEHOLDER = "{{BRAIN}}"
 TEXT = {".md", ".json"}
 BOUNDARY = ".data/brain.json"
+LOCAL_PATHS = ".data/local-paths.json"  # settings of this machine, ignored by the brain's Git
+LOCAL_PATHS_EXAMPLE = ".data/local-paths.example.json"  # its versioned template
 BOUNDARY_FIELDS = ("scope", "description", "remote", "email")
 
 
@@ -88,6 +92,8 @@ def create(name: str, git: bool = True, boundary: dict[str, str] | None = None) 
             text = path.read_text(encoding="utf-8")
             if PLACEHOLDER in text:
                 path.write_text(text.replace(PLACEHOLDER, name), encoding="utf-8", newline="\n")
+    if (target / LOCAL_PATHS_EXAMPLE).is_file() and not (target / LOCAL_PATHS).exists():
+        shutil.copyfile(target / LOCAL_PATHS_EXAMPLE, target / LOCAL_PATHS)
     fields = {key: value for key, value in (boundary or {}).items() if value}
     if fields:
         write_boundary(target, fields)
