@@ -105,6 +105,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import unquote
 from zoneinfo import ZoneInfo
 
 WORK = Path(os.environ.get("WORK_DIR", Path(__file__).resolve().parents[2])).resolve()
@@ -741,6 +742,80 @@ def clean_subtask(value: object) -> str:
     return text
 
 
+WRITE_LINK_RE = re.compile(r"(\[[^\]]*\]\()(<[^>]*>|(?:[^()\s]|\([^()\s]*\))+)(\))")
+CODE_SPAN_RE = re.compile(r"`[^`]*`")
+SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
+
+
+def other_brain_root(path: Path, brain: Path) -> bool:
+    """True when ``path`` lies inside a sibling brain (``brain/``, ``brain-<name>/``) of ``brain`` at the Work root."""
+    try:
+        first = path.relative_to(brain.parent).parts[0]
+    except (ValueError, IndexError):
+        return False
+    return first != brain.name and (first == "brain" or first.startswith("brain-"))
+
+
+def resolve_links(text: str, written: Path, brain: Path) -> str:
+    """Rewrite the Markdown link targets of ``text``, about to be written into ``written``, so they work from that file.
+
+    URLs (any scheme) and `#anchors` are left alone, a `#anchor` suffix is kept; a target that already resolves from the
+    file's folder stays; a target from the brain root (`projects/…`), from the Work root (`brain-x/projects/…`) or
+    an absolute path inside the brain becomes the relative path from the file. A target in another brain or that
+    resolves nowhere is refused (``ActionError`` bad_request); code spans are left alone."""
+    brain, folder = brain.resolve(), written.resolve().parent
+    work = brain.parent
+
+    def inside(path: Path) -> bool:
+        return path == brain or brain in path.parents
+
+    def fix(match: re.Match) -> str:
+        raw = match.group(2)
+        wrapped = raw.startswith("<")
+        target = raw[1:-1] if wrapped else raw
+        if not target or target.startswith("#") or SCHEME_RE.match(target):
+            return match.group(0)
+        path_part, sep, anchor = target.partition("#")
+        decoded = unquote(path_part)
+        absolute = Path(decoded).is_absolute()
+        candidates = [Path(decoded).resolve()] if absolute else [Path(os.path.normpath(folder / decoded)),
+                                                                           Path(os.path.normpath(brain / decoded)),
+                                                                           Path(os.path.normpath(work / decoded))]
+        for index, candidate in enumerate(candidates):
+            if other_brain_root(candidate, brain) and candidate.exists():
+                raise ActionError("bad_request", f"The link [{target}] points into another brain: a link never leaves its brain.")
+            if not candidate.exists():
+                continue
+            if index == 0 and not absolute:
+                return match.group(0)  # already right from the file's folder
+            if not inside(candidate):
+                if absolute:
+                    raise ActionError("bad_request", f"The link [{target}] points outside the brain.")
+                if index == 2 and candidate.relative_to(work).parts[:1] != ("artifacts",):
+                    raise ActionError("bad_request", f"The link [{target}] points outside the brain (links into repos/ or other "
+                                                     "Work folders are not allowed in a brain); only artifacts/… may be linked.")
+                if index != 2:
+                    continue
+            moved = os.path.relpath(candidate, folder).replace(os.sep, "/")
+            tail = f"{sep}{anchor}"
+            if " " in moved or raw != target:
+                return f"{match.group(1)}<{moved}{tail}>{match.group(3)}"
+            return f"{match.group(1)}{moved}{tail}{match.group(3)}"
+        raise ActionError("bad_request", f"The link [{target}] resolves nowhere: from the register or page, from the brain root "
+                                         f"(projects/…) or from the Work root ({brain.name}/projects/…).")
+
+    pieces, last = [], 0
+    for span in CODE_SPAN_RE.finditer(text):
+        pieces += [WRITE_LINK_RE.sub(fix, text[last:span.start()]), span.group(0)]
+        last = span.end()
+    return "".join(pieces) + WRITE_LINK_RE.sub(fix, text[last:])
+
+
+def unchanged_or_resolved(text: str, stored: str | None, written: Path, brain: Path) -> str:
+    """``text`` as is when it equals what is stored (its links were checked when written), else with its links resolved."""
+    return text if text == stored else resolve_links(text, written, brain)
+
+
 def state_of(value: str) -> str:
     key = value if value in STATUS else value.strip().lower()
     if key not in STATE_ALIASES:
@@ -1287,13 +1362,15 @@ def create(brain: Path, project: str, title: str, owner: str, source: str, state
     if state not in {" ", "/", "w"}:
         raise ActionError("bad_request", "A new action must be to do, in progress or waiting.")
     due, scheduled = optional_date(due, "Due date"), optional_date(scheduled, "Scheduled date")
+    title, source = resolve_links(title, path, brain), resolve_links(source, path, brain)
+    due_note = resolve_links(clean_note(due_note), path, brain) if due_note else ""
     existing = path.read_text(encoding="utf-8")
     lines = existing.splitlines()
     action_id = next_id(brain, path, lines, prefix)
     moment = now()
     block = [action_line(action_id, title, owner, state, priority, moment.date().isoformat(), due, scheduled, "", group)]
     if due_note:
-        block.append(f"    - due: {clean_note(due_note)}")
+        block.append(f"    - due: {due_note}")
     block += [f"    - source: {source}", f"    - created: {moment:%Y-%m-%d %H:%M}", f"    - updated: {moment:%Y-%m-%d %H:%M}"]
     bounds = section_bounds(lines, "open")
     if bounds:
@@ -1322,7 +1399,7 @@ def update(brain: Path, action_id: str, *, title: str | None = None, owner: str 
     if existing.splitlines() != lines:
         raise ActionError("conflict", "The register changed. Refresh before retrying.")
     new = {
-        "title": current["raw_title"] if title is None else clean_title(title),
+        "title": current["raw_title"] if title is None else unchanged_or_resolved(clean_title(title), current["raw_title"], path, brain),
         "owner": current["owner"] if owner is None else clean_text(owner, "Owner", 120),
         "state": current["state"] if state is None else state_of(state),
         "priority": current["priority"] if priority is None else priority_of(priority),
@@ -1367,6 +1444,7 @@ def add_history(brain: Path, action_id: str, text: str, when: str | None = None,
     note = clean_history(text, history_prefix(day))
     check_versions(brain, action_id, None, expect_details_version)
     path, lines, index, _ = find(brain, action_id)
+    note = resolve_links(note, path, brain)
     existing = path.read_text(encoding="utf-8")
     entry = f"- {history_prefix(day)}{note}"
     if any(item_text(lines, start, end).split("\n", 1)[0].rstrip() == entry for start, end in block_items(lines, index)[0]):
@@ -1426,7 +1504,9 @@ def edit_history(brain: Path, action_id: str, number: int, text: str, when: str 
         prefix = history_prefix(day)
     else:
         prefix = dated.group(1) if dated else ""
-    note = clean_history(text, prefix or None)
+    head = f"    - {prefix}"
+    stored = lines[start][len(head):] if lines[start].startswith(head) else None
+    note = unchanged_or_resolved(clean_history(text, prefix or None), stored, path, brain)
     before = block_signature(lines, index)
     lines[start] = f"    - {prefix}{note}"
     updated_changed = refresh_updated(lines, index, before, path)
@@ -1481,7 +1561,7 @@ def subtask_at(groups: list[list[str]], number: int) -> dict:
 def add_subtask(brain: Path, action_id: str, text: str, position: int | None = None, expect_details_version: str | None = None,
                 dry_run: bool = False) -> dict:
     """A new open subtask at ``position`` (0: first; default: last)."""
-    text = clean_subtask(text)
+    text = resolve_links(clean_subtask(text), find(brain, action_id)[0], brain)
 
     def change(groups: list[list[str]]) -> tuple:
         if len(groups) >= SUBTASKS_MAX:
@@ -1510,11 +1590,13 @@ def edit_subtask(brain: Path, action_id: str, number: int, text: str, expect_det
                  dry_run: bool = False) -> dict:
     """Rewrite the text of a subtask; its state, its `✅` date and its sub-lines stay."""
     text = clean_subtask(text)
+    written = find(brain, action_id)[0]
 
     def change(groups: list[list[str]]) -> tuple:
         current = subtask_at(groups, number)
+        resolved = unchanged_or_resolved(text, current["text"], written, brain)
         state = subtask_of(groups[number][0][4:]).group(1)  # type: ignore[union-attr]
-        groups[number][0] = subtask_line(state, text, current["done_on"])
+        groups[number][0] = subtask_line(state, resolved, current["done_on"])
         return f"subtask edited on {action_id}", number, {"before": current["text"]}
     return change_subtasks(brain, action_id, change, expect_details_version, dry_run)
 

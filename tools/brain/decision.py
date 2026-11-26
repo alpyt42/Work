@@ -378,6 +378,8 @@ def propose(brain: Path, project: str, title: str, decision: str, source: str, c
         raise ActionError("bad_request", f"Decision has {words} words (title, context, decision and consequences together); the cap is "
                                          f"{DECISION_WORDS}. Say what was decided and link the source once; write a context only when "
                                          "the source does not give it.")
+    title, decision, source, context, consequences = (
+        action.resolve_links(part, path, brain) for part in (title, decision, source, context, consequences))
     day = action.parse_date(date, "Date") if date else action.today()
     numbered, number = 0, 1
     if path.exists():
@@ -440,14 +442,16 @@ def decision_owner(brain: Path, by: str = "") -> str:
 def accept(brain: Path, project: str, ref: str, on: str = "", by: str = "", note: str = "", dry_run: bool = False) -> dict:
     day = action.parse_date(on, "Date") if on else action.today()
     who = decision_owner(brain, by)
-    extra = action.clean_note(note) if note else ""
+    path = decisions_path(brain, project)
+    extra = action.resolve_links(action.clean_note(note), path, brain) if note else ""
     return settle(brain, project, ref, "accepted", f"{who}, {day}", note=extra, verb="accept", dry_run=dry_run)
 
 
 def reject(brain: Path, project: str, ref: str, on: str = "", by: str = "", reason: str = "", dry_run: bool = False) -> dict:
     day = action.parse_date(on, "Date") if on else action.today()
     who = decision_owner(brain, by)
-    extra = action.clean_note(reason) if reason else ""
+    path = decisions_path(brain, project)
+    extra = action.resolve_links(action.clean_note(reason), path, brain) if reason else ""
     return settle(brain, project, ref, "rejected", f"{who}, {day}", note=extra, verb="reject", dry_run=dry_run)
 
 

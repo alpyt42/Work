@@ -52,6 +52,8 @@ class DecisionTest(unittest.TestCase):
         self.folder = self.brain / "projects/clients/acme/missions/gamma"
         (self.folder / "state").mkdir(parents=True)
         (self.folder / "state/actions.md").write_text("# Actions — Gamma mission\n\n## Open\n", encoding="utf-8")
+        (self.folder / "sources").mkdir()
+        (self.folder / "sources/cr.md").write_text("Minutes\n", encoding="utf-8")
         self.register = self.folder / "state/decisions.md"
         self.register.write_text(DECISIONS, encoding="utf-8")
         self.env = {**os.environ, "ACTION_NOW": "2026-10-13 14:32"}
@@ -490,6 +492,76 @@ class ArchivedClientDecisionsTest(ArchivedProjectDecisionsTest):
     """A whole client archived (`clients/archive/<client>/`): its missions read like archived ones, labels included."""
 
     OLD_DIR = "projects/clients/archive/acme/missions/old"
+
+
+MINUTES = "projects/internal/acme/sources/2026-11/x.md"
+RELATIVE = "../../../../../internal/acme/sources/2026-11/x.md"
+
+
+class DecisionLinkTest(unittest.TestCase):
+    """Links to a file of another project are rewritten relative to the register (brain-acme at the Work root)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.work = Path(self._tmp.name)
+        self.brain = self.work / "brain-acme"
+        (self.brain / ".data").mkdir(parents=True)
+        (self.brain / ".data/doctor.json").write_text('{"owner": "Owner"}\n', encoding="utf-8")
+        folder = self.brain / "projects/clients/acme/missions/gamma"
+        (folder / "state").mkdir(parents=True)
+        (folder / "state/actions.md").write_text("# Actions — Gamma mission\n\n## Open\n", encoding="utf-8")
+        (self.brain / MINUTES).parent.mkdir(parents=True)
+        (self.brain / MINUTES).write_text("Minutes\n", encoding="utf-8")
+        (self.work / "brain-globex/projects/internal/globex").mkdir(parents=True)
+        (self.work / "brain-globex/projects/internal/globex/y.md").write_text("Y\n", encoding="utf-8")
+        self.register = folder / "state/decisions.md"
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def propose(self, source: str, *extra: str, code: int = 0) -> dict:
+        result = subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), "propose", "--project", "acme/gamma",
+                                 "--title", "Pick X", "--decision", "Use X.", "--source", source, *extra],
+                                capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+        return json.loads(result.stdout)
+
+    def source_line(self) -> str:
+        return next(line for line in self.register.read_text(encoding="utf-8").splitlines() if "**Source:**" in line)
+
+    def test_brain_root_work_root_and_absolute_paths_become_relative(self) -> None:
+        for target in (MINUTES, f"brain-acme/{MINUTES}", str(self.brain / MINUTES)):
+            if self.register.exists():
+                self.register.unlink()
+            self.propose(f"[CR]({target})")
+            self.assertEqual(self.source_line(), f"- **Source:** [CR]({RELATIVE})")
+
+    def test_relative_anchor_and_urls_are_kept(self) -> None:
+        self.propose(f"[CR]({RELATIVE}#decisions) [web](https://example.com/a) [mail](mailto:jane@example.com) [top](#x)",
+                     "--context", f"See [again]({MINUTES}#c).")
+        self.assertEqual(self.source_line(), f"- **Source:** [CR]({RELATIVE}#decisions) [web](https://example.com/a) "
+                                             "[mail](mailto:jane@example.com) [top](#x)")
+        self.assertIn(f"- **Context:** See [again]({RELATIVE}#c).", self.register.read_text(encoding="utf-8"))
+
+    def test_missing_and_other_brain_targets_are_refused_and_nothing_is_written(self) -> None:
+        error = self.propose("[CR](projects/internal/acme/sources/missing.md)", code=2)
+        self.assertIn("resolves nowhere", error["error"])
+        error = self.propose("[Y](brain-globex/projects/internal/globex/y.md)", code=2)
+        self.assertIn("another brain", error["error"])
+        error = self.propose(f"[Y](../../../../../../../brain-globex/projects/internal/globex/y.md)", code=2)
+        self.assertIn("another brain", error["error"])
+        self.assertFalse(self.register.exists())
+
+    def test_dry_run_shows_the_rewrite_and_writes_nothing(self) -> None:
+        result = self.propose(f"[CR]({MINUTES})", "--dry-run")
+        self.assertIn(f"- **Source:** [CR]({RELATIVE})", result["block"])
+        self.assertFalse(self.register.exists())
+
+    def test_accept_note_is_rewritten(self) -> None:
+        self.propose(f"[CR]({MINUTES})")
+        subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), "accept", "1", "--project", "acme/gamma", "--by", "Owner",
+                        "--note", f"see [CR]({MINUTES})"], check=True, capture_output=True, text=True)
+        self.assertIn(f"see [CR]({RELATIVE}))", self.register.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

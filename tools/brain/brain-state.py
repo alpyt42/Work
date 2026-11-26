@@ -28,7 +28,7 @@ Commands (from the Work root, `uv run tools/brain/brain-state.py <command> --hel
     due [--days N] [--brain NAME] [--json]             late actions and those due within N days (default 7)
     changes --since DATE|Nd [--project P] [--limit N] [--brain NAME] [--json]
                                           what the registers and timelines date since a day
-    find TERM [--project P] [--in KIND[,KIND]] [--per-file N] [--limit N] [--archived | --all] [--brain NAME] [--json]
+    find TERM [--project P] [--in KIND[,KIND]] [--per-file N] [--limit N] [--archived | --all] [--fuzzy] [--brain NAME] [--json]
                                           search every Markdown page of the brains, ranked by kind
     section FILE[:LINE] [HEADING] [--words N] [--brain NAME] [--json]
                                           the outline of a page, or one of its sections
@@ -37,7 +37,9 @@ Commands (from the Work root, `uv run tools/brain/brain-state.py <command> --hel
     archive PROJECT|clients/CLIENT [--write] [--brain NAME] [--json]    move a finished project or client into an archive/ folder
     unarchive PROJECT|clients/CLIENT [--write] [--brain NAME] [--json]  move it back, the exact inverse
     brains                                the brains found, with their scope and description
-    transcripts [--new | --where FILE]    merged transcript states
+    transcripts [--new [--preview] | --where FILE] [--json]    merged transcript states
+    transcripts --set FILE --status STATUS [--dest PATH]... [--note TEXT] [--processed-on DATE] [--brain NAME] [--dry-run] [--json]
+                                          record the state of one transcript in a brain
 
 `map` is the first command of a session: it replaces the exploration calls that locate the
 brain, client, mission and register to work in. One block per brain (name, scope, `default`
@@ -110,8 +112,20 @@ only; `--all`: everything; `--project` names one with either). `section` reads a
              `people/archive/` and the other `archive/` folders) are read with `--all`, and on
              their own when nothing else matches; the archived projects never are: `--archived` searches
              them alone, `--all` everything. The `no match` line counts the archived projects left out.
+    fuzzy    `find TERM --fuzzy`, and every literal `find` that matches nothing (up to 5 suggestions after the
+             `no match` line), look for the known term that TERM deforms (a team called « MOA Stats »
+             transcribed « Moistat »). Known terms: the name and aliases of the people pages, the bold terms and the
+             `« variants »` of the glossaries (`state/glossary.md` of each live project; a variant is shown with the
+             term its line maps it to: `« variant » = Term`, else the bold term before it), the project and client
+             folder names and the register ID prefixes. A term is close when its difflib ratio is at least 0.75 on
+             the whole (accents, case and spaces apart) or on every word, or when a light phonetic key is equal (no `h`,
+             doubled letters collapsed, `ph` = `f`, `y` = `i`, `c`/`k`/`q` = `k`, `z` = `s`, a final `e`/`s`/`t`/`x`
+             dropped). Up to 8 suggestions with `--fuzzy`, one per line: `term → canonical  kind  path:line` (kind:
+             person, glossary, project, client, prefix). `--json` adds `suggestions` (`term`, `canonical`, `kind`,
+             `path`, `line`, `score`; empty when none was looked for).
     section  FILE is a path as `find` and `brief` print it (from a brain with `--brain NAME` too); only a
-             Markdown file inside a brain is read. Alone: the outline (front matter, then one line per
+             Markdown file inside a brain is read, and the Markdown files of `<Work>/kit/` (read-only, given from
+             the Work root: `section kit/brain/docs/CONVENTIONS.md "Validation table"`). Alone: the outline (front matter, then one line per
              heading with its line number and the words of its section, then the total). `FILE:LINE`:
              the section that holds that line. `FILE HEADING`: the section whose title is HEADING, else
              starts with it, else contains it, without case and accents; `summary` stands for the first
@@ -120,6 +134,28 @@ only; `--all`: everything; `--project` names one with either). `section` reads a
              `--words` words (default 400) with `(truncated, N more words: path:line)`. `FILE:LINE`
              prints a window of 150 words (`--words`) around the line: from the top of its section when
              the line ends in the first two thirds of it, else from a third of the window above the line.
+    transcripts  names are compared in Unicode NFC (macOS and OneDrive write file names decomposed, agents type them
+             composed): state keys, disk names and the `--where` argument; a transcript tracked twice, even by two keys
+             that differ only by normalization, stops the tool. Names are printed as they are on disk. `--new` lists
+             the untracked ones; `--new --preview` describes each (never the folder path): date and time from a
+             `YYYYMMDD_HHMM` prefix, approximate duration (last `[mm:ss]` or `[h:mm:ss]` timestamp), word count, the
+             speakers (label between the timestamp and the first `:`, most active first, 6 at most, with their line
+             counts), an excerpt of the first 3 substantive lines (5 words or more; `...` and `Sous-titrage` lines
+             skipped; 160 characters at most) and the possible duplicates (same trailing `_<hex id>`, or same date and
+             same title segment; among all the transcripts of the folder, a tracked one is flagged); `--json` prints the
+             same fields as a list (`name`, `date`, `time`, `duration_seconds`, `duration_minutes`, `words`, `speakers`,
+             `excerpt`, `possible_duplicates`). The only write besides `archive`: `--set FILE --status
+             processed|ignored|split|duplicate|undecided` writes `<brain>/.data/transcripts.json` of `--brain` (default:
+             the default brain). The key is the on-disk name when a file of the transcripts folder matches FILE after NFC
+             normalization, else FILE in NFC. It refuses an unknown status, a file tracked by another brain (the error
+             names it) and a `--dest` that does not exist; `--dest` (repeatable) is relative to the brain root, or a Work-root
+             path `brain-x/…` of the same brain (another brain's path is refused); `processed` and `split` need at least one
+             destination (kept from the existing record when none is given). An existing record is updated in place and
+             keeps its other fields (`--dest` replaces the list); `processed_on` is `--processed-on`, else today when the
+             record is new or its status changes, else kept. A new key is inserted in sorted position when the keys are
+             sorted, else appended; the file keeps indent 2, `ensure_ascii=False` and a trailing newline, and is replaced
+             atomically. `--dry-run` writes nothing. It prints the resulting record (`--json`: `file`, `brain`, `created`,
+             `dry_run`, `record`).
     person   NAME is the slug of a `people/` page, or words of the name or of one alias, without case and
              accents; several pages are listed (exit code 1), an unknown name gets the closest ones. It
              prints the identity part of the page (name, role, organization, aliases, missions, the lines
@@ -134,7 +170,7 @@ only; `--all`: everything; `--project` names one with either). `section` reads a
              open actions too, with the profile `me/about-me.md` as the page. Pages of `people/archive/`
              are used only when no other page bears the name.
 
-`archive` and `unarchive` are the only commands that write. PROJECT is named as for `brief`, or
+`archive`, `unarchive` and `transcripts --set` are the only commands that write. PROJECT is named as for `brief`, or
 `clients/<client>` for a whole client, or given as a folder path (from the Work root, a brain, or absolute;
 a folder without a register too). `archive` moves, with the filesystem (nothing is staged), into the
 `archive/` folder at its own level, created when needed: a client mission
@@ -221,8 +257,15 @@ def check_expected(brains: list[Path]) -> None:
         raise SystemExit(f"no brain found in {WORK}")
 
 
+def nfc(text: str) -> str:
+    """``text`` in Unicode NFC. macOS and OneDrive store file names decomposed (NFD), agents type them composed (NFC):
+    names are compared in NFC everywhere."""
+    return unicodedata.normalize("NFC", text)
+
+
 def load_transcripts(brains: list[Path]) -> dict[str, tuple[str, dict]]:
-    """Union of transcript states, keyed by file name; refuses a file listed by two brains."""
+    """Union of transcript states, keyed by NFC file name; refuses a file listed twice (by two brains, or by two keys
+    of one brain that differ only by Unicode normalization)."""
     merged: dict[str, tuple[str, dict]] = {}
     conflicts: list[str] = []
     for brain in brains:
@@ -230,10 +273,11 @@ def load_transcripts(brains: list[Path]) -> dict[str, tuple[str, dict]]:
         if not state.is_file():
             continue
         for key, record in json.loads(state.read_text(encoding="utf-8")).items():
-            if key in merged:
-                conflicts.append(f"{key} ({merged[key][0]}, {brain.name})")
+            name = nfc(key)
+            if name in merged:
+                conflicts.append(f"{name} ({merged[name][0]}, {brain.name})")
             else:
-                merged[key] = (brain.name, record)
+                merged[name] = (brain.name, record)
     if conflicts:
         raise SystemExit("transcript listed by several brains: " + "; ".join(conflicts))
     return merged
@@ -278,35 +322,268 @@ def cmd_brains(brains: list[Path]) -> int:
     return 0
 
 
-def cmd_transcripts(brains: list[Path], new: bool, where: str | None) -> int:
+def transcript_names() -> list[str]:
+    """The `.txt` file names of the transcripts folder, as they are on disk (sorted by their NFC form)."""
+    folder = transcripts_dir()
+    try:
+        return sorted((p.name for p in folder.iterdir() if p.suffix == ".txt"), key=nfc)
+    except (FileNotFoundError, NotADirectoryError):
+        raise SystemExit(f"transcripts folder not found: {folder}") from None
+    except PermissionError:
+        raise SystemExit(
+            f"Access denied to the transcripts folder: {folder}. "
+            "Check the macOS permissions and that the synced folder (OneDrive, for example) is available, then run again."
+        ) from None
+    except OSError as error:
+        raise SystemExit(f"cannot read the transcripts folder: {folder} ({error.strerror})") from None
+
+
+def disk_names() -> dict[str, str]:
+    """{NFC name: name on disk} of the transcripts folder; empty when the folder cannot be read (a state needs no disk to be printed)."""
+    try:
+        return {nfc(name): name for name in transcript_names()}
+    except SystemExit:
+        return {}
+
+
+STATUSES = ("processed", "ignored", "split", "duplicate", "undecided")
+NAME_STAMP = re.compile(r"^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(?:_|\.|$)")
+NAME_ID = re.compile(r"_([0-9a-f]{4,})\.txt$")
+STAMP = re.compile(r"\[(\d{1,3}):(\d{2})(?::(\d{2}))?\]")
+LINE_STAMP = re.compile(r"^\s*\[\d{1,3}:\d{2}(?::\d{2})?\]\s*")
+SPEAKER = re.compile(r"^([^:\[\]]{1,60}?)\s*:\s")
+PREVIEW_LINES, PREVIEW_SPEAKERS, PREVIEW_CHARS, PREVIEW_MIN_WORDS = 3, 6, 160, 5
+
+
+def transcript_title(name: str) -> str:
+    """The title segment of a transcript file name: without its `YYYYMMDD_HHMM_` prefix and its trailing `_<hex id>.txt`."""
+    stem = NAME_ID.sub("", name)
+    stem = stem[:-4] if stem.lower().endswith(".txt") else stem
+    return re.sub(r"^\d{8}_\d{4}_?", "", stem)
+
+
+def duration_seconds(text: str) -> int | None:
+    """Seconds up to the last `[mm:ss]` or `[h:mm:ss]` timestamp of ``text`` (None without any)."""
+    last = None
+    for found in STAMP.finditer(text):
+        last = found
+    if last is None:
+        return None
+    first, second, third = last.groups()
+    return int(first) * 3600 + int(second) * 60 + int(third) if third is not None else int(first) * 60 + int(second)
+
+
+def preview_one(name: str, text: str) -> dict:
+    """What an agent needs to recognize a transcript without reading it: when, how long, who speaks, how it starts."""
+    stamp = NAME_STAMP.match(name)
+    seconds = duration_seconds(text)
+    speakers: Counter = Counter()
+    excerpt: list[str] = []
+    for raw in text.splitlines():
+        if not LINE_STAMP.match(raw):
+            continue
+        body = LINE_STAMP.sub("", raw, count=1).strip()
+        label = SPEAKER.match(body)
+        speech = body[label.end():].strip() if label else body
+        if label:
+            speakers[label.group(1).strip()] += 1
+        if (len(excerpt) < PREVIEW_LINES and speech != "..." and len(speech.split()) >= PREVIEW_MIN_WORDS
+                and not fold(body).startswith("sous-titrage") and not fold(speech).startswith("sous-titrage")):
+            excerpt.append(clip(body, PREVIEW_CHARS))
+    return {
+        "name": name,
+        "date": f"{stamp.group(1)}-{stamp.group(2)}-{stamp.group(3)}" if stamp else None,
+        "time": f"{stamp.group(4)}:{stamp.group(5)}" if stamp else None,
+        "duration_seconds": seconds,
+        "duration_minutes": None if seconds is None else max(1, round(seconds / 60)),
+        "words": len(text.split()),
+        "speakers": [{"name": who, "lines": count} for who, count in
+                     sorted(speakers.items(), key=lambda item: (-item[1], item[0]))[:PREVIEW_SPEAKERS]],
+        "excerpt": excerpt,
+    }
+
+
+def possible_duplicates(name: str, others: list[str]) -> list[dict]:
+    """Other transcripts of the folder that share the trailing `_<hex id>`, or the date and the title segment."""
+    ident = NAME_ID.search(name)
+    stamp = NAME_STAMP.match(name)
+    title = fold(transcript_title(name))
+    found = []
+    for other in others:
+        if nfc(other) == nfc(name):
+            continue
+        other_id, other_stamp = NAME_ID.search(other), NAME_STAMP.match(other)
+        if ident and other_id and ident.group(1) == other_id.group(1):
+            found.append({"name": other, "reason": "same id"})
+        elif (stamp and other_stamp and stamp.groups()[:3] == other_stamp.groups()[:3]
+              and title and title == fold(transcript_title(other))):
+            found.append({"name": other, "reason": "same date and title"})
+    return found
+
+
+def read_transcript(folder: Path, name: str) -> str:
+    try:
+        return (folder / name).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def cmd_preview(merged: dict[str, tuple[str, dict]], as_json: bool) -> int:
+    """`transcripts --new --preview`: one block per untracked transcript (the folder path is never printed)."""
+    folder = transcripts_dir()
+    names = transcript_names()
+    rows = []
+    for name in names:
+        if nfc(name) in merged:
+            continue
+        row = preview_one(name, read_transcript(folder, name))
+        row["possible_duplicates"] = [
+            {**item, **({"tracked": merged[nfc(item["name"])][1].get("status", "?")} if nfc(item["name"]) in merged else {})}
+            for item in possible_duplicates(name, names)]
+        rows.append(row)
+    if as_json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return 0
+    for row in rows:
+        print(row["name"])
+        facts = [" ".join(filter(None, (row["date"], row["time"]))),
+                 f"~{row['duration_minutes']} min" if row["duration_minutes"] is not None else "",
+                 f"{row['words']} words"]
+        print("  " + "  ".join(fact for fact in facts if fact))
+        if row["speakers"]:
+            print("  speakers: " + ", ".join(f"{who['name']} ({who['lines']})" for who in row["speakers"]))
+        for line in row["excerpt"]:
+            print(f"  > {line}")
+        for item in row["possible_duplicates"]:
+            print(f"  possible duplicate ({item['reason']}): {item['name']}" + (f" [tracked: {item['tracked']}]" if "tracked" in item else ""))
+    return 0
+
+
+def cmd_transcripts(brains: list[Path], new: bool, where: str | None, preview: bool = False, as_json: bool = False) -> int:
     merged = load_transcripts(brains)
     if where:
-        if where not in merged:
-            print(f"{where}\tnot tracked")
+        key = nfc(where)
+        if key not in merged:
+            print(f"{disk_names().get(key, where)}\tnot tracked")
             return 1
-        owner, record = merged[where]
-        print(f"{where}\t{owner}\t{record.get('status', '?')}")
+        owner, record = merged[key]
+        print(f"{disk_names().get(key, key)}\t{owner}\t{record.get('status', '?')}")
         return 0
     if new:
-        folder = transcripts_dir()
-        try:
-            names = sorted(p.name for p in folder.iterdir() if p.suffix == ".txt")
-        except (FileNotFoundError, NotADirectoryError):
-            raise SystemExit(f"transcripts folder not found: {folder}") from None
-        except PermissionError:
-            raise SystemExit(
-                f"Access denied to the transcripts folder: {folder}. "
-                "Check the macOS permissions and that the synced folder (OneDrive, for example) is available, then run again."
-            ) from None
-        except OSError as error:
-            raise SystemExit(f"cannot read the transcripts folder: {folder} ({error.strerror})") from None
-        for name in names:
-            if name not in merged:
+        if preview:
+            return cmd_preview(merged, as_json)
+        for name in transcript_names():
+            if nfc(name) not in merged:
                 print(name)
         return 0
+    shown_names = disk_names()
     for key in sorted(merged):
         owner, record = merged[key]
-        print(f"{record.get('status', '?')}\t{owner}\t{key}")
+        print(f"{record.get('status', '?')}\t{owner}\t{shown_names.get(key, key)}")
+    return 0
+
+
+def work_brain_of(path: str, brains: list[Path]) -> str | None:
+    """The brain whose folder name opens ``path`` (a Work-root path like `brain-x/…`), else None."""
+    first = path.replace("\\", "/").lstrip("/").split("/", 1)[0]
+    return first if first in {brain.name for brain in brains} or first == "brain" or first.startswith("brain-") else None
+
+
+def destination_path(brain: Path, given: str, brains: list[Path]) -> str:
+    """A `--dest` as a path relative to ``brain``: given so, or from the Work root under the brain's own name; it must exist."""
+    text = given.strip().replace("\\", "/")
+    if not text:
+        raise SystemExit("empty --dest")
+    path = Path(text)
+    if path.is_absolute():
+        try:
+            text = path.resolve().relative_to(brain.resolve()).as_posix()
+        except ValueError:
+            raise SystemExit(f"--dest {given} is outside {brain.name}") from None
+    else:
+        other = work_brain_of(text, brains)
+        if other == brain.name:
+            text = text.split("/", 1)[1] if "/" in text else ""
+        elif other is not None and not (brain / text).exists():
+            raise SystemExit(f"--dest {given} belongs to {other}, not to {brain.name}: a transcript's destinations stay in its own brain")
+    target = (brain / text).resolve()
+    if not text or not target.is_relative_to(brain.resolve()):
+        raise SystemExit(f"--dest {given} must be a path inside {brain.name}")
+    if not target.exists():
+        raise SystemExit(f"--dest {given}: {text} does not exist in {brain.name}")
+    return Path(text).as_posix()
+
+
+def cmd_transcripts_set(brains: list[Path], args: argparse.Namespace) -> int:
+    """`transcripts --set FILE --status S …`: record the processing state of one transcript in one brain."""
+    status = args.status
+    if status not in STATUSES:
+        raise SystemExit(f"unknown status {status}: choose among {', '.join(STATUSES)}")
+    given = args.set.strip()
+    if not given or "/" in given or "\\" in given:
+        raise SystemExit("--set takes a transcript file name, not a path")
+    if args.processed_on and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.processed_on):
+        raise SystemExit("--processed-on must be YYYY-MM-DD")
+    if args.processed_on:
+        try:
+            date.fromisoformat(args.processed_on)
+        except ValueError:
+            raise SystemExit(f"--processed-on {args.processed_on} is not a date") from None
+    if args.brain:
+        target = pick_brains(brains, args.brain)[0]
+    else:
+        target = default_brain()
+        if target is None:
+            raise SystemExit("several brains and no default: name one with --brain " + ", ".join(brain.name for brain in brains))
+    folded = nfc(given)
+    key = disk_names().get(folded, folded)
+    merged = load_transcripts(brains)
+    if folded in merged and merged[folded][0] != target.name:
+        raise SystemExit(f"{key} is already tracked by {merged[folded][0]}, not by {target.name}: change its state there (--brain {merged[folded][0]})")
+    destinations = [destination_path(target, item, brains) for item in args.dest or []]
+
+    state_file = target / ".data/transcripts.json"
+    data = json.loads(state_file.read_text(encoding="utf-8")) if state_file.is_file() else {}
+    old_key = next((name for name in data if nfc(name) == folded), None)
+    old = data.get(old_key) if old_key is not None and isinstance(data.get(old_key), dict) else None
+    record = dict(old or {})
+    created = old is None
+    changed_status = record.get("status") != status
+    record["status"] = status
+    if args.processed_on:
+        record["processed_on"] = args.processed_on
+    elif created or changed_status or not record.get("processed_on"):
+        record["processed_on"] = date.today().isoformat()
+    if args.dest:
+        record["destinations"] = destinations
+    else:
+        record.setdefault("destinations", [])
+    if args.note is not None:
+        record["note"] = args.note
+    if status in {"processed", "split"} and not record["destinations"]:
+        raise SystemExit(f"status {status} needs at least one --dest (a file of {target.name} the minutes were written to)")
+    ordered = {name: record[name] for name in ("status", "processed_on", "destinations", "note") if name in record}
+    ordered.update({name: value for name, value in record.items() if name not in ordered})
+
+    if old_key is not None:
+        data = {(key if name == old_key else name): (ordered if name == old_key else value) for name, value in data.items()}
+    else:
+        keys = list(data)
+        if keys == sorted(keys) and keys:  # a sorted file stays sorted
+            data[key] = ordered
+            data = {name: data[name] for name in sorted(data)}
+        else:
+            data[key] = ordered
+    if not args.dry_run:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        write_atomic(state_file, (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+    result = {"file": key, "brain": target.name, "created": created, "dry_run": bool(args.dry_run), "record": ordered}
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    print(("dry run, nothing written: " if args.dry_run else "") + f"{'added' if created else 'updated'}\t{target.name}\t{key}")
+    for name, value in ordered.items():
+        print(f"  {name}: " + (", ".join(value) if isinstance(value, list) else str(value)))
     return 0
 
 
@@ -1209,7 +1486,7 @@ def kinds_from(value: str | None) -> tuple[str, ...]:
 
 
 def cmd_find(brains: list[Path], only: str | None, term: str, limit: int, per_file: int, kinds_wanted: str | None,
-             scope: str, as_json: bool, project: str | None = None) -> int:
+             scope: str, as_json: bool, project: str | None = None, fuzzy: bool = False) -> int:
     """``scope``: `live` reads the live projects and the rest of the brains, then the archives when nothing matches,
     never the archived projects; `archived` reads the archived projects only; `all` reads everything."""
     typed = " ".join(term.split())
@@ -1267,6 +1544,8 @@ def cmd_find(brains: list[Path], only: str | None, term: str, limit: int, per_fi
             "hits": visible, "more": {"total": sum(more.values()), "kinds": more},
             "brains": [brain.name for brain in picked] if folder_scope is None else [folder_scope.split("/")[0]], "project": folder_scope,
             "files": read, "archives_only": archives_only, "archived_projects_left_out": left_out_projects}
+    suggestions = suggest_terms(picked, typed, FUZZY_SHOWN if fuzzy else FUZZY_FALLBACK) if fuzzy or not data["total"] else []
+    data["suggestions"] = suggestions
     if as_json:
         print(json.dumps(data, ensure_ascii=False, indent=2))
         return 0
@@ -1295,7 +1574,148 @@ def cmd_find(brains: list[Path], only: str | None, term: str, limit: int, per_fi
             read_in = f"{where}, archives included"
         print(f'no match for "{typed}"' + (f" in {', '.join(kinds)}" if only_kinds else "")
               + f": {read} Markdown file(s) read in {read_in}; left out: {', '.join(left_out)}")
+    if suggestions:
+        print("similar known terms (term → canonical, kind, where):")
+        for item in suggestions:
+            print(suggestion_line(item))
     return 0
+
+
+# --- fuzzy: known terms that a transcript deforms ---------------------------------------------------
+
+FUZZY_RATIO = 0.75  # difflib similarity from which two spellings are taken for the same word
+FUZZY_SHOWN, FUZZY_FALLBACK = 8, 5  # suggestions of `find --fuzzy`, and after a literal `find` that matched nothing
+BOLD = re.compile(r"\*\*([^*]+?)\*\*")
+QUOTED = re.compile(r"«\s*([^»]+?)\s*»")
+VARIANT_TARGET = re.compile(r"(?:\s*(?:,|/|ou|or)\s*«[^»]*»)*\s*(?:=|→|->)\s*(.+?)(?=\s*(?:[;,.()«»]|$))")
+KIND_RANK = {"person": 0, "glossary": 1, "project": 2, "client": 3, "prefix": 4}
+
+
+def phonetic(text: str) -> str:
+    """A light phonetic key, to equate spellings that sound alike: no `h`, doubled letters collapsed, `ph` is `f`, `y` is `i`,
+    `c`, `k` and `q` are `k`, `z` is `s`, and a final `e`, `s`, `t` or `x` is dropped."""
+    key = "".join(TOKEN.findall(fold(text))).replace("ph", "f").replace("y", "i").replace("h", "")
+    key = re.sub(r"[cq]", "k", key).replace("z", "s")
+    key = re.sub(r"(.)\1+", r"\1", key)
+    return re.sub(r"[estx]$", "", key)
+
+
+def fuzzy_score(typed: str, known: str) -> float:
+    """How close ``typed`` is to the ``known`` term (0: not at all): a difflib ratio of at least FUZZY_RATIO on the whole
+    term, spaces apart or not, or on every word, or the same phonetic key."""
+    typed_words, known_words = tokens(typed), tokens(known)
+    if not typed_words or not known_words:
+        return 0.0
+
+    def ratio(first: str, second: str) -> float:
+        return difflib.SequenceMatcher(None, first, second).ratio()
+
+    best = max(ratio(" ".join(typed_words), " ".join(known_words)), ratio("".join(typed_words), "".join(known_words)))
+    best = best if best >= FUZZY_RATIO else 0.0
+    whole = phonetic(typed)
+    if len(whole) >= 3 and whole == phonetic(known):
+        best = max(best, 0.9)
+
+    def word(first: str, second: str) -> float:
+        if first == second:
+            return 1.0
+        if min(len(first), len(second)) < 3:
+            return 0.0
+        close = ratio(first, second)
+        if close >= FUZZY_RATIO:
+            return close
+        return 0.9 if len(phonetic(first)) >= 3 and phonetic(first) == phonetic(second) else 0.0
+
+    scores = [max(word(one, other) for other in known_words) for one in typed_words]
+    return max(best, min(scores) * 0.95) if all(scores) else best
+
+
+def glossary_terms(lines: list[str]) -> list[tuple[str, str, int]]:
+    """(term, canonical term, line) for a glossary: each bold term maps to itself, each `« variant »` to the term its
+    line says (`« variant » = Term`), else to the bold term that precedes it, else to the first bold term of the line."""
+    found = []
+    for number, text in enumerate(lines, 1):
+        if not text.lstrip().startswith(("-", "*")):
+            continue
+        bolds = [(match.start(), match.group(1).strip()) for match in BOLD.finditer(text)]
+        for _, bold in bolds:
+            found += [(part, part, number) for part in re.split(r"\s+/\s+", bold) if part]
+        for quoted in QUOTED.finditer(text):
+            target = VARIANT_TARGET.match(text[quoted.end():])
+            before = [name for start, name in bolds if start < quoted.start()]
+            canonical = target.group(1).strip().strip("*").strip() if target else before[-1] if before else bolds[0][1] if bolds else ""
+            if canonical:
+                found.append((quoted.group(1), canonical, number))
+    return found
+
+
+def known_terms(brains: list[Path]) -> list[dict]:
+    """The terms that `find --fuzzy` compares with: the names and aliases of the people pages, the glossaries
+    (`state/glossary.md` of each live project and of the brain), the project and client folders and the register prefixes."""
+    action = load_tools()[0]
+    found: list[dict] = []
+
+    def add(term: str, canonical: str, kind: str, where: str, line: int) -> None:
+        if one_line(term):
+            found.append({"term": one_line(term), "canonical": one_line(canonical), "kind": kind, "path": where, "line": line})
+
+    for page in people_of(brains):
+        if page["archived"]:
+            continue
+        where = shown(page["brain"], page["root"], page["path"])
+        key = lambda name: next((number for number, text in enumerate(page["lines"], 1) if text.startswith(name + ":")), 1)
+        add(page["name"], page["name"], "person", where, key("name"))
+        for alias in page["aliases"]:
+            alias = re.sub(r"\(.*?\)", "", alias).replace("«", "").replace("»", "").strip().strip("\"'").strip()
+            if alias and "@" not in alias and fold(alias) != fold(page["name"]):
+                add(alias, page["name"], "person", where, key("aliases"))
+    for brain in brains:
+        root = brain.resolve()
+        glossary = root / "state/glossary.md"
+        if glossary.is_file() and not glossary.is_symlink():
+            for term, canonical, line in glossary_terms(read_lines(glossary)):
+                add(term, canonical, "glossary", shown(brain.name, root, glossary), line)
+    clients: set[tuple[str, str]] = set()
+    for name, root, register in each_project(brains, action):
+        folder = register.parent.parent
+        page = folder / f"{folder.name}.md"
+        where = shown(name, root, page if page.is_file() else register)
+        add(folder.name, folder.name, "project", where, 1)
+        glossary = folder / "state/glossary.md"
+        if glossary.is_file() and not glossary.is_symlink():
+            for term, canonical, line in glossary_terms(read_lines(glossary)):
+                add(term, canonical, "glossary", shown(name, root, glossary), line)
+        ids = Counter(re.findall(r"^\s*- \[.\] \*\*([A-Za-z][A-Za-z0-9]*)-\d+\*\*", register.read_text(encoding="utf-8", errors="replace"), re.M))
+        if ids:
+            add(ids.most_common(1)[0][0], folder.name, "prefix", where, 1)
+        live = action.live_parts(register.relative_to(root / "projects").parts[:-2])
+        if live[0] == "clients" and len(live) > 1 and (name, live[1]) not in clients:
+            clients.add((name, live[1]))
+            index = root / "projects/clients" / live[1] / f"{live[1]}.md"
+            add(live[1], live[1], "client", shown(name, root, index) if index.is_file() else where, 1)
+    return found
+
+
+def suggest_terms(brains: list[Path], typed: str, limit: int) -> list[dict]:
+    """Up to ``limit`` known terms that look like ``typed``, the closest first (people, glossaries, projects, clients, prefixes)."""
+    scored = []
+    for item in known_terms(brains):
+        score = fuzzy_score(typed, item["term"])
+        if score:
+            scored.append((-score, KIND_RANK[item["kind"]], item["term"], item))
+    scored.sort(key=lambda row: row[:3])
+    seen, chosen = set(), []
+    for negative, _, _, item in scored:
+        identity = (fold(item["term"]), fold(item["canonical"]), item["kind"])
+        if identity not in seen:
+            seen.add(identity)
+            chosen.append({**item, "score": round(-negative, 2)})
+    return chosen[:limit]
+
+
+def suggestion_line(item: dict) -> str:
+    arrow = f"{item['term']} → {item['canonical']}" if fold(item["term"]) != fold(item["canonical"]) else item["term"]
+    return f"  {arrow}  {item['kind']}  {item['path']}:{item['line']}"
 
 
 # --- section: the outline of a page, or one of its sections ---------------------------------------
@@ -1348,11 +1768,27 @@ def headings_of(lines: list[str], skip: int = 0) -> list[dict]:
     return found
 
 
+def kit_file(given: str) -> tuple[str, Path, Path] | None:
+    """("kit", the resolved `<Work>/kit`, file) for a Markdown file of `<Work>/kit/` given from the Work root (or by its full
+    path), else None. Read-only documentation: a path that leaves `kit/`, through `..` or a symbolic link, is not one."""
+    kit = (WORK / "kit").resolve()
+    path = Path(given).expanduser()
+    resolved = (path if path.is_absolute() else WORK / path).resolve()
+    if not resolved.is_file() or not resolved.is_relative_to(kit):
+        return None
+    if resolved.suffix.lower() != ".md":
+        raise SystemExit(f"{given} is not a Markdown file")
+    return "kit", kit, resolved
+
+
 def brain_file(brains: list[Path], given: str) -> tuple[str, Path, Path]:
     """(brain name, resolved brain, file) for a Markdown file named from the Work root, from a brain or by its full path.
 
-    Only a file that resolves inside one of ``brains`` is accepted: a path that leaves them, through `..` or a
-    symbolic link, is refused."""
+    Only a file that resolves inside one of ``brains``, or a Markdown file of `<Work>/kit/` (name `kit`), is accepted:
+    a path that leaves them, through `..` or a symbolic link, is refused."""
+    kit = kit_file(given)
+    if kit:
+        return kit
     path = Path(given).expanduser()
     candidates = [path] if path.is_absolute() else [WORK / path, *(brain / path for brain in brains)]
     inside, outside = [], False
@@ -1368,7 +1804,7 @@ def brain_file(brains: list[Path], given: str) -> tuple[str, Path, Path]:
                          + "\n".join(f"  {shown(*item)}" for item in inside))
     if not inside:
         names = ", ".join(brain.name for brain in brains)
-        raise SystemExit(f"{given} is outside {names}: only the files of a brain are read" if outside
+        raise SystemExit(f"{given} is outside {names}: only the files of a brain are read (and the Markdown files of kit/)" if outside
                          else f"no file {given} in {names}: give the path that `find` or `brief` prints, from the Work root")
     if inside[0][2].suffix.lower() != ".md":
         raise SystemExit(f"{given} is not a Markdown file")
@@ -1881,7 +2317,7 @@ def write_atomic(path: Path, data: bytes) -> None:
         stream.write(data)
         temporary = Path(stream.name)
     try:
-        os.chmod(temporary, path.stat().st_mode & 0o777)
+        os.chmod(temporary, path.stat().st_mode & 0o777 if path.exists() else 0o644)
         os.replace(temporary, path)
     finally:
         if temporary.exists():
@@ -2083,6 +2519,8 @@ def main() -> int:
     searched.add_argument("--archived", action="store_true", help="search the archived projects only (never searched otherwise)")
     searched.add_argument("--all", action="store_true",
                           help="search everything: the live pages, the archives (action archives, people/archive/…) and the archived projects")
+    fi.add_argument("--fuzzy", action="store_true",
+                    help="also suggest up to 8 known terms (people, glossaries, projects, clients) that sound or look like TERM")
     fi.add_argument("--brain", metavar="NAME", help=brain_help)
     fi.add_argument("--json", action="store_true", help="structured output instead of text, with the counts by kind")
     se = sub.add_parser("section", help="the outline of a Markdown page of a brain, or one of its sections (read-only)")
@@ -2111,6 +2549,15 @@ def main() -> int:
     group = tr.add_mutually_exclusive_group()
     group.add_argument("--new", action="store_true", help="transcripts listed by no brain")
     group.add_argument("--where", metavar="FILE", help="which brain owns FILE, and its status")
+    group.add_argument("--set", metavar="FILE", help="record the state of FILE in a brain (needs --status)")
+    tr.add_argument("--preview", action="store_true", help="with --new: when, how long, who speaks and how each transcript starts")
+    tr.add_argument("--status", choices=STATUSES, help="with --set: the new status")
+    tr.add_argument("--dest", action="append", metavar="PATH", help="with --set: a file written for it, relative to the brain (repeatable)")
+    tr.add_argument("--note", help="with --set: free text")
+    tr.add_argument("--processed-on", metavar="YYYY-MM-DD", help="with --set: the processing date (default: today)")
+    tr.add_argument("--brain", metavar="NAME", help="with --set: the brain that owns the transcript (default: the default brain)")
+    tr.add_argument("--dry-run", action="store_true", help="with --set: print the record, write nothing")
+    tr.add_argument("--json", action="store_true", help="with --new --preview or --set: structured output")
     args, extra = parser.parse_known_args()
     words = {"find": "term", "section": "heading", "person": "name"}.get(args.command)
     if extra and words and not any(word.startswith("-") for word in extra):
@@ -2132,14 +2579,26 @@ def main() -> int:
         return cmd_changes(brains, args.brain, args.since, args.project, args.limit, args.json)
     if args.command == "find":
         return cmd_find(brains, args.brain, " ".join(args.term), args.limit, args.per_file, args.kinds,
-                        "all" if args.all else "archived" if args.archived else "live", args.json, args.project)
+                        "all" if args.all else "archived" if args.archived else "live", args.json, args.project, args.fuzzy)
     if args.command == "section":
         return cmd_section(brains, args.brain, args.file, args.heading, args.words, args.json)
     if args.command == "person":
         return cmd_person(brains, args.brain, " ".join(args.name), args.words, args.limit, args.json)
     if args.command in {"archive", "unarchive"}:
         return cmd_archive(brains, args.brain, args.project, args.command == "unarchive", args.write, args.json)
-    return cmd_transcripts(brains, args.new, args.where)
+    if args.set:
+        if not args.status:
+            parser.error("--set needs --status " + "|".join(STATUSES))
+        return cmd_transcripts_set(brains, args)
+    for option, given in (("--status", args.status), ("--dest", args.dest), ("--note", args.note), ("--processed-on", args.processed_on),
+                          ("--brain", args.brain), ("--dry-run", args.dry_run)):
+        if given:
+            parser.error(f"{option} goes with --set")
+    if args.preview and not args.new:
+        parser.error("--preview goes with --new")
+    if args.json and not args.preview:
+        parser.error("--json goes with --new --preview or --set")
+    return cmd_transcripts(brains, args.new, args.where, args.preview, args.json)
 
 
 if __name__ == "__main__":

@@ -61,6 +61,8 @@ class TasksWebTest(unittest.TestCase):
         self.register = self.brain / "projects/clients/example/missions/test/state/actions.md"
         self.register.parent.mkdir(parents=True)
         self.register.write_text("# Actions\n\n## Open\n- [ ] **EXM-001** — Jane — Préparer la livraison 📅 2026-10-15\n    - source: note initiale\n\n## Done\n- [x] **EXM-009** — Jane — Ancienne clôture sans date\n", encoding="utf-8")
+        # Link targets in written notes must exist (action.resolve_links refuses dead links).
+        (self.register.parent.parent / "source.md").write_text("# Source\n", encoding="utf-8")
         (self.brain / ".data").mkdir()
         (self.brain / ".data/doctor.json").write_text('{"owner":"Jane"}', encoding="utf-8")
         self.server = tasks_web.TaskServer(("127.0.0.1", 0), tasks_web.Store(self.brain))
