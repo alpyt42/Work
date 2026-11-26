@@ -55,6 +55,7 @@ TEXT = {".md", ".json"}
 BOUNDARY = ".data/brain.json"
 LOCAL_PATHS = ".data/local-paths.json"  # settings of this machine, ignored by the brain's Git
 LOCAL_PATHS_EXAMPLE = ".data/local-paths.example.json"  # its versioned template
+ASKED_PATHS = ("brains", "transcripts_dir")  # asked by tools/machine/setup.py on each machine, never copied from the template
 BOUNDARY_FIELDS = ("scope", "description", "remote", "email")
 
 
@@ -93,7 +94,10 @@ def create(name: str, git: bool = True, boundary: dict[str, str] | None = None) 
             if PLACEHOLDER in text:
                 path.write_text(text.replace(PLACEHOLDER, name), encoding="utf-8", newline="\n")
     if (target / LOCAL_PATHS_EXAMPLE).is_file() and not (target / LOCAL_PATHS).exists():
-        shutil.copyfile(target / LOCAL_PATHS_EXAMPLE, target / LOCAL_PATHS)
+        # Without the keys that setup.py asks on each machine (brains, transcripts_dir): a copied value would count as answered.
+        template = json.loads((target / LOCAL_PATHS_EXAMPLE).read_text(encoding="utf-8"))
+        local = {key: value for key, value in template.items() if key not in ASKED_PATHS}
+        (target / LOCAL_PATHS).write_text(json.dumps(local, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     fields = {key: value for key, value in (boundary or {}).items() if value}
     if fields:
         write_boundary(target, fields)

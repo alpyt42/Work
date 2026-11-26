@@ -208,13 +208,13 @@ class Workspace:
         self.paths, paths_text = read_object(root, self.default / LOCAL_PATHS) if self.default else ({}, None)
         self.paths_missing = self.default is not None and paths_text is None
         self.has_git = shutil.which("git") is not None
-        self._git: dict[tuple[str, ...], str] = {}
+        self._git: dict[tuple[str, ...], tuple[int | None, str]] = {}
 
-    def git(self, repo: Path, *args: str) -> str:
-        """Stdout of a local git command (cached), "" on any failure."""
+    def git_run(self, repo: Path, *args: str) -> tuple[int | None, str]:
+        """Exit code (None when git could not be started) and stdout of a local git command (cached)."""
         key = (str(repo), *args)
         if key not in self._git:
-            output = ""
+            answer: tuple[int | None, str] = (None, "")
             if self.has_git:
                 try:
                     result = subprocess.run(
@@ -226,11 +226,16 @@ class Workspace:
                         stdin=subprocess.DEVNULL,
                         env={**os.environ, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"},
                     )
-                    output = result.stdout.strip() if result.returncode == 0 else ""
+                    answer = (result.returncode, result.stdout.strip())
                 except (OSError, subprocess.SubprocessError):
-                    output = ""
-            self._git[key] = output
+                    pass
+            self._git[key] = answer
         return self._git[key]
+
+    def git(self, repo: Path, *args: str) -> str:
+        """Stdout of a local git command (cached), "" on any failure."""
+        code, output = self.git_run(repo, *args)
+        return output if code == 0 else ""
 
     def repo_git(self, repo: Path, *args: str) -> str:
         """Like `git`, but "" when `repo` is not a Git repository itself (git would answer for the enclosing Work)."""
@@ -443,10 +448,17 @@ def checks(ws: Workspace) -> list[Item]:
         for brain in ws.ordered:
             if not (brain / ".git").exists():
                 continue
-            if ws.repo_git(brain, "ls-files", "--", LOCAL_PATHS):
+            tracked = ws.git_run(brain, "ls-files", "--", LOCAL_PATHS)
+            if tracked[0] != 0:
+                versioned.append(f"{brain.name}: git could not run (check its safe.directory setting)")
+            elif tracked[1]:
                 versioned.append(f"{brain.name}: tracked by Git")
-            elif not ws.repo_git(brain, "check-ignore", "--", LOCAL_PATHS):
-                versioned.append(f"{brain.name}: not ignored by its .gitignore")
+            else:
+                ignored = ws.git_run(brain, "check-ignore", "--", LOCAL_PATHS)
+                if ignored[0] not in (0, 1):
+                    versioned.append(f"{brain.name}: git could not run (check its safe.directory setting)")
+                elif ignored[0] == 1:
+                    versioned.append(f"{brain.name}: not ignored by its .gitignore")
         items.append(check("local-paths-ignored", not versioned, "each brain's .gitignore",
                            f"{LOCAL_PATHS} holds paths of this machine, which differ from one computer to another",
                            f"add /{LOCAL_PATHS} to the brain's .gitignore and, where Git tracks it, run "
@@ -582,6 +594,13 @@ def set_artifacts(ws: Workspace, value: str) -> list[str]:
     return notes
 
 
+def update_paths(ws: Workspace, changes: dict[str, Any]) -> None:
+    """Set keys of the default brain's local-paths.json; the template is read only to create the file, never when it exists."""
+    assert ws.default is not None
+    path = ws.default / LOCAL_PATHS
+    update_file(ws.root, path, changes, seed=None if path.is_file() else ws.paths_seed())
+
+
 def set_brains(ws: Workspace, value: str) -> list[str]:
     if ws.default is None:
         raise SetupError("no default brain: answer defaultBrain first")
@@ -594,7 +613,7 @@ def set_brains(ws: Workspace, value: str) -> list[str]:
                 raise SetupError(str(error)) from None
     if ws.default.name not in names:
         raise SetupError(f"brains: the list must include the default brain {ws.default.name}")
-    update_file(ws.root, ws.default / LOCAL_PATHS, {"brains": names}, seed=ws.paths_seed())
+    update_paths(ws, {"brains": names})
     absent = [name for name in names if not work_config.is_brain(ws.root / name)]
     return [f"not at the Work root yet: {', '.join(absent)} (clone it)"] if absent else []
 
@@ -620,7 +639,7 @@ def set_transcripts(ws: Workspace, value: str) -> list[str]:
     folder = home / relative
     if folder.resolve().is_relative_to(ws.root.resolve()):
         raise SetupError("transcripts_dir: input folders stay outside the workspace")
-    update_file(ws.root, ws.default / LOCAL_PATHS, {"transcripts_dir": relative.as_posix()}, seed=ws.paths_seed())
+    update_paths(ws, {"transcripts_dir": relative.as_posix()})
     return [] if folder.is_dir() else ["the folder is not on this machine yet"]
 
 

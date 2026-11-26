@@ -83,10 +83,18 @@ def local_paths_checks(brain: Path) -> None:
     """A brain's local-paths.json holds paths of this machine: Git must neither track it nor offer to add it."""
     if not (brain / ".git").exists():
         return
-    if git(brain, "ls-files", "--", LOCAL_PATHS):
+    listed = subprocess.run(["git", "-C", str(brain), "ls-files", "--", LOCAL_PATHS], capture_output=True, text=True)
+    could_not_run = f"{brain.name}: git could not run, so {LOCAL_PATHS} was not checked (for example a safe.directory refusal)"
+    if listed.returncode != 0:
+        report("WARN", could_not_run)
+    elif listed.stdout.strip():
         report("WARN", f"{brain.name}/{LOCAL_PATHS} is tracked by Git, but its paths differ per machine: {MOVE_OUT}")
-    elif git(brain, "check-ignore", "-q", "--", LOCAL_PATHS) is None:
-        report("WARN", f"{brain.name}/.gitignore does not ignore {LOCAL_PATHS}: add /{LOCAL_PATHS} to it ({MOVE_OUT})")
+    else:
+        ignored = subprocess.run(["git", "-C", str(brain), "check-ignore", "-q", "--", LOCAL_PATHS], capture_output=True, text=True)
+        if ignored.returncode == 1:
+            report("WARN", f"{brain.name}/.gitignore does not ignore {LOCAL_PATHS}: add /{LOCAL_PATHS} to it ({MOVE_OUT})")
+        elif ignored.returncode != 0:
+            report("WARN", could_not_run)
 
 
 def load_json(path: Path) -> dict | list | None:

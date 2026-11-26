@@ -181,6 +181,25 @@ class StatusTest(SetupTestCase):
         self.git(self.work / "brain-acme", "rm", "-q", "--cached", ".data/local-paths.json")
         self.assertEqual(self.items()["local-paths-ignored"]["detail"], "brain-perso: not ignored by its .gitignore")
 
+    def test_a_malformed_template_does_not_block_an_existing_local_paths(self) -> None:
+        self.two_brains()
+        self.write_json("work-config.local.json", {"version": 1, "defaultBrain": "brain-acme"})
+        self.write_json("brain-acme/.data/local-paths.json", {"recordings_dir": ""})
+        (self.work / "brain-acme/.data/local-paths.example.json").write_text("{not json", encoding="utf-8")
+        self.ok("set", "brains", "brain-acme, brain-perso")
+        self.assertEqual(self.read_json("brain-acme/.data/local-paths.json"), {"brains": ["brain-acme", "brain-perso"], "recordings_dir": ""})
+
+    def test_git_that_cannot_run_is_not_reported_as_a_missing_ignore(self) -> None:
+        self.complete()
+        item = self.items()["local-paths-ignored"]
+        self.assertEqual(item["state"], "done")
+        # A broken repository (a broken .git/config) makes git itself fail, which is not the same as an unignored file.
+        for name in ("brain-acme", "brain-perso"):
+            (self.work / name / ".git/config").write_text("[broken\n", encoding="utf-8")
+        item = self.items()["local-paths-ignored"]
+        self.assertIn("git could not run", item["detail"])
+        self.assertNotIn("not ignored", item["detail"])
+
     def test_missing_local_paths_says_it_is_local_to_the_machine(self) -> None:
         self.two_brains()
         self.write_json("work-config.local.json", {"version": 1, "defaultBrain": "brain-acme"})

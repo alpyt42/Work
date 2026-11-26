@@ -199,9 +199,12 @@ class NewBrainTest(unittest.TestCase):
         self.assertEqual(self.run_tool("brain-perso").returncode, 0)
         data = self.work / "brain-perso/.data"
         local = json.loads((data / "local-paths.json").read_text(encoding="utf-8"))
-        self.assertEqual(local, json.loads((data / "local-paths.example.json").read_text(encoding="utf-8")))
-        self.assertEqual(local["brains"], ["brain-perso"])
-        self.assertEqual(local["transcripts_dir"], "")
+        template = json.loads((data / "local-paths.example.json").read_text(encoding="utf-8"))
+        # The keys that setup.py asks on each machine are not copied, so that they are not counted as answered.
+        self.assertEqual(local, {key: value for key, value in template.items() if key not in ("brains", "transcripts_dir")})
+        self.assertNotIn("brains", local)
+        self.assertNotIn("transcripts_dir", local)
+        self.assertIn("recordings_dir", local)
 
     def test_boundary_options_fill_brain_json(self) -> None:
         result = self.run_tool("brain-asso", "--scope", "asso", "--description", "Association data; never any client.",
