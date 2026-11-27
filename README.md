@@ -19,7 +19,7 @@
 
 Work is a portable `Work/` workspace that fixes this. Memory lives in private Markdown repositories called brains, one per trust boundary. Agents read them through small commands that return only the part a question needs. Git hooks keep the boundaries intact. A local app, Corvus, lets you read and edit the same files without an agent. The repository holds the tools, the shared conventions and the checks. It holds no client data.
 
-![Corvus, the local app: the Today view](docs/images/tasks-web-today.png)
+![Corvus, the local app: the Focus page](docs/images/tasks-web-focus.png)
 
 ## Features
 
@@ -27,13 +27,13 @@ Work is a portable `Work/` workspace that fixes this. Memory lives in private Ma
 - **Context on demand.** `brain-state.py` loads output, not files: `brief` for where a project stands, `find` for a term or an identifier, `section` for one heading of a page, `person` for someone and what they carry, `due` for late and upcoming actions, `changes` for what moved since a date. Agents never read a register or a project page whole.
 - **Action and decision registers.** `action.py` and `decision.py` write the registers, with length caps (35 words for a history entry, 40 for a timeline entry, 70 for a decision field). A commitment becomes an action only when four tests hold; otherwise it stays in the minutes or message where it was said.
 - **Project archiving.** `brain-state.py archive` moves a finished mission, project or client into an `archive/` folder, rewrites the links, and refuses while an action is still open. An archived project leaves every command and every view. `unarchive` is the exact inverse.
-- **Corvus, a local app.** `tasks-web.py` serves the views Today, Priorities, Actions, Board, Timeline, Docs, Archives, Tools, Sync and Settings on `127.0.0.1`, with one search across actions and documents. A selector switches between brains. Sync saves and sends a brain's changed notes through its own Git hooks, and brings in the changes made on another computer as a fast-forward only. `install-app.py` installs it as an app on macOS, Windows and Linux, in a window of its own.
+- **Corvus, a local app.** `tasks-web.py` serves three sections on `127.0.0.1`, Focus (the `/priorities` ranking with the actions due), Actions (List, Board, Timeline) and Docs (with Archives), plus Settings (with Tools), a Sync button that counts the changes waiting online, and one search across actions and documents. A selector switches between brains. Sync saves and sends a brain's changed notes through its own Git hooks, and brings in the changes made on another computer as a fast-forward only. `install-app.py` installs it as an app on macOS, Windows and Linux, in a window of its own.
 - **Guardrails.** Git hooks refuse staged secrets, the names of clients and people known to the other brains, malformed commit messages, dead or cross-brain links, and pushes with the wrong identity, a force push or a remote branch deletion. A Claude Code hook refuses direct `python`, deletions in the artifacts folder, hook bypasses and writes into an `artifacts/` folder not yet linked to the configured one. `preflight-push.py` runs before every push.
 - **Obsidian compatible.** Open `Work/` as the vault. Each brain's `tasks.md` shows the registers as Tasks queries and a kanban, with a form to add an action.
 - **Releases.** Every push to `main` is tested on Linux and released automatically from its Conventional Commits. Machines update to a release only, never to the tip of `main`, and an update never touches the brains.
 
 
-![Corvus in dark mode: the project card shown over the page from the Timeline icon](docs/images/tasks-web-rail-dark.png)
+![Corvus in dark mode: the project card shown over the page from the Actions icon](docs/images/tasks-web-rail-dark.png)
 
 ## How it works
 
