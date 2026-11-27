@@ -1,7 +1,8 @@
 'use strict';
 
-// ---------- Priorities ----------
+// ---------- Priorities (the /priorities ranking, shown on Focus) ----------
 // The file `priorities/<brain>.md` written by the /priorities skill, parsed by GET /api/priorities (see "Priorities file" in REFERENCE.md).
+// It has no view of its own: Focus (app/actions.js, `renderToday`) shows its sections among the blocks of the brain's own actions.
 let prioData = null; // the last answer for this brain: {exists, sections, version, stale, ...}
 let prioRequest = 0;
 let prioError = '';
@@ -10,9 +11,6 @@ function resetPriorities() {
   prioRequest += 1;
   prioData = null;
   prioError = '';
-  ids.prioCount.textContent = '';
-  ids.prioButton.title = 'Priorities (0)';
-  ids.prioView.replaceChildren();
 }
 async function loadPriorities() {
   const requestId = ++prioRequest;
@@ -22,15 +20,28 @@ async function loadPriorities() {
     const unchanged = prioData && !prioError && data.exists === prioData.exists && data.version === prioData.version && data.stale === prioData.stale && data.today === prioData.today;
     prioData = data;
     prioError = '';
-    const now = data.exists ? (data.sections.find(section => section.key === 'now')?.count || 0) : 0;
-    ids.prioCount.textContent = now ? String(now) : '';
-    ids.prioButton.title = `Priorities (0)${now ? `: ${now} to do now` : ''}`;
-    if (view === 'priorities' && !unchanged) renderPriorities();
+    if (view === 'today' && !unchanged) render();
   } catch (error) {
     if (requestId !== prioRequest || error.stale) return;
     prioError = error.message;
-    if (view === 'priorities') renderPriorities();
   }
+}
+// The file when it is today's (`stale` false), else null: only a fresh ranking takes part in Focus.
+function freshPriorities() { return prioData?.exists && !prioData.stale ? prioData : null; }
+function prioSection(key) { return freshPriorities()?.sections.find(section => section.key === key) || null; }
+// The action IDs a section cites (the Now items, to leave out the actions they already name).
+function prioCitedIds(section) { return new Set(section ? section.html.match(PRIO_ID) || [] : []); }
+// The quiet line under Focus's title: where the ranking comes from, or why it is not there.
+function prioSourceLine() {
+  if (!prioData?.exists) return '';
+  if (prioData.stale) {
+    const generated = prioData.generated ? new Date(prioData.generated) : null;
+    const when = generated && !Number.isNaN(generated.getTime()) ? `dates from ${DAY_FORMAT.format(generated)}` : 'has no valid date';
+    return `The /priorities ranking ${when}: run /priorities in Claude Code to refresh it.`;
+  }
+  if (projectScope) return 'The /priorities ranking covers the whole brain: clear the project to see it.';
+  const generated = new Date(prioData.generated);
+  return [`Ranked by /priorities at ${TIME_FORMAT.format(generated)}`, ...(prioData.next_meeting ? [`next meeting ${prioData.next_meeting}`] : [])].join(' · ');
 }
 // The action IDs of a rendered section become buttons when the action is in the brain's snapshot; the others stay text.
 function linkActionIds(root) {
@@ -58,26 +69,6 @@ function linkActionIds(root) {
     if (last < text.length) parts.push(document.createTextNode(text.slice(last)));
     node.replaceWith(...parts);
   }
-}
-function prioHeader(data) {
-  const head = element('header', 'prio-head');
-  const line = element('div', 'prio-title-line');
-  line.append(element('h2', 'prio-title', data.title || 'Priorities'));
-  if (data.stale) {
-    const badge = element('span', 'prio-badge', "Not today's");
-    badge.title = data.generated ? `Generated on ${data.generated}` : 'No valid generation date';
-    line.append(badge);
-  }
-  head.append(line);
-  const generated = data.generated ? new Date(data.generated) : null;
-  const facts = [];
-  if (generated && !Number.isNaN(generated.getTime())) facts.push(`Generated: ${relativeTime(generated)} (${TIME_FORMAT.format(generated)}, ${DAY_YEAR_FORMAT.format(generated)})`);
-  else facts.push('Generation date unknown');
-  if (data.horizon) facts.push(`Horizon ${data.horizon.replace('..', ' to ')}`);
-  if (data.next_meeting) facts.push(`Next meeting: ${data.next_meeting}`);
-  head.append(element('p', 'prio-facts', facts.join(' · ')));
-  if (data.stale) head.append(element('p', 'prio-hint', 'Run /priorities in Claude Code to refresh it.'));
-  return head;
 }
 // Each draft is a native <details>, closed by default, with a Copy message button added at the end of its opened box.
 function addDraftCopy(root) {
@@ -112,53 +103,8 @@ function prioBody(section) {
   addDraftCopy(body);
   return body;
 }
-function renderPriorities() {
-  const scroll = ids.prioView.scrollTop;
-  const openDrafts = new Set([...ids.prioView.querySelectorAll('.prio-draft[open]')].map(draftKey));
-  ids.resultCount.textContent = '';
-  if (prioError && !prioData) {
-    ids.prioView.replaceChildren(element('p', 'error-banner', prioError));
-    return;
-  }
-  if (!prioData) {
-    ids.prioView.replaceChildren(element('p', 'empty-inline', 'Loading…'));
-    return;
-  }
-  if (!prioData.exists) {
-    const box = element('div', 'empty-state');
-    box.append(element('h2', '', 'No priorities for this brain yet.'), element('p', '', 'Run /priorities in Claude Code.'));
-    ids.prioView.replaceChildren(box);
-    return;
-  }
-  const nodes = [];
-  if (prioError) nodes.push(element('p', 'error-banner', prioError));
-  nodes.push(prioHeader(prioData));
-  const total = prioData.sections.reduce((sum, section) => sum + (section.key === 'warnings' ? 0 : section.count), 0);
-  ids.resultCount.textContent = total ? plural(total, 'item') : '';
-  for (const section of prioData.sections.filter(item => item.key === 'warnings')) {
-    const notice = element('section', 'prio-notice');
-    notice.setAttribute('role', 'note');
-    notice.setAttribute('aria-label', section.title);
-    notice.append(element('h3', 'prio-notice-title', section.title), prioBody(section));
-    nodes.push(notice);
-  }
-  const cards = prioData.sections.filter(item => item.key !== 'warnings');
-  if (!cards.length) nodes.push(element('p', 'empty-inline', 'Nothing to do in this horizon.'));
-  cards.forEach((section, index) => {
-    const card = element('section', `prio-card prio-${section.key}`);
-    const title = element('h3', 'prio-card-title');
-    title.id = `prio-section-${index}`;
-    title.append(element('span', '', section.title), element('span', 'section-count', String(section.count)));
-    card.setAttribute('aria-labelledby', title.id);
-    card.append(title, prioBody(section));
-    nodes.push(card);
-  });
-  ids.prioView.replaceChildren(...nodes);
-  for (const draft of ids.prioView.querySelectorAll('.prio-draft')) draft.open = openDrafts.has(draftKey(draft)); // the drafts that were open stay open
-  ids.prioView.scrollTop = scroll;
-  markOpenAction();
-}
-ids.prioView.addEventListener('click', event => {
+// The ID of an item opens its action; a draft's button copies its message.
+ids.todayView.addEventListener('click', event => {
   const copy = event.target instanceof Element ? event.target.closest('.prio-draft-copy') : null;
   if (copy) {
     event.preventDefault(); // a button inside <details> must not toggle it
@@ -169,4 +115,4 @@ ids.prioView.addEventListener('click', event => {
   const action = button && snapshot.actions.find(item => item.id === button.dataset.actionId);
   if (action) openEditor(action);
 });
-window.addEventListener('focus', () => { if (view === 'priorities') loadPriorities(); });
+window.addEventListener('focus', () => { if (view === 'today') loadPriorities(); });

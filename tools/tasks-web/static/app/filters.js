@@ -175,7 +175,7 @@ function projectButton(scope, label, count, className = '') {
   button.append(element('span', 'nav-label', label), element('span', 'nav-count', count ? String(count) : ''));
   button.title = scope ? `${label}: ${plural(count, 'open action')}` : 'All the actions of the brain';
   button.addEventListener('click', () => {
-    const target = pendingPeekView(); // Corvus's Mac window: the view hovered in the rail while the card peeks (app/shell.js)
+    const target = pendingPeekView(); // Corvus's app window: the view of the group hovered in the rail while the card peeks (app/shell.js)
     if (target && target !== view) setView(target);
     setProjectScope(scope);
   });
@@ -240,6 +240,62 @@ function renderProjectNav() {
   }
   if (items.length === 1 && snapshot.registers.length === 0) items.push(element('li', 'project-empty', 'No register'));
   ids.projectNav.replaceChildren(...items);
+  renderRailProjects(counts);
+}
+// ---------- Projects in the folded rail (Corvus window) ----------
+// Folded, the rail of a Corvus window shows, under its groups, the top level of the project tree (a client, a folder of internal
+// projects), as in the card: the six with the most open actions, by name, each as two letters. A click filters by it, a click on
+// the current one clears the filter. With more than six, the sixth is "+N", which shows the card as hovering a group does. app.css
+// shows them only in the folded rail of a wide window; each names itself in the rail's bubble (app/shell.js).
+const RAIL_PROJECTS = 6;
+// "Globex Media" → "GM", "CYBERDYNE" → "CY", "Wonka" → "Wo"; three letters ("Glo", "CYB", "Won") for the ones that would clash.
+function railLetters(label, size = 2) {
+  const words = label.trim().split(/\s+/).filter(Boolean);
+  const first = words[0] || '?';
+  if (size === 2 && words.length > 1) return words.slice(0, 2).map(word => word.charAt(0)).join('').toLocaleUpperCase(LOCALE);
+  if (first.length > 1 && first === first.toLocaleUpperCase(LOCALE) && first !== first.toLocaleLowerCase(LOCALE)) return first.slice(0, size);
+  const letters = words.join('');
+  return letters.charAt(0).toLocaleUpperCase(LOCALE) + letters.slice(1, size).toLocaleLowerCase(LOCALE);
+}
+function railProjectButton(text, name, count, label, current) {
+  const button = element('button', 'rail-project', text);
+  button.type = 'button';
+  button.dataset.name = name; // the bubble's text and count (app/shell.js)
+  button.dataset.count = count;
+  button.setAttribute('aria-label', label);
+  if (current) button.setAttribute('aria-current', 'true');
+  return button;
+}
+function renderRailProjects(counts) {
+  const holder = ids.railProjects;
+  const focused = holder.contains(document.activeElement) ? document.activeElement.dataset.key : null;
+  const inGroup = key => Boolean(projectScope) && (projectScope === key || (key.endsWith('/') && projectScope.startsWith(key)));
+  const groups = projectTree().map(node => ({...node, count: node.children.reduce((sum, child) => sum + (counts.get(child.key) || 0), 0)}));
+  const room = groups.length > RAIL_PROJECTS ? RAIL_PROJECTS - 1 : RAIL_PROJECTS;
+  const shown = [...groups].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, LOCALE)).slice(0, room)
+    .sort((a, b) => a.label.localeCompare(b.label, LOCALE));
+  const twos = shown.map(group => railLetters(group.label));
+  const buttons = shown.map((group, index) => {
+    const text = twos.filter(two => two === twos[index]).length > 1 ? railLetters(group.label, 3) : twos[index];
+    const current = inGroup(group.key);
+    const button = railProjectButton(text, group.label, group.count ? String(group.count) : '', `${group.label}, ${plural(group.count, 'open action')}`, current);
+    button.dataset.key = group.key;
+    button.addEventListener('click', () => setProjectScope(current ? '' : group.key));
+    return button;
+  });
+  const hidden = groups.filter(group => !shown.includes(group));
+  if (hidden.length) {
+    const more = railProjectButton(`+${hidden.length}`, plural(hidden.length, 'more project'), '', `${plural(hidden.length, 'more project')}: show them in the card`,
+      hidden.some(group => inGroup(group.key)));
+    more.dataset.key = '+';
+    more.addEventListener('click', event => {
+      startPeek(); // the card over the page, as when the pointer is on a group of the rail
+      if (event.detail === 0) ids.projectNav.querySelector('.project-item')?.focus(); // from the keyboard: into the card
+    });
+    buttons.push(more);
+  }
+  holder.replaceChildren(...buttons);
+  if (focused) buttons.find(button => button.dataset.key === focused)?.focus();
 }
 function setProjectScope(scope) {
   projectScope = scope;
@@ -259,6 +315,6 @@ function setSummary() {
   const sections = todaySections(open);
   const urgent = sections.late.length + sections.today.length;
   ids.todayCount.textContent = urgent ? String(urgent) : '';
-  ids.todayButton.title = `Today (1): ${plural(sections.late.length, 'overdue action')}, ${plural(sections.today.length, 'due today', 'due today')}`;
+  ids.todayButton.title = `Focus (1): ${plural(sections.late.length, 'overdue action')}, ${plural(sections.today.length, 'due today', 'due today')}`;
   renderProjectNav();
 }

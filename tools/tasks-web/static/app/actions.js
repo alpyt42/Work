@@ -232,45 +232,106 @@ function ownerBlock(id, group, options) {
   block.append(heading, rowList(group.actions, {...options, owner: false}));
   return block;
 }
+// ---------- Focus ----------
+// One page for "what should I do now?" (the view `today`): the brain's own actions by urgency, with the sections of the /priorities
+// ranking among them when its file is today's (app/priorities.js). The ranking covers the whole brain, so a chosen project leaves it
+// out. Each block has a heading, a count and a quiet line on where its items come from; an empty block is left out.
+const FOCUS_OWN_BLOCKS = new Set(['now', 'prepare', 'conflicts', 'new-requests', 'follow-ups', 'to-chase', 'warnings']); // the sections with a block (or a banner) of their own
+function focusBlock(key, title, count, hint, parts) {
+  const section = element('section', `section focus-block focus-${key}`);
+  section.setAttribute('aria-labelledby', `focus-${key}`);
+  const head = element('div', 'section-head');
+  const heading = element('h2', '', title);
+  heading.id = `focus-${key}`;
+  head.append(heading, element('span', 'section-count', String(count)));
+  section.append(head, element('p', 'focus-hint', hint), ...parts);
+  return section;
+}
+// A sub-heading inside a block, in the style of the owners' headings.
+function focusSub(text) { return element('h3', 'owner-head focus-sub', text); }
+function focusPrio(section) {
+  const box = element('div', 'focus-prio');
+  box.append(prioBody(section));
+  return box;
+}
 function renderToday(base) {
   const sections = todaySections(base);
-  // The last element is true for the sections split by owner.
-  const definitions = [
-    ['late', 'Overdue', sections.late, '', false],
-    ['today', 'Today', sections.today, '', false],
-    ['doing', 'In progress', sections.doing, '', false],
-    ['others-late', 'Late from others', sections.othersLate, 'assigned to someone else, due date passed', true],
-    ['waiting', 'Waiting on others', sections.waiting, 'waiting, or assigned to someone else', true],
-    ['week', 'This week', sections.week, `until ${DAY_FORMAT.format(parseDay(addDays(today(), 7)))}`, false]
-  ];
-  const total = definitions.reduce((sum, [, , actions]) => sum + actions.length, 0);
-  ids.resultCount.textContent = plural(total, 'action');
-  if (!total) {
-    ids.todayView.replaceChildren(emptyState('Nothing urgent for today.', 'Overdue actions, actions due today, work in progress and what waits on others appear here.'));
-    return;
-  }
   const options = {project: !singleProject()};
-  // Who is late, over both "from others" sections: those owners lead each of them.
+  const prio = projectScope ? null : freshPriorities(); // the whole brain's ranking, today's only
+  ids.viewNote.textContent = prioSourceLine();
+  ids.viewNote.hidden = !ids.viewNote.textContent;
+  const openDrafts = new Set([...ids.todayView.querySelectorAll('.prio-draft[open]')].map(draftKey));
+  const moreOpen = ids.todayView.querySelector('.focus-more')?.open === true;
+  // Who is late, over both "from others" blocks: those owners lead each of them.
   const late = new Map();
   for (const action of [...sections.othersLate, ...sections.waiting]) {
     if (action.due && action.due < today()) late.set(action.owner, (late.get(action.owner) || 0) + 1);
   }
+  const byOwner = (key, actions) => ownerGroups(actions, late).map((group, index) => ownerBlock(`focus-${key}-owner-${index}`, group, options));
+  const blocks = [];
   const nodes = [];
-  for (const [key, title, actions, note, byOwner] of definitions) {
-    if (!actions.length) continue;
-    const section = element('section', `section section-${key}`);
-    section.setAttribute('aria-labelledby', `today-${key}`);
-    const head = element('div', 'section-head');
-    const heading = element('h2', '', title);
-    heading.id = `today-${key}`;
-    head.append(heading, element('span', 'section-count', String(actions.length)));
-    if (note) head.append(element('span', 'section-note', note));
-    section.append(head);
-    if (byOwner) ownerGroups(actions, late).forEach((group, index) => section.append(ownerBlock(`today-${key}-owner-${index}`, group, options)));
-    else section.append(rowList(actions, options));
-    nodes.push(section);
+  // Now: the ranking's Now items, then my overdue and due-today actions they do not cite; those actions alone without a ranking.
+  const now = prio && prioSection('now');
+  const urgent = [...sections.late, ...sections.today];
+  if (now) {
+    const cited = prioCitedIds(now);
+    const also = urgent.filter(action => !cited.has(action.id));
+    const parts = [focusPrio(now)];
+    if (also.length) parts.push(focusSub('Also overdue or due today'), rowList(also, options));
+    blocks.push(focusBlock('now', 'Now', now.count + also.length, 'Ranked by /priorities, then your other actions past their due date or due today', parts));
+  } else if (urgent.length) {
+    blocks.push(focusBlock('now', 'Now', urgent.length, 'Your actions past their due date or due today', [rowList(urgent, options)]));
   }
-  ids.todayView.replaceChildren(...nodes);
+  for (const [key, title, hint] of [['prepare', 'To prepare', 'From /priorities: what to get ready before a meeting or a deadline'],
+    ['conflicts', 'Conflicts', 'From /priorities: clashes in your agenda'], ['new-requests', 'New requests', 'From /priorities: requests received since the last message review']]) {
+    const section = prio && prioSection(key);
+    if (section?.count) blocks.push(focusBlock(key, title, section.count, hint, [focusPrio(section)]));
+  }
+  if (sections.doing.length) blocks.push(focusBlock('doing', 'In progress', sections.doing.length, 'Your actions in progress', [rowList(sections.doing, options)]));
+  // To chase: what others are late on, by owner, then the follow-ups the ranking drafted (with their messages).
+  const followUps = prio ? ['follow-ups', 'to-chase'].map(key => prioSection(key)).filter(section => section?.count) : [];
+  const chaseCount = sections.othersLate.length + followUps.reduce((sum, section) => sum + section.count, 0);
+  if (chaseCount) {
+    const parts = byOwner('chase', sections.othersLate);
+    if (followUps.length) parts.push(...(sections.othersLate.length ? [focusSub('Drafted by /priorities')] : []), ...followUps.map(focusPrio));
+    blocks.push(focusBlock('chase', 'To chase', chaseCount, followUps.length ? 'Actions of others past their due date, and the follow-ups drafted by /priorities' : 'Actions of others past their due date', parts));
+  }
+  if (sections.waiting.length) blocks.push(focusBlock('waiting', 'Waiting on others', sections.waiting.length, 'Waiting, or assigned to someone else', byOwner('waiting', sections.waiting)));
+  if (sections.week.length) {
+    blocks.push(focusBlock('week', 'This week', sections.week.length, `Your actions due or scheduled until ${DAY_FORMAT.format(parseDay(addDays(today(), 7)))}`, [rowList(sections.week, options)]));
+  }
+  // The rest of the ranking (To close, Lingering, Admin, any other section), folded away.
+  const rest = prio ? prio.sections.filter(section => !FOCUS_OWN_BLOCKS.has(section.key) && section.count) : [];
+  if (rest.length) {
+    const more = element('details', 'focus-more');
+    more.open = moreOpen;
+    const summary = element('summary', 'focus-more-summary');
+    summary.append(element('span', 'focus-more-title', 'Also from /priorities'), element('span', 'section-count', String(rest.reduce((sum, section) => sum + section.count, 0))),
+      element('span', 'focus-hint', rest.map(section => section.title).join(', ')));
+    more.append(summary, ...rest.flatMap(section => [focusSub(section.title), focusPrio(section)]));
+    const section = element('section', 'section focus-block focus-rest');
+    section.setAttribute('aria-label', 'Also from /priorities');
+    section.append(more);
+    blocks.push(section);
+  }
+  // The ranking's warnings: one compact banner at the top.
+  const warnings = prio && prioSection('warnings');
+  if (warnings?.count) {
+    const banner = element('section', 'focus-warnings');
+    banner.setAttribute('role', 'note');
+    banner.setAttribute('aria-label', 'Warnings from /priorities');
+    banner.append(prioBody(warnings));
+    nodes.push(banner);
+  }
+  const total = sections.late.length + sections.today.length + sections.doing.length + sections.othersLate.length + sections.waiting.length + sections.week.length;
+  ids.resultCount.textContent = plural(total, 'action');
+  if (!blocks.length) {
+    ids.todayView.replaceChildren(...nodes, emptyState('Nothing to focus on right now.', 'Overdue actions, actions due today, work in progress, what waits on others and the /priorities ranking appear here.'));
+    return;
+  }
+  ids.todayView.replaceChildren(...nodes, ...blocks);
+  for (const draft of ids.todayView.querySelectorAll('.prio-draft')) draft.open = openDrafts.has(draftKey(draft)); // the drafts that were open stay open
+  markOpenAction();
 }
 
 // ---------- Actions (list) ----------

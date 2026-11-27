@@ -67,17 +67,19 @@ function toggleSidebar() {
 }
 narrowQuery.addEventListener('change', () => { closeDrawer(false); hideRailTip(); endPeek(); fitCardToView(); updateSidebarToggle(); });
 
-// Corvus's macOS window (window-shell.js) has two sidebar columns when wide: a rail of icons that always shows, and the brain's card,
-// which the sidebar button folds away. Folded, the pointer on one of the views of the rail (Priorities to Docs, the ones the projects
-// filter; not Archives, Tools, Sync or Settings) shows the card over the page; it stays while the pointer is on the views or on the
-// card (to choose a project) and goes when the pointer leaves both (CSS: .sidebar-peek), after a short delay so that the pointer can
-// cross from one to the other. The class 'sidebar-collapsed' steps aside meanwhile, and nothing is remembered.
-const macWindow = document.documentElement.classList.contains('mac-window');
-// Wide, the sidebar button sits in the title row next to the window buttons (app.css): it leaves the view's bar, whose layer is
-// below the peeking card, for a place of its own just before the app (still second in the tab order, after the skip link).
+// A Corvus window (window-shell.js marks it `app-window`, on every system) has two sidebar columns when wide: a rail of icons that
+// always shows, and the brain's card, which the sidebar button folds away. Folded, the pointer on one of the groups at the top of
+// the rail (Focus, Actions, Docs, whose views the projects filter; not Settings) shows the card over the page; it stays while the
+// pointer is on them or on the card (to choose a project) and goes when the pointer leaves both (CSS: .sidebar-peek), after a short
+// delay so that the pointer can cross from one to the other. The class 'sidebar-collapsed' steps aside meanwhile, and nothing is
+// remembered. Only the room for the macOS window buttons and the window's drag regions are the Mac's own (`mac-window`: app.css and
+// window.py), so nothing here depends on the system.
+const appWindow = document.documentElement.classList.contains('app-window');
+// Wide, the sidebar button sits in the top row (next to the window buttons on a Mac, app.css): it leaves the view's bar, whose
+// layer is below the peeking card, for a place of its own just before the app (still second in the tab order, after the skip link).
 const sidebarToggleHome = ids.sidebarToggle.parentElement;
 function placeSidebarToggle() {
-  if (macWindow && !narrowQuery.matches) ids.app.before(ids.sidebarToggle);
+  if (appWindow && !narrowQuery.matches) ids.app.before(ids.sidebarToggle);
   else if (ids.sidebarToggle.parentElement !== sidebarToggleHome) sidebarToggleHome.prepend(ids.sidebarToggle);
 }
 placeSidebarToggle();
@@ -87,7 +89,7 @@ function peeking() { return ids.app.classList.contains('sidebar-peek'); }
 function keepPeek() { clearTimeout(peekTimer); peekTimer = 0; }
 function startPeek() {
   keepPeek();
-  if (!macWindow || narrowQuery.matches || peeking() || !ids.app.classList.contains('sidebar-collapsed')) return;
+  if (!appWindow || narrowQuery.matches || peeking() || !ids.app.classList.contains('sidebar-collapsed')) return;
   hideRailTip();
   ids.app.classList.add('sidebar-peek');
   ids.app.classList.remove('sidebar-collapsed');
@@ -97,14 +99,15 @@ function endPeek() {
   if (!peeking()) return;
   ids.app.classList.remove('sidebar-peek');
   ids.app.classList.add('sidebar-collapsed');
-  peekView = '';
+  peekGroup = '';
   showCardView();
 }
-// The projects filter neither Archives, Tools, Sync nor Settings: there the card steps aside (the rail alone, class 'card-off')
-// without changing the remembered choice, and comes back on a view that the projects filter (render.js calls this on each change).
+// The projects filter neither Archives (in Docs), Sync, nor Settings and Tools: there the card steps aside (the rail alone, class
+// 'card-off') without changing the remembered choice, and comes back on a view that the projects filter (render.js calls this on
+// each change).
 const NO_PROJECT_VIEWS = ['archives', 'tools', 'git', 'settings'];
 function fitCardToView() {
-  if (!macWindow || narrowQuery.matches) return;
+  if (!appWindow || narrowQuery.matches) return;
   const off = NO_PROJECT_VIEWS.includes(view);
   if (off === ids.app.classList.contains('card-off')) return;
   endPeek();
@@ -112,17 +115,23 @@ function fitCardToView() {
   ids.app.classList.toggle('sidebar-collapsed', off || readSidebarCollapsed());
   updateSidebarToggle();
 }
-// Above the projects, the card names the view they open: the hovered one while the card peeks (a project chosen then opens it,
-// app/filters.js). Pinned, the header already names the view and the line stays empty (CSS: .card-view:not(:empty) while peeking).
-let peekView = '';
-function pendingPeekView() { return peeking() ? peekView : ''; }
+// Above the projects, the card names the view they open: the last view of the hovered group while the card peeks (a project chosen
+// then opens it, app/filters.js; in Docs, Docs itself after Archives, which the projects do not filter). Pinned, the header already
+// names the view and the line stays empty (CSS: .card-view:not(:empty) while peeking).
+let peekGroup = '';
+function peekView(group) {
+  const last = lastSubview(group);
+  return NO_PROJECT_VIEWS.includes(last) ? VIEW_GROUPS[group].find(name => !NO_PROJECT_VIEWS.includes(name)) || last : last;
+}
+function pendingPeekView() { return peeking() && peekGroup ? peekView(peekGroup) : ''; }
 function showCardView() {
-  const icon = ids[NAV_BUTTONS[peekView]]?.querySelector('svg')?.cloneNode(true);
-  ids.cardView.replaceChildren(...(icon ? [icon] : []), document.createTextNode(VIEW_TITLES[peekView] || ''));
-  // The highlight follows the pointer while the card peeks: the hovered view looks chosen, and stays so while the pointer is on the
+  const target = pendingPeekView();
+  const icon = target ? ids[GROUP_BUTTONS[peekGroup]]?.querySelector('svg')?.cloneNode(true) : null;
+  ids.cardView.replaceChildren(...(icon ? [icon] : []), document.createTextNode(target ? viewName(target) : ''));
+  // The highlight follows the pointer while the card peeks: the hovered group looks chosen, and stays so while the pointer is on the
   // card, since a project chosen there opens it (CSS: .is-peeked).
   for (const entry of ids.sidebar.querySelectorAll('.nav-item.is-peeked')) entry.classList.remove('is-peeked');
-  if (pendingPeekView()) ids[NAV_BUTTONS[peekView]]?.classList.add('is-peeked');
+  if (target) ids[GROUP_BUTTONS[peekGroup]]?.classList.add('is-peeked');
 }
 // Leaving starts one short countdown (not restarted by further moves), so that the pointer can cross from a view to the card.
 function leavePeek() {
@@ -131,18 +140,18 @@ function leavePeek() {
 }
 // WebKit may not report the pointer leaving an element when it moves fast or leaves the window, so every move is checked too, and
 // the card goes when the pointer leaves the window or the window loses the focus.
-const PEEK_KEEPERS = '.nav[aria-labelledby="viewsHeading"] .nav-item, .sidebar-top, .projects';
+const PEEK_KEEPERS = '.nav[aria-labelledby="viewsHeading"] .nav-item, .rail-projects, .sidebar-top, .projects'; // the projects' letters too: their +N opens it
 document.addEventListener('mousemove', event => {
   if (!peeking()) return;
   if (event.target instanceof Element && event.target.closest(PEEK_KEEPERS)) keepPeek(); else leavePeek();
 }, {passive: true});
 document.documentElement.addEventListener('mouseleave', () => { if (!brainMenuOpen()) endPeek(); });
 window.addEventListener('blur', () => endPeek());
-for (const entry of ids.sidebar.querySelectorAll('.nav[aria-labelledby="viewsHeading"] .nav-item')) { // the views, which the projects filter
+for (const entry of ids.sidebar.querySelectorAll('.nav[aria-labelledby="viewsHeading"] .nav-item')) { // the groups the projects filter
   entry.addEventListener('mouseenter', () => {
     startPeek();
     if (!peeking()) return;
-    peekView = entry.dataset.view;
+    peekGroup = entry.dataset.group;
     showCardView();
     // No native tooltip over the card: the entry's title comes back when the pointer leaves.
     if (entry.title) { entry.dataset.peekTitle = entry.title; entry.removeAttribute('title'); }
@@ -156,7 +165,7 @@ for (const entry of ids.sidebar.querySelectorAll('.nav[aria-labelledby="viewsHea
 // pointer leaves both the views and the card.
 
 // ---------- Resizing ----------
-// The handles on the sidebar's edge (its card's in the Mac window) and on the detail panel's: drag, arrow keys, double-click for the
+// The handles on the sidebar's edge (its card's in the app window) and on the detail panel's: drag, arrow keys, double-click for the
 // default width. The width is a CSS variable set on the page and kept by the browser under `corvus-width<variable>`; window-shell.js
 // sets it back before the first paint.
 function widthOf(variable) { return parseFloat(getComputedStyle(document.documentElement).getPropertyValue(variable)) || 0; }
@@ -205,7 +214,7 @@ function makeResizable(handle, {variable, min, max, fromRight = false, step = 16
   });
   handle.addEventListener('dblclick', () => resetWidth(variable));
 }
-makeResizable(ids.sidebarResizer, macWindow ? {variable: '--list-w', min: 180, max: () => 440} : {variable: '--sidebar-full-w', min: 200, max: () => 440});
+makeResizable(ids.sidebarResizer, appWindow ? {variable: '--list-w', min: 180, max: () => 440} : {variable: '--sidebar-full-w', min: 200, max: () => 440});
 // The list beside the panel keeps at least 480 px (the sidebar's width is read as laid out: full, rail or card).
 const PANEL_MIN = 340;
 const LIST_MIN = 480;
@@ -216,18 +225,19 @@ makeResizable(ids.panelResizer, {
 
 // In the rail the labels are visually hidden (still read by screen readers), so each entry shows its label, and its count when it has
 // one, in a small bubble to its right on hover and keyboard focus. The bubble is fixed to the page: the sidebar scrolls and would clip it.
-const RAIL_ITEMS = '.nav-item, .update-button, .brain-button, #moreButton';  // .update-button covers #syncPullButton
+const RAIL_ITEMS = '.nav-item, .rail-project, .update-button, .brain-button, #moreButton';
 let railTipItem = null;
 function railActive(item) {
   if (narrowQuery.matches) return false;
   if (ids.app.classList.contains('sidebar-collapsed')) return true;
   if (peeking()) return false; // the peeking card says enough; no bubble over it
-  return macWindow && item !== ids.brainButton; // the Mac window's rail shows beside the card, whose switcher has its name
+  return appWindow && item !== ids.brainButton; // the app window's rail shows beside the card, whose switcher has its name
 }
 function railTipParts(item) {
   if (item === ids.brainButton) return [ids.brainName.textContent.trim(), ''];
   if (item === ids.moreButton) return [item.getAttribute('aria-label') || '', ''];
-  const label = (item.querySelector('.nav-label') || item.querySelector('#updateButtonLabel') || item.querySelector('#syncPullButtonLabel'))?.textContent.trim() || '';
+  if (item.classList.contains('rail-project')) return [item.dataset.name || '', item.dataset.count || ''];
+  const label = (item.querySelector('.nav-label') || item.querySelector('#updateButtonLabel'))?.textContent.trim() || '';
   return [label, item.querySelector('.nav-count')?.textContent.trim() || ''];
 }
 function hideRailTip() {
@@ -242,6 +252,9 @@ function showRailTip(item) {
   if (!label) return;
   ids.railTip.replaceChildren(element('span', '', label), ...(count ? [element('span', 'rail-tip-count', count)] : []));
   ids.railTip.hidden = false;
+  ids.railTip.style.animation = 'none'; // each bubble comes in anew, even right after another one (app.css: .rail-tip)
+  void ids.railTip.offsetWidth;
+  ids.railTip.style.animation = '';
   const box = item.getBoundingClientRect();
   const tip = ids.railTip.getBoundingClientRect();
   ids.railTip.style.left = `${Math.round(box.right + 8)}px`;
@@ -354,13 +367,15 @@ document.addEventListener('keydown', event => {
   if (key === 'Escape') { handleEscape(event); return; }
   if (event.metaKey || event.ctrlKey || typing) return;
   if (document.querySelector('dialog[open]') || popoverState || brainMenuOpen() || !ids.moreMenu.hidden) return;
-  const digit = /^[0-5]$/.test(key) ? key : /^Digit[0-5]$/.test(event.code) && !event.altKey ? event.code.slice(5) : null;
+  // 1 to 3 open the groups of the sidebar (Today, Actions, Docs), each on its last view; `v` and Shift+V go round its views.
+  const digit = /^[1-3]$/.test(key) ? key : /^Digit[1-3]$/.test(event.code) && !event.altKey ? event.code.slice(5) : null;
   const inRows = ACTION_VIEWS.includes(view);
   const onBody = event.target === document.body || event.target === ids.mainContent || event.target === ids.editorTitle;
   if (key === '/') { event.preventDefault(); focusSearch(); }
   else if (key === '?') { event.preventDefault(); ids.shortcutsDialog.showModal(); }
   else if (key === '[') { event.preventDefault(); toggleSidebar(); }
-  else if (digit && !event.altKey) { event.preventDefault(); setView(['priorities', 'today', 'list', 'board', 'timeline', 'docs'][Number(digit)]); }
+  else if (digit && !event.altKey) { event.preventDefault(); openGroup(['today', 'actions', 'docs'][Number(digit) - 1]); }
+  else if (key.toLowerCase() === 'v' && !event.altKey) { if (cycleView(event.shiftKey ? -1 : 1)) event.preventDefault(); }
   else if (key === 'n' && !event.altKey) { event.preventDefault(); openEditor(); }
   else if (inRows && (key === 'j' || key === 'ArrowDown') && !event.altKey) {
     if (key === 'ArrowDown' && !onBody && !activeRoot().contains(event.target)) return;

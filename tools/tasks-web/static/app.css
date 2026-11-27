@@ -166,11 +166,15 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .views > * { flex: 1 1 0; min-height: 0; }
 .view-scroll { overflow: auto; overscroll-behavior: contain; padding-bottom: 32px; }
 .scrim { display: none; }
-/* Corvus's macOS window (window-shell.js marks it): the page runs under a transparent title row of 52 px (window.py), whose window
-   buttons sit 19 to 73 px from the left edge. The empty parts of the sidebar and of the view's bar move the window (they carry
-   .pywebview-drag-region); the wide layout is at the end of this file. */
-.mac-window { --titlebar-h: 52px; --sidebar-rail-w: 56px; --list-w: 236px; }
-@media (max-width: 900px) { /* the drawer: everything stays below the title row */
+/* A Corvus window, on every system (window-shell.js marks it `app-window`): a top row of 52 px and, wide, a sidebar of two columns
+   (the layout is at the end of this file); `--toggle-x` is where the sidebar button sits in that row.
+   Corvus's macOS window is also `mac-window`: the page runs under a transparent title bar (window.py), whose window buttons sit 19
+   to 73 px from the left edge, so the sidebar button moves to their right and, narrow, everything stays below that row. The empty
+   parts of the sidebar and of the view's bar move that window (they carry .pywebview-drag-region, which window.py reads only in
+   the macOS page). On Windows and Linux the system's title bar sits above the page: nothing of this applies there. */
+.app-window { --titlebar-h: 52px; --sidebar-rail-w: 56px; --list-w: 236px; --toggle-x: 12px; }
+.mac-window { --toggle-x: 84px; }
+@media (max-width: 900px) { /* the drawer: everything stays below the window buttons' row */
   .mac-window .view-header { padding-top: calc(var(--titlebar-h) + 4px); }
   .mac-window .panel-head { padding-top: calc(14px + var(--titlebar-h)); } /* full width, the panel runs under the window buttons */
   .mac-window .sidebar-top { padding-top: calc(10px + var(--titlebar-h)); }
@@ -324,16 +328,45 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 /* ---------- View header ---------- */
 /* The title sits on the page colour, like a page heading; the cards of the view start below it. */
 .view-header { position: relative; z-index: 4; flex: none; padding: 28px var(--page-x) 6px; background: transparent; }
-.view-bar { display: flex; align-items: center; gap: 12px; min-height: 36px; }
+/* One row when the title with a start of its counter (200 px), the search and the buttons fit, else the search and the buttons go
+   to a second row: the same room for every view, so that the width decides, not the length of a title or a count. */
+.view-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: 36px; }
 .sidebar-toggle { margin-left: -6px; }
 /* Under 900 px the toggle also names the brain, with its accent marker: the brain stays visible without the sidebar. */
 .brain-mini { display: none; }
 .brain-mini::before { content: ""; position: absolute; left: 0; top: 1px; width: 14px; height: 14px; }
-.view-heading { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
+.view-heading { flex: 1 1 0; min-width: 200px; display: flex; align-items: baseline; gap: 10px; }
 .view-heading h1 { font-size: 24px; font-weight: 500; line-height: 1.2; letter-spacing: -.01em; white-space: nowrap; }
 .result-count, .view-status { font-size: var(--fs-xs); color: var(--text-quiet); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .view-status.git-status-error { color: var(--danger); }
-.view-actions { flex: none; display: flex; align-items: center; gap: 8px; }
+.view-actions { flex: none; display: flex; align-items: center; gap: 8px; margin-left: auto; }
+/* The tabs of the group's views (app/render.js), a row under the title, as in project tools: an icon and a name each, the current
+   one underlined in the brain's colour, a hairline under the whole row (drawn inside it, so the underline covers it). No box, no
+   pill; the row scrolls sideways, its scrollbar hidden, when it is too wide. Every tab keeps one weight, so none moves. */
+.view-tabs {
+  display: flex; gap: 14px; margin-top: 10px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+.view-tabs::-webkit-scrollbar { display: none; }
+.view-tab {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 2px; border: 0; border-block: 2px solid transparent;
+  border-radius: 0; background: transparent; color: var(--text-muted); font-size: var(--fs-sm); font-weight: 500; white-space: nowrap;
+}
+.view-tab:hover { color: var(--accent); }
+.view-tab[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
+.view-tab:focus-visible { outline-offset: -2px; }
+.tab-count { color: var(--text-quiet); font-size: var(--fs-xs); font-weight: 400; font-variant-numeric: tabular-nums; }
+.tab-count:empty { display: none; }
+/* The Sync button: its badge counts the changes of the current brain waiting online, or is a dot for notes to save or send (app/git.js). */
+.sync-button { position: relative; width: 34px; padding: 0; color: var(--text-muted); }
+.sync-button:hover { color: var(--text); }
+.sync-button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
+.sync-badge {
+  position: absolute; top: -6px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent);
+  color: var(--on-accent); box-shadow: 0 0 0 2px var(--bg-page); font-size: 10px; font-weight: 600; line-height: 16px; text-align: center;
+  font-variant-numeric: tabular-nums; pointer-events: none;
+}
+.sync-badge.is-dot { top: -3px; right: -3px; width: 9px; min-width: 0; height: 9px; padding: 0; }
 .search-field { position: relative; display: flex; align-items: center; width: 290px; }
 .search-field input { height: 34px; padding: 0 32px 0 34px; background: var(--bg-surface); border-color: var(--line-strong); }
 .search-field input:hover { border-color: var(--text-faint); }
@@ -459,15 +492,14 @@ input:disabled, select:disabled, textarea:disabled { opacity: .6; }
 .is-closed .row-title, .is-closed .card-title { color: var(--text-muted); }
 .is-cancelled .row-title-text, .is-cancelled .card-title { text-decoration: line-through; text-decoration-color: var(--text-faint); }
 
-/* Sections (Aujourd'hui) */
+/* Sections (the blocks of Focus) */
 .section { padding-top: 18px; }
 .section-head { display: flex; align-items: baseline; gap: 8px; padding: 0 24px 14px; }
 .section-head h2 { font-size: 16px; font-weight: 500; }
 .section-count { font-size: var(--fs-xs); color: var(--text-quiet); font-variant-numeric: tabular-nums; }
 .section-note { font-size: var(--fs-xs); color: var(--text-quiet); }
 .section .rows { border-top: 1px solid var(--line-soft); }
-.section-late h2, .section-others-late h2 { color: var(--danger); }
-/* On the page colour, each section of Today and each project of Actions is a white card (`clip` keeps the sticky headings working). */
+/* On the page colour, each block of Focus and each project of Actions is a white card (`clip` keeps the sticky headings working). */
 .today-view > .section, .list-view > .fold-section {
   margin: 20px var(--page-x) 0; background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--radius-panel);
   box-shadow: var(--shadow-card); overflow: clip;
@@ -1235,6 +1267,7 @@ mark { background: var(--mark-bg); color: var(--mark-text); border-radius: 2px; 
   background: var(--toast-bg); color: var(--toast-text); box-shadow: var(--shadow-pop); font-size: var(--fs-xs); font-weight: 400; line-height: 1.45; text-align: left;
 }
 .info-tip-line { display: block; overflow-wrap: anywhere; }
+#syncInfoTip .info-tip-line + .info-tip-line { margin-top: 4px; }
 .info-tip-head { margin-bottom: 2px; font-weight: 600; }
 .info-tip-head + .info-tip-line { font-family: var(--mono); font-size: 11px; }
 .info-button[aria-expanded="true"] { color: var(--text); background: var(--bg-sunken); }
@@ -1288,7 +1321,7 @@ html, body { overscroll-behavior-x: none; }
   .app.sidebar-collapsed .brain-button { flex: none; width: 32px; min-height: 44px; padding: 0; justify-content: center; }
   .app.sidebar-collapsed .brain-caret, .app.sidebar-collapsed .sidebar-heading, .app.sidebar-collapsed .projects { display: none; }
   .app.sidebar-collapsed .brain-text, .app.sidebar-collapsed .nav-label, .app.sidebar-collapsed .nav-count,
-  .app.sidebar-collapsed #updateButtonLabel, .app.sidebar-collapsed #syncPullButtonLabel, .app.sidebar-collapsed .last-sync {
+  .app.sidebar-collapsed #updateButtonLabel, .app.sidebar-collapsed .last-sync {
     position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
   }
   .app.sidebar-collapsed .sidebar-scroll { padding: 8px 7px 0 8px; overflow-x: hidden; }
@@ -1307,6 +1340,11 @@ html, body { overscroll-behavior-x: none; }
   box-shadow: var(--shadow-pop); font-size: var(--fs-xs); font-weight: 500; line-height: 1.4; white-space: nowrap; pointer-events: none;
 }
 .rail-tip-count { opacity: .7; font-variant-numeric: tabular-nums; }
+/* Each bubble comes in: it fades and slides 4 px from the left in 120 ms (app/shell.js restarts it); nothing moves with reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .rail-tip:not([hidden]) { animation: rail-tip-in 120ms ease-out; }
+  @keyframes rail-tip-in { from { opacity: 0; transform: translateX(-4px); } }
+}
 
 /* Fields of the "Add brain" dialog: the fixed `brain-` prefix sits in front of the name. */
 .input-prefix { display: flex; align-items: stretch; }
@@ -1389,8 +1427,7 @@ html, body { overscroll-behavior-x: none; }
 }
 @container main (max-width: 640px) {
   .view-header { padding: 10px 14px 8px; }
-  .view-bar { flex-wrap: wrap; row-gap: 8px; }
-  .view-heading { flex: 1 1 0; }
+  .view-heading { flex: 1 1 0; min-width: 0; } /* the search and the buttons have a row of their own: no room to keep */
   .view-actions { flex: 1 1 100%; }
   .search-field { flex: 1 1 auto; width: auto; }
   .button-label { display: none; }
@@ -1518,21 +1555,27 @@ html, body { overscroll-behavior-x: none; }
   .tl-card-date { top: 0; right: 0; width: 36px; height: 36px; }
 }
 
-/* ---------- Priorities ---------- */
-.prio-view { padding: 0 var(--page-x) 32px; }
-.prio-head { padding: 24px 0 14px; }
-.prio-title-line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-.prio-title { font-size: var(--fs-lg); }
-.prio-badge { padding: 2px 8px; border-radius: 4px; background: var(--git-warn-tint); color: var(--git-warn-text); border: 1px solid var(--git-warn); font-size: var(--fs-xs); font-weight: 600; }
-.prio-facts { margin: 6px 0 0; color: var(--text-muted); font-size: var(--fs-sm); }
-.prio-hint { margin: 4px 0 0; color: var(--git-warn-text); font-size: var(--fs-sm); }
-.prio-notice { margin: 8px 0 14px; padding: 10px 14px; border: 1px solid var(--git-warn); border-left-width: 4px; border-radius: var(--radius-panel); background: var(--git-warn-tint); color: var(--git-warn-text); }
-.prio-notice-title { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
-.prio-card { --tone: var(--line); margin: 0 0 14px; padding: 12px 16px 6px; border: 1px solid var(--line); border-left: 4px solid var(--tone); border-radius: var(--radius-panel); background: var(--bg-surface); box-shadow: var(--shadow-card); }
-.prio-now { --tone: var(--accent); background: var(--accent-soft); }
-.prio-conflicts { --tone: var(--git-warn); background: var(--git-warn-tint); }
-.prio-card-title { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; font-size: var(--fs-md); }
-.prio-now .prio-card-title { color: var(--accent-strong); }
+/* ---------- Focus and the /priorities ranking ---------- */
+/* Focus (app/actions.js) is a column of white blocks, like the sections it had as Today; the ranking's items sit in them as the
+   server renders them (bold thing, why, deadline, ID chips, drafts). Quiet: one line of source under the title, one muted hint per
+   block, no colour of its own but the warnings' banner. */
+.view-note { margin-top: 6px; color: var(--text-muted); font-size: var(--fs-xs); }
+.focus-hint { margin: -10px 24px 12px; color: var(--text-quiet); font-size: var(--fs-xs); }
+.focus-prio { padding: 10px 24px 4px; border-top: 1px solid var(--line-soft); }
+.focus-prio + .focus-prio { border-top: 0; padding-top: 0; }
+.focus-sub { position: static; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+.focus-sub + .rows { border-top: 0; }
+.focus-more > summary { display: flex; align-items: baseline; gap: 8px; padding: 0 24px 16px; cursor: pointer; list-style: none; }
+.focus-more > summary::-webkit-details-marker { display: none; }
+.focus-more > summary::before {
+  content: ""; align-self: center; width: 6px; height: 6px; border-right: 1.5px solid var(--text-muted); border-bottom: 1.5px solid var(--text-muted);
+  transform: rotate(-45deg);
+}
+.focus-more[open] > summary::before { transform: rotate(45deg); }
+.focus-more-title { font-size: 16px; font-weight: 500; }
+.focus-more > summary .focus-hint { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.focus-warnings { margin: 20px var(--page-x) 0; padding: 8px 14px; border-left: 3px solid var(--git-warn); border-radius: var(--radius-control); background: var(--git-warn-tint); color: var(--git-warn-text); }
+.focus-warnings .prio-body ul { margin: 0; }
 .prio-body { font-size: var(--fs-sm); line-height: 1.55; overflow-wrap: anywhere; }
 .prio-body > * { max-width: 90ch; }
 .prio-body p { margin: 0 0 .6em; }
@@ -1566,105 +1609,126 @@ html, body { overscroll-behavior-x: none; }
   .prio-draft-meta { grid-template-columns: 1fr; gap: 0; }
   .prio-draft-meta dt { margin-top: 3px; }
   .prio-draft-copy { min-height: 36px; }
-  .prio-view { padding: 0 14px 28px; }
-  .prio-card { padding: 10px 12px 4px; }
+  .focus-hint { margin: -2px 14px 8px; }
+  .focus-prio, .focus-more > summary { padding-left: 14px; padding-right: 14px; }
+  .focus-warnings { margin: 12px 14px 0; }
 }
 
-/* ---------- Corvus's macOS window, wide: one title row and two sidebar columns, like the Mac apps ----------
-   The title row carries the window buttons, the sidebar button next to them (fixed) and the view's own bar: its title, the search,
-   New note and New action, all clickable; the bar's empty parts move the window (they carry .pywebview-drag-region).
-   Below the row the sidebar has two columns: a rail of icons that always shows (the views at the top, Archives, Tools, Sync,
-   Settings and More at the bottom, their names in the bubble of app/shell.js) and the brain's card (its switcher and the
-   projects). The sidebar button folds the card away and the brain's sticker moves to the top of the rail; the pointer on one of
-   the views in the rail then shows the card over the page until it leaves them and the card (.sidebar-peek, app/shell.js). The first row is
-   60 px in both states, so that the rail's icons never move under the pointer. */
+/* ---------- A Corvus window, wide (every system): one top row and two sidebar columns, like the desktop apps ----------
+   The top row carries the sidebar button (fixed, at `--toggle-x`: after the window buttons on a Mac) and the view's own bar: its
+   title and counter, the search, New note, New action and Sync, all clickable; on a Mac the bar's empty parts move the window.
+   Below the row the sidebar has two columns: a rail of icons that always shows (the groups at the top, Settings and More at the
+   bottom, their names in the bubble of app/shell.js) and the brain's card (its switcher and the projects). The sidebar button
+   folds the card away and the brain's sticker moves to the top of the rail; the pointer on one of the groups in the rail then
+   shows the card over the page until it leaves them and the card (.sidebar-peek, app/shell.js). The first row is 60 px in both
+   states, so that the rail's icons never move under the pointer. */
 @media (min-width: 901px) {
-  .mac-window .app { --sidebar-w: calc(var(--sidebar-rail-w) + var(--list-w) + 8px); }
-  .mac-window .app.sidebar-collapsed, .mac-window .app.sidebar-peek { --sidebar-w: var(--sidebar-rail-w); }
-  .mac-window .sidebar {
+  .app-window .app { --sidebar-w: calc(var(--sidebar-rail-w) + var(--list-w) + 8px); }
+  .app-window .app.sidebar-collapsed, .app-window .app.sidebar-peek { --sidebar-w: var(--sidebar-rail-w); }
+  .app-window .sidebar {
     display: grid; grid-template-columns: var(--sidebar-rail-w) minmax(0, 1fr); grid-template-rows: 60px minmax(0, 1fr) auto;
     padding-top: calc(var(--titlebar-h) - 3px); border-right: 0; position: relative; background: var(--bg-page);
     --accent-soft: color-mix(in srgb, var(--accent) 13%, var(--bg-page)); /* the active entry's tint, on the page's colour */
   }
-  .mac-window .sidebar-scroll { display: contents; }
+  .app-window .sidebar-scroll { display: contents; }
   /* The rail, on the page's own colour like the title row (the window buttons overflow it): 40 px buttons with 20 px icons, 8 px on each side. */
-  .mac-window .sidebar .nav[aria-labelledby="viewsHeading"] { grid-column: 1; grid-row: 2; padding: 2px 8px 0; }
-  .mac-window .sidebar .nav > .sidebar-heading { display: none; }
-  .mac-window .sidebar .sidebar-footer { grid-column: 1; grid-row: 3; border-top: 0; padding: 8px 8px 10px; }
-  .mac-window .sidebar .nav-item, .mac-window .sidebar .update-button, .mac-window .sidebar-footer .icon-button {
+  .app-window .sidebar .nav[aria-labelledby="viewsHeading"] { grid-column: 1; grid-row: 2; padding: 2px 8px 0; }
+  .app-window .sidebar .nav > .sidebar-heading { display: none; }
+  .app-window .sidebar .sidebar-footer { grid-column: 1; grid-row: 3; border-top: 0; padding: 8px 8px 10px; }
+  .app-window .sidebar .nav-item, .app-window .sidebar .update-button, .app-window .sidebar-footer .icon-button {
     width: 40px; height: 40px; padding: 0; justify-content: center; gap: 0;
   }
-  .mac-window .sidebar .nav .lucide, .mac-window .sidebar-footer .lucide { width: 20px; height: 20px; }
-  .mac-window .sidebar .nav .nav-label, .mac-window .sidebar .nav .nav-count, .mac-window #updateButtonLabel, .mac-window #syncPullButtonLabel,
-  .mac-window .last-sync {
+  .app-window .sidebar .nav .lucide, .app-window .sidebar-footer .lucide { width: 20px; height: 20px; }
+  .app-window .sidebar .nav .nav-label, .app-window .sidebar .nav .nav-count, .app-window #updateButtonLabel,
+  .app-window .last-sync {
     position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
   }
-  .mac-window .sidebar .nav-item:has(.nav-count:not(:empty))::after {
+  .app-window .sidebar .nav-item:has(.nav-count:not(:empty))::after {
     content: ""; position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg-page);
   }
-  .mac-window .sidebar .footer-meta { justify-content: center; padding: 6px 0 0; }
-  .mac-window .sidebar .more-menu { bottom: 0; left: calc(100% + 12px); right: auto; width: 232px; }
+  .app-window .sidebar .footer-meta { justify-content: center; padding: 6px 0 0; }
+  .app-window .sidebar .more-menu { bottom: 0; left: calc(100% + 12px); right: auto; width: 232px; }
   /* The brain's card: its switcher as a title, then the projects, on the page's surface with rounded corners. */
-  .mac-window .sidebar-top {
+  .app-window .sidebar-top {
     grid-column: 2; grid-row: 1; margin-right: 8px; padding: 0 8px 0 10px; border: 1px solid var(--line); border-bottom: 0;
     border-radius: 12px 12px 0 0; background: var(--bg-surface);
   }
-  .mac-window .brain-name { font-size: 18px; }
+  .app-window .brain-name { font-size: 18px; }
   /* The brain's sticker never leaves the top of the rail: folded it is the switcher itself (below), unfolded or peeking a copy holds
      its place, and the card's title is the brain's name alone. */
-  .mac-window .app:not(.sidebar-collapsed) .sidebar::before {
+  .app-window .app:not(.sidebar-collapsed) .sidebar::before {
     content: ""; grid-column: 1; grid-row: 1; justify-self: center; align-self: center; width: 32px; height: 32px;
     background: var(--logo) center / 100% 100% no-repeat; filter: var(--sticker-edge); pointer-events: none;
   }
-  .mac-window .app:not(.sidebar-collapsed) .sidebar-top .brain-logo { display: none; }
-  .mac-window .projects {
+  .app-window .app:not(.sidebar-collapsed) .sidebar-top .brain-logo { display: none; }
+  .app-window .projects {
     grid-column: 2; grid-row: 2 / 4; min-height: 0; margin: 0 8px 8px 0; padding: 0 6px; border: 1px solid var(--line); border-top: 0;
     border-radius: 0 0 12px 12px; background: var(--bg-surface);
   }
-  .mac-window .projects > .sidebar-heading { margin-top: 8px; }
+  .app-window .projects > .sidebar-heading { margin-top: 8px; }
   /* Folded: the rail only, the brain's sticker at its top. */
-  .mac-window .app.sidebar-collapsed .sidebar-top { grid-column: 1; margin: 0; padding: 0 8px; border: 0; border-radius: 0; background: none; }
-  .mac-window .app.sidebar-collapsed .brain-button { width: 40px; }
-  .mac-window .app.sidebar-collapsed .brain-logo { width: 32px; height: 32px; }
+  .app-window .app.sidebar-collapsed .sidebar-top { grid-column: 1; margin: 0; padding: 0 8px; border: 0; border-radius: 0; background: none; }
+  .app-window .app.sidebar-collapsed .brain-button { width: 40px; }
+  .app-window .app.sidebar-collapsed .brain-logo { width: 32px; height: 32px; }
   /* A hairline between the rail and the page, from below the title row (unfolded, the card's own edge does it). */
-  .mac-window .app.sidebar-collapsed .sidebar::after {
+  .app-window .app.sidebar-collapsed .sidebar::after {
     content: ""; position: absolute; top: var(--titlebar-h); bottom: 0; right: 0; width: 1px; background: var(--line); pointer-events: none;
   }
   /* Peeking: the card floats over the page, which does not move; only the rail keeps the sidebar's grey. */
-  .mac-window .app.sidebar-peek .sidebar {
+  .app-window .app.sidebar-peek .sidebar {
     position: relative; z-index: 46; width: calc(var(--sidebar-rail-w) + var(--list-w) + 8px);
     background: linear-gradient(to right, var(--bg-page) var(--sidebar-rail-w), transparent var(--sidebar-rail-w));
   }
-  .mac-window .app.sidebar-peek .projects { box-shadow: 0 14px 32px rgba(15, 23, 42, .16); }
-  /* The view's bar in the title row, its centre on the window buttons' (26 px). */
-  .mac-window .view-header { padding-top: 3px; }
-  .mac-window .view-bar { min-height: 40px; }
+  .app-window .app.sidebar-peek .projects { box-shadow: 0 14px 32px rgba(15, 23, 42, .16); }
+  /* The view's bar in the top row, its centre at 26 px (on a Mac, the window buttons' centre). */
+  .app-window .view-header { padding-top: 3px; }
+  .app-window .view-bar { min-height: 40px; }
+  /* On two rows (a narrower window), the first keeps those 40 px, its title centred as a single row has it, (40 − 28.8) / 2: level
+     with the window buttons, the second row and the tabs below the top row. */
+  .app-window .view-heading { min-height: 40px; padding-block: 5.6px; }
   /* app/shell.js moves the button out of the view's bar (whose layer is below the peeking card) to just before the app. */
-  .mac-window #sidebarToggle { position: fixed; top: 10px; left: 84px; z-index: 56; margin: 0; }
-  .mac-window .app.sidebar-collapsed .view-heading, .mac-window .app.sidebar-peek .view-heading {
-    margin-left: calc(84px + 32px + 16px - var(--sidebar-rail-w) - var(--page-x)); /* clear of the sidebar button */
+  .app-window #sidebarToggle { position: fixed; top: 10px; left: var(--toggle-x); z-index: 56; margin: 0; }
+  .app-window .app.sidebar-collapsed .view-heading, .app-window .app.sidebar-peek .view-heading {
+    margin-left: max(0px, calc(var(--toggle-x) + 32px + 16px - var(--sidebar-rail-w) - var(--page-x))); /* clear of the sidebar button */
   }
-  .mac-window .search-field { width: 240px; }
+  .app-window .search-field { width: 240px; }
 }
 /* While the card peeks, the view that its projects open: the hovered one (app/shell.js). Pinned, the view header names it already. */
 .card-view { display: none; }
+/* The projects in the folded rail (app/filters.js): two letters in the rail's 40 px boxes, under a hairline, quiet like the rail's
+   icons, with the same hover and current look as its entries; none in a browser tab, in the drawer or beside the open card.
+   They stay while the card peeks, so the +N that opens it does not go from under the pointer. A short window cuts them first. */
+.rail-projects { display: none; }
 @media (min-width: 901px) {
-  .mac-window .app.sidebar-peek .card-view:not(:empty) {
+  .app-window .app:is(.sidebar-collapsed, .sidebar-peek) .rail-projects:not(:empty) {
+    display: flex; flex-direction: column; gap: 2px; flex: 0 1 auto; min-height: 0; overflow: hidden; margin-top: 8px; padding-top: 8px;
+    border-top: 1px solid var(--line);
+  }
+  .rail-project {
+    flex: none; display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: var(--radius-control);
+    background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 600; line-height: 1;
+  }
+  .rail-project:hover { background: var(--bg-sunken); }
+  .rail-project[aria-current="true"] { background: var(--accent-soft); color: var(--accent-strong); }
+  .rail-project:focus-visible { outline-offset: -2px; } /* inside the box that cuts them */
+}
+@media (min-width: 901px) {
+  .app-window .app.sidebar-peek .card-view:not(:empty) {
     display: flex; align-items: center; gap: 8px; margin: 12px 8px 0; font-size: var(--fs-sm); font-weight: 600; color: var(--accent-strong);
   }
-  .mac-window .card-view svg { width: 16px; height: 16px; }
+  .app-window .card-view svg { width: 16px; height: 16px; }
 }
 @media (min-width: 901px) {
   /* While the card peeks, the highlight follows the pointer: the hovered view (app/shell.js marks it) looks chosen, the current one
      steps back until the card goes. */
-  .mac-window .app.sidebar-peek .sidebar .nav-item[aria-current="page"]:not(.is-peeked) { background: transparent; color: var(--text); }
-  .mac-window .app.sidebar-peek .sidebar .nav-item[aria-current="page"]:not(.is-peeked) .nav-icon { color: var(--text-muted); }
-  .mac-window .app.sidebar-peek .sidebar .nav-item.is-peeked { background: var(--accent-soft); color: var(--accent-strong); }
-  .mac-window .app.sidebar-peek .sidebar .nav-item.is-peeked .nav-icon { color: var(--accent-strong); }
+  .app-window .app.sidebar-peek .sidebar .nav-item[aria-current="page"]:not(.is-peeked) { background: transparent; color: var(--text); }
+  .app-window .app.sidebar-peek .sidebar .nav-item[aria-current="page"]:not(.is-peeked) .nav-icon { color: var(--text-muted); }
+  .app-window .app.sidebar-peek .sidebar .nav-item.is-peeked { background: var(--accent-soft); color: var(--accent-strong); }
+  .app-window .app.sidebar-peek .sidebar .nav-item.is-peeked .nav-icon { color: var(--accent-strong); }
 }
 
 /* ---------- Resizing ----------
-   A handle on the sidebar's edge (on its card's in Corvus's macOS window) and one on the detail panel's: drag it, use the arrow
+   A handle on the sidebar's edge (on its card's in a Corvus window) and one on the detail panel's: drag it, use the arrow
    keys, or double-click it for the default width again (app/shell.js). The width is remembered by the browser and set back before
    the first paint (window-shell.js). */
 .resizer { display: none; }
@@ -1675,7 +1739,7 @@ html, body { overscroll-behavior-x: none; }
   .resizer:focus-visible { outline: none; }
   .sidebar { position: relative; }
   .sidebar-resizer { right: -5px; }
-  .mac-window .sidebar-resizer { top: var(--titlebar-h); right: 3px; } /* on the card's edge, 8 px inside the sidebar */
+  .app-window .sidebar-resizer { top: var(--titlebar-h); right: 3px; } /* on the card's edge, 8 px inside the sidebar */
   .app.sidebar-collapsed .sidebar-resizer, .app.sidebar-peek .sidebar-resizer { display: none; }
   .panel-resizer { left: -5px; }
   html.is-resizing, html.is-resizing * { cursor: col-resize !important; user-select: none !important; }

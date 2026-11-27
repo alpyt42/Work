@@ -129,8 +129,8 @@ async function runAutosave() {
 // The open panel, an existing action: the id whose later highlights follow.
 function markOpenAction() {
   const id = editorOpen() && editorAction ? editorAction.id : null;
-  for (const item of ids.prioView.querySelectorAll('.has-open')) item.classList.remove('has-open');
-  for (const button of ids.prioView.querySelectorAll('.prio-id[data-action-id]')) {
+  for (const item of ids.todayView.querySelectorAll('.has-open')) item.classList.remove('has-open');
+  for (const button of ids.todayView.querySelectorAll('.prio-id[data-action-id]')) {
     const open = id !== null && button.dataset.actionId === id;
     button.classList.toggle('is-open', open);
     if (open) button.closest('li')?.classList.add('has-open');
