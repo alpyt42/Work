@@ -906,7 +906,8 @@ class OpenChainTest(unittest.TestCase):
         browser = Mock(return_value=True)
         starter = Mock(return_value=True)
         self.assertEqual(launch.open_fallback(self.URL, self.work, lambda url: ["/usr/bin/google-chrome", f"--app={url}"], starter, browser), "app-mode")
-        starter.assert_called_once_with(["/usr/bin/google-chrome", f"--app={self.URL}"])
+        # The app window shows the app's layout (as the native window does); a browser tab keeps the plain address.
+        starter.assert_called_once_with(["/usr/bin/google-chrome", f"--app={self.URL}?shell=app"])
         browser.assert_not_called()
         self.assertIn("app window: google-chrome", self.log())
         self.assertEqual(launch.open_fallback(self.URL, self.work, lambda url: None, starter, browser), "browser")
@@ -1193,10 +1194,16 @@ class WindowHelpersTest(unittest.TestCase):
         self.assertEqual(restarts, [])
         self.assertEqual(gone, [3.0])  # closed after three failed checks
 
-    def test_the_mac_window_asks_the_page_for_room_under_its_title_bar(self):
+    def test_every_window_asks_for_the_app_layout_and_the_mac_one_for_room_under_its_title_bar(self):
         self.assertEqual(window.window_url(8765, "darwin"), "http://127.0.0.1:8765/?shell=mac")
-        self.assertEqual(window.window_url(8765, "win32"), "http://127.0.0.1:8765/")
-        self.assertEqual(window.window_url(8770, "linux"), "http://127.0.0.1:8770/")
+        self.assertEqual(window.window_url(8765, "win32"), "http://127.0.0.1:8765/?shell=app")
+        self.assertEqual(window.window_url(8770, "linux"), "http://127.0.0.1:8770/?shell=app")
+        self.assertEqual(launch.app_window_url("http://127.0.0.1:8765/"), "http://127.0.0.1:8765/?shell=app")
+        self.assertEqual(launch.app_window_url("http://127.0.0.1:8765/?brain=brain-acme"), "http://127.0.0.1:8765/?brain=brain-acme&shell=app")
+        shell = (WEB / "static/window-shell.js").read_text(encoding="utf-8")
+        self.assertIn("if (shell !== 'mac' && shell !== 'app') return;", shell)
+        self.assertIn("document.documentElement.classList.add('app-window');", shell)
+        self.assertIn("if (shell === 'mac') document.documentElement.classList.add('mac-window');", shell)
 
     def test_the_mac_title_bar_is_transparent_over_full_size_content(self):
         calls = []

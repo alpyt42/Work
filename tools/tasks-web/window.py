@@ -29,7 +29,8 @@ the server and closing it leaves the server running; the page's Quit stops the s
 - When the window cannot be created or started (on Windows, also when the WebView2 runtime is missing), the error goes to
   agents/tasks-web.log and the page opens through the fallback chain of launch.py (a Chrome app window, else the default
   browser), unless --no-fallback (launch.py does it itself then); the exit code is 1.
-- Only the macOS page (marked .mac-window) has drag regions, and the web view never opens file:// URLs.
+- Every window opens the page in the app's layout (?shell=mac on macOS, ?shell=app elsewhere: window_url). Only the macOS
+  page (marked .mac-window) has drag regions, and the web view never opens file:// URLs.
 
 The page's content security policy refuses eval, so nothing here evaluates JavaScript in the page.
 """
@@ -73,9 +74,10 @@ def page_url(port: int = PORT) -> str:
 
 
 def window_url(port: int = PORT, platform: str | None = None) -> str:
-    """The page as the window opens it: on macOS with ?shell=mac, so that the page leaves room for the window buttons
-    under the transparent title bar (static/window-shell.js) and gives a strip to drag the window by."""
-    return page_url(port) + ("?shell=mac" if (platform or sys.platform) == "darwin" else "")
+    """The page as the window opens it, in the layout of the app on every system (static/window-shell.js): ?shell=mac on
+    macOS, where the page also leaves room for the window buttons under the transparent title bar and gives a strip to
+    drag the window by; ?shell=app elsewhere, under the system's own title bar."""
+    return page_url(port) + ("?shell=mac" if (platform or sys.platform) == "darwin" else "?shell=app")
 
 
 def icon_path(platform: str | None = None) -> Path:
