@@ -106,9 +106,17 @@ class Store(NotesMixin, DocsMixin, ArchivesMixin):
             self._due_notes(path, entries)
             self._subtask_texts(path, entries)
             label = entries[0]["project"] if entries else action_tool.project_label(path, self.brain)
+            # The prefix of the register's IDs: the one its entries share ('' when they mix several); an empty register takes the
+            # one action.py would give its first action (the prefix its header reserves, else the single one of its archives).
             prefixes = {entry["id"].split("-", 1)[0] for entry in entries}
+            prefix = next(iter(prefixes)) if len(prefixes) == 1 else ""
+            if not entries:
+                try:
+                    prefix = action_tool.fallback_prefix(path, path.read_text(encoding="utf-8").splitlines()) or ""
+                except (OSError, UnicodeDecodeError):
+                    prefix = ""
             infos.append({"file": path, "path": path.relative_to(self.brain).as_posix(), "label": label,
-                          "prefix": next(iter(prefixes)) if len(prefixes) == 1 else "", "entries": entries,
+                          "prefix": prefix, "entries": entries,
                           "groups": sorted({entry["group"] for entry in entries if entry["group"]})})
         return infos
 

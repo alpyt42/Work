@@ -234,8 +234,9 @@ function ownerBlock(id, group, options) {
 }
 // ---------- Focus ----------
 // One page for "what should I do now?" (the view `today`): the brain's own actions by urgency, with the sections of the /priorities
-// ranking among them when its file is today's (app/priorities.js). The ranking covers the whole brain, so a chosen project leaves it
-// out. Each block has a heading, a count and a quiet line on where its items come from; an empty block is left out.
+// ranking among them when its file is today's (app/priorities.js). The ranking covers the whole brain: with a project chosen, it
+// keeps the items that cite an action of that project. Each block has a heading, a count and a quiet line on where its items come
+// from; an empty block is left out.
 const FOCUS_OWN_BLOCKS = new Set(['now', 'prepare', 'conflicts', 'new-requests', 'follow-ups', 'to-chase', 'warnings']); // the sections with a block (or a banner) of their own
 function focusBlock(key, title, count, hint, parts) {
   const section = element('section', `section focus-block focus-${key}`);
@@ -257,8 +258,11 @@ function focusPrio(section) {
 function renderToday(base) {
   const sections = todaySections(base);
   const options = {project: !singleProject()};
-  const prio = projectScope ? null : freshPriorities(); // the whole brain's ranking, today's only
-  ids.viewNote.textContent = prioSourceLine();
+  // Today's ranking only; with a project chosen, each of its sections keeps the items that cite an action in scope (prioScoped).
+  const prio = freshPriorities();
+  const ranked = prio ? prio.sections.filter(section => section.key !== 'warnings').map(prioScoped) : [];
+  const rankedSection = key => ranked.find(section => section.key === key) || null;
+  ids.viewNote.textContent = prioSourceLine(ranked.reduce((sum, section) => sum + section.count, 0));
   ids.viewNote.hidden = !ids.viewNote.textContent;
   const openDrafts = new Set([...ids.todayView.querySelectorAll('.prio-draft[open]')].map(draftKey));
   const moreOpen = ids.todayView.querySelector('.focus-more')?.open === true;
@@ -271,9 +275,9 @@ function renderToday(base) {
   const blocks = [];
   const nodes = [];
   // Now: the ranking's Now items, then my overdue and due-today actions they do not cite; those actions alone without a ranking.
-  const now = prio && prioSection('now');
+  const now = rankedSection('now');
   const urgent = [...sections.late, ...sections.today];
-  if (now) {
+  if (now?.count) {
     const cited = prioCitedIds(now);
     const also = urgent.filter(action => !cited.has(action.id));
     const parts = [focusPrio(now)];
@@ -284,12 +288,12 @@ function renderToday(base) {
   }
   for (const [key, title, hint] of [['prepare', 'To prepare', 'From /priorities: what to get ready before a meeting or a deadline'],
     ['conflicts', 'Conflicts', 'From /priorities: clashes in your agenda'], ['new-requests', 'New requests', 'From /priorities: requests received since the last message review']]) {
-    const section = prio && prioSection(key);
+    const section = rankedSection(key);
     if (section?.count) blocks.push(focusBlock(key, title, section.count, hint, [focusPrio(section)]));
   }
   if (sections.doing.length) blocks.push(focusBlock('doing', 'In progress', sections.doing.length, 'Your actions in progress', [rowList(sections.doing, options)]));
   // To chase: what others are late on, by owner, then the follow-ups the ranking drafted (with their messages).
-  const followUps = prio ? ['follow-ups', 'to-chase'].map(key => prioSection(key)).filter(section => section?.count) : [];
+  const followUps = ['follow-ups', 'to-chase'].map(rankedSection).filter(section => section?.count);
   const chaseCount = sections.othersLate.length + followUps.reduce((sum, section) => sum + section.count, 0);
   if (chaseCount) {
     const parts = byOwner('chase', sections.othersLate);
@@ -301,7 +305,7 @@ function renderToday(base) {
     blocks.push(focusBlock('week', 'This week', sections.week.length, `Your actions due or scheduled until ${DAY_FORMAT.format(parseDay(addDays(today(), 7)))}`, [rowList(sections.week, options)]));
   }
   // The rest of the ranking (To close, Lingering, Admin, any other section), folded away.
-  const rest = prio ? prio.sections.filter(section => !FOCUS_OWN_BLOCKS.has(section.key) && section.count) : [];
+  const rest = ranked.filter(section => !FOCUS_OWN_BLOCKS.has(section.key) && section.count);
   if (rest.length) {
     const more = element('details', 'focus-more');
     more.open = moreOpen;
@@ -314,7 +318,7 @@ function renderToday(base) {
     section.append(more);
     blocks.push(section);
   }
-  // The ranking's warnings: one compact banner at the top.
+  // The ranking's warnings: one compact banner at the top (about the registers as a whole: kept with a project chosen).
   const warnings = prio && prioSection('warnings');
   if (warnings?.count) {
     const banner = element('section', 'focus-warnings');

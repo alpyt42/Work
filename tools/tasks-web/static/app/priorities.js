@@ -31,17 +31,41 @@ function freshPriorities() { return prioData?.exists && !prioData.stale ? prioDa
 function prioSection(key) { return freshPriorities()?.sections.find(section => section.key === key) || null; }
 // The action IDs a section cites (the Now items, to leave out the actions they already name).
 function prioCitedIds(section) { return new Set(section ? section.html.match(PRIO_ID) || [] : []); }
-// The quiet line under Focus's title: where the ranking comes from, or why it is not there.
-function prioSourceLine() {
+// The quiet line under Focus's title: where the ranking comes from, or why it is not there. With a project chosen, the ranking is
+// cut to the items about it (`prioScoped`): `scopedItems` is how many are left.
+function prioSourceLine(scopedItems = 0) {
   if (!prioData?.exists) return '';
   if (prioData.stale) {
     const generated = prioData.generated ? new Date(prioData.generated) : null;
     const when = generated && !Number.isNaN(generated.getTime()) ? `dates from ${DAY_FORMAT.format(generated)}` : 'has no valid date';
     return `The /priorities ranking ${when}: run /priorities in Claude Code to refresh it.`;
   }
-  if (projectScope) return 'The /priorities ranking covers the whole brain: clear the project to see it.';
+  if (projectScope && !scopedItems) return `No /priorities item cites the actions of ${scopeLabel(projectScope)}.`;
   const generated = new Date(prioData.generated);
-  return [`Ranked by /priorities at ${TIME_FORMAT.format(generated)}`, ...(prioData.next_meeting ? [`next meeting ${prioData.next_meeting}`] : [])].join(' · ');
+  const ranked = `Ranked by /priorities at ${TIME_FORMAT.format(generated)}${projectScope ? `, the items about ${scopeLabel(projectScope)}` : ''}`;
+  return [ranked, ...(prioData.next_meeting ? [`next meeting ${prioData.next_meeting}`] : [])].join(' · ');
+}
+// The ranking covers the whole brain: with a project chosen, a section keeps only its items that cite an action of the brain whose
+// register is in scope (the same test as the rest of Focus), drafts included with their item; its count is theirs. The text of a
+// draft does not count as a citation. Without a project, the section as it is.
+function prioScoped(section) {
+  if (!section || !projectScope) return section;
+  const scoped = new Set(snapshot.actions.filter(action => inScope(action.register)).map(action => action.id));
+  const cites = node => {
+    const copy = node.cloneNode(true);
+    for (const draft of copy.querySelectorAll('.prio-draft')) draft.remove();
+    return (copy.textContent.match(PRIO_ID) || []).some(id => scoped.has(id));
+  };
+  const template = document.createElement('template');
+  template.innerHTML = section.html; // the server's safe rendering, as in prioBody
+  let count = 0;
+  for (const node of [...template.content.children]) {
+    if (node.matches('ul, ol')) {
+      for (const item of [...node.children]) if (cites(item)) count += 1; else item.remove();
+      if (!node.children.length) node.remove();
+    } else if (!cites(node)) node.remove();
+  }
+  return {...section, html: template.innerHTML, count};
 }
 // The action IDs of a rendered section become buttons when the action is in the brain's snapshot; the others stay text.
 function linkActionIds(root) {

@@ -1619,12 +1619,11 @@ html, body { overscroll-behavior-x: none; }
    title and counter, the search, New note, New action and Sync, all clickable; on a Mac the bar's empty parts move the window.
    Below the row the sidebar has two columns: a rail of icons that always shows (the groups at the top, Settings and More at the
    bottom, their names in the bubble of app/shell.js) and the brain's card (its switcher and the projects). The sidebar button
-   folds the card away and the brain's sticker moves to the top of the rail; the pointer on one of the groups in the rail then
-   shows the card over the page until it leaves them and the card (.sidebar-peek, app/shell.js). The first row is 60 px in both
-   states, so that the rail's icons never move under the pointer. */
+   folds the card away and brings it back; folded, the brain's sticker moves to the top of the rail and the projects show in the
+   rail as codes (below). The first row is 60 px in both states, so that the rail's icons never move under the pointer. */
 @media (min-width: 901px) {
   .app-window .app { --sidebar-w: calc(var(--sidebar-rail-w) + var(--list-w) + 8px); }
-  .app-window .app.sidebar-collapsed, .app-window .app.sidebar-peek { --sidebar-w: var(--sidebar-rail-w); }
+  .app-window .app.sidebar-collapsed { --sidebar-w: var(--sidebar-rail-w); }
   .app-window .sidebar {
     display: grid; grid-template-columns: var(--sidebar-rail-w) minmax(0, 1fr); grid-template-rows: 60px minmax(0, 1fr) auto;
     padding-top: calc(var(--titlebar-h) - 3px); border-right: 0; position: relative; background: var(--bg-page);
@@ -1654,8 +1653,8 @@ html, body { overscroll-behavior-x: none; }
     border-radius: 12px 12px 0 0; background: var(--bg-surface);
   }
   .app-window .brain-name { font-size: 18px; }
-  /* The brain's sticker never leaves the top of the rail: folded it is the switcher itself (below), unfolded or peeking a copy holds
-     its place, and the card's title is the brain's name alone. */
+  /* The brain's sticker never leaves the top of the rail: folded it is the switcher itself (below), unfolded a copy holds its
+     place, and the card's title is the brain's name alone. */
   .app-window .app:not(.sidebar-collapsed) .sidebar::before {
     content: ""; grid-column: 1; grid-row: 1; justify-self: center; align-self: center; width: 32px; height: 32px;
     background: var(--logo) center / 100% 100% no-repeat; filter: var(--sticker-edge); pointer-events: none;
@@ -1674,33 +1673,25 @@ html, body { overscroll-behavior-x: none; }
   .app-window .app.sidebar-collapsed .sidebar::after {
     content: ""; position: absolute; top: var(--titlebar-h); bottom: 0; right: 0; width: 1px; background: var(--line); pointer-events: none;
   }
-  /* Peeking: the card floats over the page, which does not move; only the rail keeps the sidebar's grey. */
-  .app-window .app.sidebar-peek .sidebar {
-    position: relative; z-index: 46; width: calc(var(--sidebar-rail-w) + var(--list-w) + 8px);
-    background: linear-gradient(to right, var(--bg-page) var(--sidebar-rail-w), transparent var(--sidebar-rail-w));
-  }
-  .app-window .app.sidebar-peek .projects { box-shadow: 0 14px 32px rgba(15, 23, 42, .16); }
   /* The view's bar in the top row, its centre at 26 px (on a Mac, the window buttons' centre). */
   .app-window .view-header { padding-top: 3px; }
   .app-window .view-bar { min-height: 40px; }
   /* On two rows (a narrower window), the first keeps those 40 px, its title centred as a single row has it, (40 − 28.8) / 2: level
      with the window buttons, the second row and the tabs below the top row. */
   .app-window .view-heading { min-height: 40px; padding-block: 5.6px; }
-  /* app/shell.js moves the button out of the view's bar (whose layer is below the peeking card) to just before the app. */
+  /* app/shell.js moves the button out of the view's bar to just before the app: fixed in the top row, above the rail. */
   .app-window #sidebarToggle { position: fixed; top: 10px; left: var(--toggle-x); z-index: 56; margin: 0; }
-  .app-window .app.sidebar-collapsed .view-heading, .app-window .app.sidebar-peek .view-heading {
+  .app-window .app.sidebar-collapsed .view-heading {
     margin-left: max(0px, calc(var(--toggle-x) + 32px + 16px - var(--sidebar-rail-w) - var(--page-x))); /* clear of the sidebar button */
   }
   .app-window .search-field { width: 240px; }
 }
-/* While the card peeks, the view that its projects open: the hovered one (app/shell.js). Pinned, the view header names it already. */
-.card-view { display: none; }
-/* The projects in the folded rail (app/filters.js): two letters in the rail's 40 px boxes, under a hairline, quiet like the rail's
+/* The projects in the folded rail (app/filters.js): their codes in the rail's 40 px boxes, under a hairline, quiet like the rail's
    icons, with the same hover and current look as its entries; none in a browser tab, in the drawer or beside the open card.
-   They stay while the card peeks, so the +N that opens it does not go from under the pointer. A short window cuts them first. */
+   A short window cuts them first. */
 .rail-projects { display: none; }
 @media (min-width: 901px) {
-  .app-window .app:is(.sidebar-collapsed, .sidebar-peek) .rail-projects:not(:empty) {
+  .app-window .app.sidebar-collapsed .rail-projects:not(:empty) {
     display: flex; flex-direction: column; gap: 2px; flex: 0 1 auto; min-height: 0; overflow: hidden; margin-top: 8px; padding-top: 8px;
     border-top: 1px solid var(--line);
   }
@@ -1708,23 +1699,20 @@ html, body { overscroll-behavior-x: none; }
     flex: none; display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: var(--radius-control);
     background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 600; line-height: 1;
   }
+  .rail-project-long { font-size: 10px; }
   .rail-project:hover { background: var(--bg-sunken); }
   .rail-project[aria-current="true"] { background: var(--accent-soft); color: var(--accent-strong); }
   .rail-project:focus-visible { outline-offset: -2px; } /* inside the box that cuts them */
 }
-@media (min-width: 901px) {
-  .app-window .app.sidebar-peek .card-view:not(:empty) {
-    display: flex; align-items: center; gap: 8px; margin: 12px 8px 0; font-size: var(--fs-sm); font-weight: 600; color: var(--accent-strong);
-  }
-  .app-window .card-view svg { width: 16px; height: 16px; }
-}
-@media (min-width: 901px) {
-  /* While the card peeks, the highlight follows the pointer: the hovered view (app/shell.js marks it) looks chosen, the current one
-     steps back until the card goes. */
-  .app-window .app.sidebar-peek .sidebar .nav-item[aria-current="page"]:not(.is-peeked) { background: transparent; color: var(--text); }
-  .app-window .app.sidebar-peek .sidebar .nav-item[aria-current="page"]:not(.is-peeked) .nav-icon { color: var(--text-muted); }
-  .app-window .app.sidebar-peek .sidebar .nav-item.is-peeked { background: var(--accent-soft); color: var(--accent-strong); }
-  .app-window .app.sidebar-peek .sidebar .nav-item.is-peeked .nav-icon { color: var(--accent-strong); }
+/* The missions menu of a code (app/shell.js): the light menu of the ⋯ button, to the right of the rail, fixed to the page like the
+   bubble; the group, then its missions a step in, the current scope tinted as in the card, the counts muted. It comes in like the
+   bubble (fade and 4 px slide, 120 ms), and just appears when the system asks for less animation. */
+.rail-menu { position: fixed; z-index: 75; min-width: 200px; max-width: min(320px, calc(100vw - 80px)); max-height: calc(100vh - 8px); overflow-y: auto; }
+.rail-menu .rail-menu-child { padding-left: 22px; }
+.rail-menu .menu-item[aria-checked="true"] { background: var(--accent-soft); color: var(--accent-strong); }
+.rail-menu .menu-item[aria-checked="true"] .menu-item-hint { color: inherit; }
+@media (prefers-reduced-motion: no-preference) {
+  .menu.rail-menu:not([hidden]) { animation: rail-tip-in 120ms ease-out; }
 }
 
 /* ---------- Resizing ----------
@@ -1740,7 +1728,7 @@ html, body { overscroll-behavior-x: none; }
   .sidebar { position: relative; }
   .sidebar-resizer { right: -5px; }
   .app-window .sidebar-resizer { top: var(--titlebar-h); right: 3px; } /* on the card's edge, 8 px inside the sidebar */
-  .app.sidebar-collapsed .sidebar-resizer, .app.sidebar-peek .sidebar-resizer { display: none; }
+  .app.sidebar-collapsed .sidebar-resizer { display: none; }
   .panel-resizer { left: -5px; }
   html.is-resizing, html.is-resizing * { cursor: col-resize !important; user-select: none !important; }
   html.is-resizing .app, html.is-resizing .main, html.is-resizing .panel { transition: none !important; }

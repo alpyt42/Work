@@ -33,7 +33,7 @@ Work is a portable `Work/` workspace that fixes this. Memory lives in private Ma
 - **Releases.** Every push to `main` is tested on Linux and released automatically from its Conventional Commits. Machines update to a release only, never to the tip of `main`, and an update never touches the brains.
 
 
-![Corvus in dark mode: the project card shown over the page from the Actions icon](docs/images/tasks-web-rail-dark.png)
+![Corvus in dark mode: the folded rail with the projects' codes and the menu of a client's missions](docs/images/tasks-web-rail-dark.png)
 
 ## How it works
 

@@ -63,7 +63,7 @@ The sidebar holds three sections, Focus, Actions and Docs, and Settings at the b
 - **To prepare**, **Conflicts** and **New requests** come from the ranking.
 - **In progress**, **To chase**, **Waiting on others** and **This week** come from the registers; To chase and Waiting on others are sorted by owner, and each follow-up carries a draft of the message with a button to copy it.
 
-Each action appears once, in the first block that fits, and an empty block is left out. An action ID in a ranked item opens that action. When the ranking is not today's, or a project is chosen, the page shows the actions alone and says why.
+Each action appears once, in the first block that fits, and an empty block is left out. An action ID in a ranked item opens that action. When a project is chosen, the ranking keeps only the items that cite one of its actions, and the line under the title says so. When the ranking is not today's, the page shows the actions alone and says why.
 
 ### Actions: List, Board and Timeline
 
@@ -105,9 +105,9 @@ The brain's name at the top of the sidebar opens the brain menu: it switches bra
 
 ### Sidebar, window and dark mode
 
-On the left, a rail holds the three sections and, at the bottom, Settings. Next to it, the project card lists the projects of the brain; its edge can be dragged to widen it. The sidebar button, or the `[` key, folds the card away. The rail then shows the main projects by their first letters: the pointer on one gives its full name and its number of open actions, and a click filters the view. The pointer on Focus, Actions or Docs shows the card over the page, with the view it will open named above the projects. In Archives, Tools, Settings and Sync, which the projects do not filter, the card steps aside. The window has the same layout on macOS, Windows and Linux; on macOS it has no separate title bar, and its three buttons sit at the top left, before the sidebar button. The page follows the light or dark setting of the system.
+On the left, a rail holds the three sections and, at the bottom, Settings. Next to it, the project card lists the projects of the brain; its edge can be dragged to widen it. The sidebar button, or the `[` key, folds the card away. The rail then shows the main projects by the prefix of their action IDs, such as ACME for ACME-004: the pointer on one gives its full name and its number of open actions, and a click filters the view. When a client has several missions, the pointer on its code opens a small menu of them, each with its open actions, and a click there filters that mission. In Archives, Tools, Settings and Sync, which the projects do not filter, the card steps aside. The window has the same layout on macOS, Windows and Linux; on macOS it has no separate title bar, and its three buttons sit at the top left, before the sidebar button. The page follows the light or dark setting of the system.
 
-![The card folded away, shown again over the page from the Actions icon, in dark mode](../../docs/images/tasks-web-rail-dark.png)
+![The card folded away, the rail showing the projects' codes and the menu of a client's two missions, in dark mode](../../docs/images/tasks-web-rail-dark.png)
 
 ### Update
 

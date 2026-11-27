@@ -5,8 +5,8 @@
 
 const token = document.querySelector('meta[name="csrf-token"]').content;
 const ids = Object.fromEntries([
-  'app', 'sidebar', 'cardView', 'sidebarResizer', 'panelResizer', 'scrim', 'sidebarToggle', 'brainMini', 'sidebarClose', 'mainContent', 'brainSwipe', 'brainSwipeName',
-  'brainSwitch', 'brainButton', 'brainName', 'brainMenu', 'railTip',
+  'app', 'sidebar', 'sidebarResizer', 'panelResizer', 'scrim', 'sidebarToggle', 'brainMini', 'sidebarClose', 'mainContent', 'brainSwipe', 'brainSwipeName',
+  'brainSwitch', 'brainButton', 'brainName', 'brainMenu', 'railTip', 'railMenu',
   'addBrainDialog', 'addBrainForm', 'closeAddBrain', 'addBrainName', 'addBrainDescription', 'addBrainScope', 'addBrainError', 'cancelAddBrain', 'saveAddBrain',
   'viewNote', 'todayButton', 'listButton', 'docsButton', 'settingsButton', 'viewSwitch', 'syncButton', 'syncBadge', 'railProjects',
   'archiveScopeButton', 'archivesView', 'archiveStatus', 'archiveList', 'archivePane', 'archiveBack', 'archivePaneTitle', 'archivePaneMeta', 'archiveUnarchive',

@@ -39,11 +39,11 @@ function settingsStack(nodes) {
   return stack;
 }
 function optionLabel(options, name) { return options.find(option => option.name === name)?.label || name; }
-function scopeLabel(slug) { return SCOPE_KINDS.find(([value]) => value === slug)?.[1] || (slug ? `Other (${slug})` : ''); }
+function scopeKindLabel(slug) { return SCOPE_KINDS.find(([value]) => value === slug)?.[1] || (slug ? `Other (${slug})` : ''); }
 function settingDisplay(field) {
   if (field.input === 'brain') return field.value ? optionLabel(field.options, field.value) : '';
   if (field.input === 'brains') return field.value.map(name => optionLabel(field.options, name)).join(', ');
-  if (field.input === 'scope') return scopeLabel(field.value);
+  if (field.input === 'scope') return scopeKindLabel(field.value);
   return field.value || '';
 }
 function scopeSlug(text) { return text.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); }
