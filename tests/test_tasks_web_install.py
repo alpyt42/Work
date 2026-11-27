@@ -1272,6 +1272,45 @@ class WindowHelpersTest(unittest.TestCase):
         self.assertEqual(calls, [("mask", 0b1111 | 1 << 15), ("transparent", True), ("title", 1), ("toolbar", "corvus", False),
                                  ("toolbar style", 1), ("background", "titlebar", "clear")])
 
+    def test_full_screen_hides_the_toolbar_and_leaving_it_shows_it_again(self):
+        observers, shown = [], []
+
+        class Toolbar:
+            def setVisible_(self, value):
+                shown.append(value)
+
+        class Native:
+            def toolbar(self):
+                return Toolbar()
+
+        class Center:
+            def addObserverForName_object_queue_usingBlock_(self, name, sender, queue, block):
+                observers.append((name, sender, queue, block))
+                return f"token {name}"
+
+        native = Native()
+        appkit = types.SimpleNamespace(NSNotificationCenter=types.SimpleNamespace(defaultCenter=Center),
+                                       NSWindowWillEnterFullScreenNotification="will-enter", NSWindowDidEnterFullScreenNotification="did-enter",
+                                       NSWindowWillExitFullScreenNotification="will-exit", NSWindowDidExitFullScreenNotification="did-exit")
+        kept = len(window.FULL_SCREEN_OBSERVERS)
+        try:
+            with patch.dict(sys.modules, {"AppKit": appkit}):
+                window.hide_toolbar_in_full_screen(native)
+            # Observers of this window only, run where the notification is posted (the main thread), kept alive.
+            self.assertEqual([(name, sender is native, queue) for name, sender, queue, _ in observers],
+                             [("will-enter", True, None), ("did-enter", True, None), ("will-exit", True, None), ("did-exit", True, None)])
+            self.assertEqual(window.FULL_SCREEN_OBSERVERS[kept:], ["token will-enter", "token did-enter", "token will-exit", "token did-exit"])
+            for *_, block in observers:
+                block(object())
+            self.assertEqual(shown, [False, False, True, True])  # hidden in full screen, shown again on leaving it
+        finally:
+            del window.FULL_SCREEN_OBSERVERS[kept:]
+        # Native calls only, never the page: run_js on the main thread deadlocks the window.
+        source = (WEB / "window.py").read_text(encoding="utf-8")
+        body = source[source.index("def hide_toolbar_in_full_screen"):source.index("def log(")]
+        self.assertNotIn("run_js", body.split('"""', 2)[2])
+        self.assertIn("AppHelper.callAfter(hide_toolbar_in_full_screen, window.native)", source)
+
     def test_the_window_closes_after_three_failed_checks_in_a_row(self):
         self.assertEqual(self.watch([True, False, False, False, True]), ([4], 4, True))  # closed on the third failure, no more checks
         self.assertEqual(self.watch([False, False, False]), ([3], 3, True))

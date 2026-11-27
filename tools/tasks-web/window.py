@@ -150,6 +150,30 @@ def blend_title_bar(native) -> None:
             view.setBackgroundColor_(AppKit.NSColor.clearColor())
 
 
+FULL_SCREEN_OBSERVERS: list = []  # hide_toolbar_in_full_screen's observers, kept alive as long as the process
+
+
+def hide_toolbar_in_full_screen(native) -> None:
+    """macOS full screen: the toolbar of blend_title_bar becomes an opaque band over the page's top row (its title, search and
+    buttons). Hide it while the window is full screen and show it again as the window leaves full screen. `native` is the
+    NSWindow; call it on the main thread. The observers run on the main thread and only make native calls: nothing here may
+    wait on the page (run_js on the main thread deadlocks the window)."""
+    import AppKit
+
+    def toolbar_visible(visible: bool) -> Callable[[object], None]:
+        def apply(_notification) -> None:
+            toolbar = native.toolbar()
+            if toolbar is not None:
+                toolbar.setVisible_(visible)
+        return apply
+
+    center = AppKit.NSNotificationCenter.defaultCenter()
+    # Set again once each move is over: macOS puts back, as the window leaves full screen, the toolbar state it kept on entering.
+    for name, visible in ((AppKit.NSWindowWillEnterFullScreenNotification, False), (AppKit.NSWindowDidEnterFullScreenNotification, False),
+                          (AppKit.NSWindowWillExitFullScreenNotification, True), (AppKit.NSWindowDidExitFullScreenNotification, True)):
+        FULL_SCREEN_OBSERVERS.append(center.addObserverForName_object_queue_usingBlock_(name, native, None, toolbar_visible(visible)))
+
+
 def log(message: str, agents: Path | None = None) -> None:
     """One line at the end of agents/tasks-web.log; never raises."""
     folder = AGENTS if agents is None else agents
@@ -356,6 +380,7 @@ def run_window(port: int, agents: Path) -> None:
             from PyObjCTools import AppHelper
 
             AppHelper.callAfter(blend_title_bar, window.native)
+            AppHelper.callAfter(hide_toolbar_in_full_screen, window.native)
         except Exception as error:  # noqa: BLE001 - cosmetic: the window keeps its usual title bar
             log(f"Could not blend the title bar: {error}", agents)
 
