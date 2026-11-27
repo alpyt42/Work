@@ -29,7 +29,8 @@ the server and closing it leaves the server running; the page's Quit stops the s
 - When the window cannot be created or started (on Windows, also when the WebView2 runtime is missing), the error goes to
   agents/tasks-web.log and the page opens through the fallback chain of launch.py (a Chrome app window, else the default
   browser), unless --no-fallback (launch.py does it itself then); the exit code is 1.
-- Only the macOS page (marked .mac-window) has drag regions, and the web view never opens file:// URLs.
+- Every window opens the page in the app's layout (?shell=mac on macOS, ?shell=app elsewhere: window_url). Only the macOS
+  page (marked .mac-window) has drag regions, and the web view never opens file:// URLs.
 
 The page's content security policy refuses eval, so nothing here evaluates JavaScript in the page.
 """
@@ -73,9 +74,10 @@ def page_url(port: int = PORT) -> str:
 
 
 def window_url(port: int = PORT, platform: str | None = None) -> str:
-    """The page as the window opens it: on macOS with ?shell=mac, so that the page leaves room for the window buttons
-    under the transparent title bar (static/window-shell.js) and gives a strip to drag the window by."""
-    return page_url(port) + ("?shell=mac" if (platform or sys.platform) == "darwin" else "")
+    """The page as the window opens it, in the layout of the app on every system (static/window-shell.js): ?shell=mac on
+    macOS, where the page also leaves room for the window buttons under the transparent title bar and gives a strip to
+    drag the window by; ?shell=app elsewhere, under the system's own title bar."""
+    return page_url(port) + ("?shell=mac" if (platform or sys.platform) == "darwin" else "?shell=app")
 
 
 def icon_path(platform: str | None = None) -> Path:
@@ -146,6 +148,30 @@ def blend_title_bar(native) -> None:
     for view in content.superview().subviews():
         if view is not content and view.respondsToSelector_("setBackgroundColor:"):
             view.setBackgroundColor_(AppKit.NSColor.clearColor())
+
+
+FULL_SCREEN_OBSERVERS: list = []  # hide_toolbar_in_full_screen's observers, kept alive as long as the process
+
+
+def hide_toolbar_in_full_screen(native) -> None:
+    """macOS full screen: the toolbar of blend_title_bar becomes an opaque band over the page's top row (its title, search and
+    buttons). Hide it while the window is full screen and show it again as the window leaves full screen. `native` is the
+    NSWindow; call it on the main thread. The observers run on the main thread and only make native calls: nothing here may
+    wait on the page (run_js on the main thread deadlocks the window)."""
+    import AppKit
+
+    def toolbar_visible(visible: bool) -> Callable[[object], None]:
+        def apply(_notification) -> None:
+            toolbar = native.toolbar()
+            if toolbar is not None:
+                toolbar.setVisible_(visible)
+        return apply
+
+    center = AppKit.NSNotificationCenter.defaultCenter()
+    # Set again once each move is over: macOS puts back, as the window leaves full screen, the toolbar state it kept on entering.
+    for name, visible in ((AppKit.NSWindowWillEnterFullScreenNotification, False), (AppKit.NSWindowDidEnterFullScreenNotification, False),
+                          (AppKit.NSWindowWillExitFullScreenNotification, True), (AppKit.NSWindowDidExitFullScreenNotification, True)):
+        FULL_SCREEN_OBSERVERS.append(center.addObserverForName_object_queue_usingBlock_(name, native, None, toolbar_visible(visible)))
 
 
 def log(message: str, agents: Path | None = None) -> None:
@@ -354,6 +380,7 @@ def run_window(port: int, agents: Path) -> None:
             from PyObjCTools import AppHelper
 
             AppHelper.callAfter(blend_title_bar, window.native)
+            AppHelper.callAfter(hide_toolbar_in_full_screen, window.native)
         except Exception as error:  # noqa: BLE001 - cosmetic: the window keeps its usual title bar
             log(f"Could not blend the title bar: {error}", agents)
 

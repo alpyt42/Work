@@ -68,7 +68,7 @@ function showError(message) {
 }
 async function refresh() {
   loadPriorities(); // the file is written by /priorities, outside the page: read again with the rest
-  loadGit({quiet: view !== 'git'}); // the number next to Git follows the writes made from the page
+  loadGit({quiet: view !== 'git'}); // the badge of the Sync button follows the writes made from the page
   if (isDocsView()) refreshDocsView();
   if (view === 'archives' || archivesData) loadArchives(); // an archive or an unarchive changes both lists
   try {

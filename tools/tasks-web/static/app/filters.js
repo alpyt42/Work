@@ -174,11 +174,7 @@ function projectButton(scope, label, count, className = '') {
   button.setAttribute('aria-current', String(scope === projectScope));
   button.append(element('span', 'nav-label', label), element('span', 'nav-count', count ? String(count) : ''));
   button.title = scope ? `${label}: ${plural(count, 'open action')}` : 'All the actions of the brain';
-  button.addEventListener('click', () => {
-    const target = pendingPeekView(); // Corvus's Mac window: the view hovered in the rail while the card peeks (app/shell.js)
-    if (target && target !== view) setView(target);
-    setProjectScope(scope);
-  });
+  button.addEventListener('click', () => setProjectScope(scope));
   return button;
 }
 // The "⋯" of a sidebar entry or of an archived one: a small menu in the popover of the status menu (arrows, Home, End, Esc back to
@@ -240,6 +236,96 @@ function renderProjectNav() {
   }
   if (items.length === 1 && snapshot.registers.length === 0) items.push(element('li', 'project-empty', 'No register'));
   ids.projectNav.replaceChildren(...items);
+  renderRailProjects(counts);
+}
+// ---------- Projects in the folded rail (Corvus window) ----------
+// Folded, the rail of a Corvus window shows, under its groups, the top level of the project tree (a client, a folder of internal
+// projects), as in the card: the six with the most open actions, by name, each by the prefix of its action IDs. A click filters by
+// it, a click on the current one clears the filter. A group of several registers has a menu of its missions instead of the bubble
+// (app/shell.js); with more than six groups, the sixth code is "+N", whose menu holds the others with their missions. app.css shows
+// them only in the folded rail of a wide window; a group of one register names itself in the rail's bubble (app/shell.js).
+const RAIL_PROJECTS = 6;
+let railMenuRows = new Map(); // the key of a code (a group's, or '+') → the rows of its menu: {scope, label, count, child}
+function railGroupRows(group, counts) {
+  const rows = [{scope: group.key, label: group.label, count: group.count, child: false}];
+  if (group.children.length > 1) rows.push(...group.children.map(child => ({scope: child.key, label: child.label, count: counts.get(child.key) || 0, child: true})));
+  return rows;
+}
+// The prefix of the group's action IDs ("ACME" for ACME-004), the code its registers already use. A client keeps its main one: the
+// prefix most of its actions carry, open or closed (the first by name on a tie), so a few EMX among EMD still give EMD. A client
+// with no action yet, and any other group (Internal, a project on its own), take the prefix their registers share, an empty
+// register counting with the one its header reserves (the server's `prefix`); '' when there is none or several.
+function railPrefix(group) {
+  if (/^projects\/clients\/[^/]+\/$/.test(group.key)) {
+    const registers = new Set(group.children.map(child => child.key));
+    const counts = new Map();
+    for (const action of snapshot.actions) {
+      if (!registers.has(action.register)) continue;
+      const prefix = action.id.split('-')[0];
+      counts.set(prefix, (counts.get(prefix) || 0) + 1);
+    }
+    const main = [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))[0];
+    if (main) return main[0];
+  }
+  const prefixes = new Set(group.children.map(child => snapshot.registers.find(register => register.path === child.key)?.prefix).filter(Boolean));
+  return prefixes.size === 1 ? [...prefixes][0] : '';
+}
+// Otherwise a code from the name, in capitals like the prefixes: the initials of several words ("Globex Media" → "GM"), else the
+// first three letters ("Wonka" → "WON", "Internal" → "INT"); four for a code that two pills would share.
+function railLetters(label, size = 3) {
+  const words = label.trim().split(/\s+/).filter(Boolean);
+  const code = words.length > 1 ? words.slice(0, size).map(word => word.charAt(0)).join('') : (words[0] || '?').slice(0, size);
+  return code.toLocaleUpperCase(LOCALE);
+}
+function railProjectButton(text, name, count, label, current) {
+  const button = element('button', 'rail-project', text);
+  button.type = 'button';
+  button.dataset.name = name; // the bubble's text and count (app/shell.js)
+  button.dataset.count = count;
+  button.setAttribute('aria-label', label);
+  if (current) button.setAttribute('aria-current', 'true');
+  return button;
+}
+function railMenuButton(button, key, rows) {
+  railMenuRows.set(key, rows);
+  button.setAttribute('aria-haspopup', 'menu');
+  button.setAttribute('aria-expanded', 'false');
+  button.setAttribute('aria-controls', 'railMenu');
+}
+function renderRailProjects(counts) {
+  const holder = ids.railProjects;
+  const focused = holder.contains(document.activeElement) ? document.activeElement.dataset.key : null;
+  closeRailMenu(false); // its code is drawn again
+  railMenuRows = new Map();
+  const inGroup = key => Boolean(projectScope) && (projectScope === key || (key.endsWith('/') && projectScope.startsWith(key)));
+  const groups = projectTree().map(node => ({...node, count: node.children.reduce((sum, child) => sum + (counts.get(child.key) || 0), 0)}));
+  const room = groups.length > RAIL_PROJECTS ? RAIL_PROJECTS - 1 : RAIL_PROJECTS;
+  const shown = [...groups].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, LOCALE)).slice(0, room)
+    .sort((a, b) => a.label.localeCompare(b.label, LOCALE));
+  const prefixes = shown.map(railPrefix);
+  const codes = shown.map((group, index) => prefixes[index] || railLetters(group.label));
+  const buttons = shown.map((group, index) => {
+    const text = !prefixes[index] && codes.filter(code => code === codes[index]).length > 1 ? railLetters(group.label, 4) : codes[index];
+    const current = inGroup(group.key);
+    const button = railProjectButton(text, group.label, group.count ? String(group.count) : '', `${group.label}, ${plural(group.count, 'open action')}`, current);
+    button.classList.toggle('rail-project-long', text.length > 4); // a long prefix, smaller to stay in its box
+    button.dataset.key = group.key;
+    if (group.children.length > 1) railMenuButton(button, group.key, railGroupRows(group, counts));
+    button.addEventListener('click', () => setProjectScope(current ? '' : group.key));
+    return button;
+  });
+  const hidden = groups.filter(group => !shown.includes(group));
+  if (hidden.length) {
+    const more = railProjectButton(`+${hidden.length}`, plural(hidden.length, 'more project'), '', plural(hidden.length, 'more project'),
+      hidden.some(group => inGroup(group.key)));
+    more.dataset.key = '+';
+    railMenuButton(more, '+', hidden.flatMap(group => railGroupRows(group, counts)));
+    more.addEventListener('click', event => { if (openRailMenu(more) && event.detail === 0) railMenuItems()[0]?.focus(); }); // from the keyboard: into it
+    buttons.push(more);
+  }
+  holder.replaceChildren(...buttons);
+  const again = focused ? buttons.find(button => button.dataset.key === focused) : null;
+  if (again) { railMenuQuietFocus = again.hasAttribute('aria-haspopup'); again.focus(); } // the focus stays, its menu does not reopen
 }
 function setProjectScope(scope) {
   projectScope = scope;
@@ -259,6 +345,6 @@ function setSummary() {
   const sections = todaySections(open);
   const urgent = sections.late.length + sections.today.length;
   ids.todayCount.textContent = urgent ? String(urgent) : '';
-  ids.todayButton.title = `Today (1): ${plural(sections.late.length, 'overdue action')}, ${plural(sections.today.length, 'due today', 'due today')}`;
+  ids.todayButton.title = `Focus (1): ${plural(sections.late.length, 'overdue action')}, ${plural(sections.today.length, 'due today', 'due today')}`;
   renderProjectNav();
 }

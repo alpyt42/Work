@@ -907,7 +907,8 @@ class OpenChainTest(unittest.TestCase):
         browser = Mock(return_value=True)
         starter = Mock(return_value=True)
         self.assertEqual(launch.open_fallback(self.URL, self.work, lambda url: ["/usr/bin/google-chrome", f"--app={url}"], starter, browser), "app-mode")
-        starter.assert_called_once_with(["/usr/bin/google-chrome", f"--app={self.URL}"])
+        # The app window shows the app's layout (as the native window does); a browser tab keeps the plain address.
+        starter.assert_called_once_with(["/usr/bin/google-chrome", f"--app={self.URL}?shell=app"])
         browser.assert_not_called()
         self.assertIn("app window: google-chrome", self.log())
         self.assertEqual(launch.open_fallback(self.URL, self.work, lambda url: None, starter, browser), "browser")
@@ -1194,10 +1195,16 @@ class WindowHelpersTest(unittest.TestCase):
         self.assertEqual(restarts, [])
         self.assertEqual(gone, [3.0])  # closed after three failed checks
 
-    def test_the_mac_window_asks_the_page_for_room_under_its_title_bar(self):
+    def test_every_window_asks_for_the_app_layout_and_the_mac_one_for_room_under_its_title_bar(self):
         self.assertEqual(window.window_url(8765, "darwin"), "http://127.0.0.1:8765/?shell=mac")
-        self.assertEqual(window.window_url(8765, "win32"), "http://127.0.0.1:8765/")
-        self.assertEqual(window.window_url(8770, "linux"), "http://127.0.0.1:8770/")
+        self.assertEqual(window.window_url(8765, "win32"), "http://127.0.0.1:8765/?shell=app")
+        self.assertEqual(window.window_url(8770, "linux"), "http://127.0.0.1:8770/?shell=app")
+        self.assertEqual(launch.app_window_url("http://127.0.0.1:8765/"), "http://127.0.0.1:8765/?shell=app")
+        self.assertEqual(launch.app_window_url("http://127.0.0.1:8765/?brain=brain-acme"), "http://127.0.0.1:8765/?brain=brain-acme&shell=app")
+        shell = (WEB / "static/window-shell.js").read_text(encoding="utf-8")
+        self.assertIn("if (shell !== 'mac' && shell !== 'app') return;", shell)
+        self.assertIn("document.documentElement.classList.add('app-window');", shell)
+        self.assertIn("if (shell === 'mac') document.documentElement.classList.add('mac-window');", shell)
 
     def test_the_mac_title_bar_is_transparent_over_full_size_content(self):
         calls = []
@@ -1265,6 +1272,45 @@ class WindowHelpersTest(unittest.TestCase):
         # page's own view is left alone.
         self.assertEqual(calls, [("mask", 0b1111 | 1 << 15), ("transparent", True), ("title", 1), ("toolbar", "corvus", False),
                                  ("toolbar style", 1), ("background", "titlebar", "clear")])
+
+    def test_full_screen_hides_the_toolbar_and_leaving_it_shows_it_again(self):
+        observers, shown = [], []
+
+        class Toolbar:
+            def setVisible_(self, value):
+                shown.append(value)
+
+        class Native:
+            def toolbar(self):
+                return Toolbar()
+
+        class Center:
+            def addObserverForName_object_queue_usingBlock_(self, name, sender, queue, block):
+                observers.append((name, sender, queue, block))
+                return f"token {name}"
+
+        native = Native()
+        appkit = types.SimpleNamespace(NSNotificationCenter=types.SimpleNamespace(defaultCenter=Center),
+                                       NSWindowWillEnterFullScreenNotification="will-enter", NSWindowDidEnterFullScreenNotification="did-enter",
+                                       NSWindowWillExitFullScreenNotification="will-exit", NSWindowDidExitFullScreenNotification="did-exit")
+        kept = len(window.FULL_SCREEN_OBSERVERS)
+        try:
+            with patch.dict(sys.modules, {"AppKit": appkit}):
+                window.hide_toolbar_in_full_screen(native)
+            # Observers of this window only, run where the notification is posted (the main thread), kept alive.
+            self.assertEqual([(name, sender is native, queue) for name, sender, queue, _ in observers],
+                             [("will-enter", True, None), ("did-enter", True, None), ("will-exit", True, None), ("did-exit", True, None)])
+            self.assertEqual(window.FULL_SCREEN_OBSERVERS[kept:], ["token will-enter", "token did-enter", "token will-exit", "token did-exit"])
+            for *_, block in observers:
+                block(object())
+            self.assertEqual(shown, [False, False, True, True])  # hidden in full screen, shown again on leaving it
+        finally:
+            del window.FULL_SCREEN_OBSERVERS[kept:]
+        # Native calls only, never the page: run_js on the main thread deadlocks the window.
+        source = (WEB / "window.py").read_text(encoding="utf-8")
+        body = source[source.index("def hide_toolbar_in_full_screen"):source.index("def log(")]
+        self.assertNotIn("run_js", body.split('"""', 2)[2])
+        self.assertIn("AppHelper.callAfter(hide_toolbar_in_full_screen, window.native)", source)
 
     def test_the_window_closes_after_three_failed_checks_in_a_row(self):
         self.assertEqual(self.watch([True, False, False, False, True]), ([4], 4, True))  # closed on the third failure, no more checks

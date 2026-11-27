@@ -181,6 +181,27 @@ class TasksWebTest(unittest.TestCase):
         self.assertEqual(data["actions"][0]["due"], "2026-10-15")
         self.assertEqual(data["registers"][0]["prefix"], "EXM")
 
+    def test_an_empty_register_takes_the_prefix_its_header_reserves_and_a_mixed_one_has_none(self):
+        def register(folder, text):
+            path = self.brain / folder / "state/actions.md"
+            path.parent.mkdir(parents=True)
+            path.write_text(text, encoding="utf-8")
+            return path
+        register("projects/clients/globex/missions/pilot", "# Actions\n\nReserved prefix: `GLX`\n\n## Open\n")
+        register("projects/clients/globex/missions/audit", "# Actions\n\n## Open\n")
+        archived = register("projects/clients/globex/missions/review", "# Actions\n\n## Open\n")
+        (archived.parent / "actions-archive-2025.md").write_text("# Archive\n\n- [x] **GRV-001** — Jane — Old review ✅ 2025-06-01\n", encoding="utf-8")
+        register("projects/clients/initech/missions/rollout", "# Actions\n\n## Open\n- [ ] **INI-001** — Jane — One\n- [ ] **INX-002** — Jane — Two\n")
+        status, data = self.request("GET", "/api/actions")
+        self.assertEqual(status, 200)
+        prefixes = {register["path"].split("/")[4]: register["prefix"] for register in data["registers"]}
+        # The same rule as action.py's for a register's next ID: the header's reservation, else the single prefix of its archives.
+        self.assertEqual(prefixes["pilot"], "GLX")
+        self.assertEqual(prefixes["review"], "GRV")
+        self.assertEqual(prefixes["audit"], "")  # no reservation, no archive
+        self.assertEqual(prefixes["rollout"], "")  # entries of two prefixes: the page decides (railPrefix)
+        self.assertEqual(prefixes["test"], "EXM")
+
     def test_loads_action_details_without_adjacent_actions(self):
         status, detail = self.request("GET", "/api/actions/EXM-001/details")
         self.assertEqual(status, 200)
@@ -3184,79 +3205,72 @@ class GitViewPageTest(unittest.TestCase):
         self.script = app_script()
         self.styles = (self.STATIC / "app.css").read_text(encoding="utf-8")
 
-    def test_the_mac_window_has_a_title_row_and_two_sidebar_columns(self):
-        # window-shell.js runs before the first paint (no defer) and marks only the page that the macOS window opened.
+    def test_every_corvus_window_has_a_top_row_and_two_sidebar_columns(self):
+        # window-shell.js runs before the first paint (no defer) and marks the page a Corvus window opened: `app-window` on every
+        # system (?shell=mac or ?shell=app), and `mac-window` too on macOS. A browser tab gets neither.
         self.assertIn('<script src="/window-shell.js"></script>', self.page)
         self.assertLess(self.page.index('href="/app.css"'), self.page.index('src="/window-shell.js"'))
         shell = (self.STATIC / "window-shell.js").read_text(encoding="utf-8")
         self.assertIn("get('shell')", shell)
-        self.assertIn("if (shell !== 'mac') return;", shell)
-        self.assertIn("classList.add('mac-window')", shell)
-        # The empty parts of the sidebar and of the view's bar move the window (pywebview); their controls do not.
+        self.assertIn("if (shell !== 'mac' && shell !== 'app') return;", shell)
+        self.assertIn("document.documentElement.classList.add('app-window');\n  if (shell === 'mac') document.documentElement.classList.add('mac-window');", shell)
+        # The empty parts of the sidebar and of the view's bar move the window (pywebview, macOS only); their controls do not.
         self.assertIn('<aside id="sidebar" class="sidebar pywebview-drag-region"', self.page)
         self.assertIn('<header class="view-header pywebview-drag-region">', self.page)
         self.assertIn('<div class="view-bar pywebview-drag-region">', self.page)
         self.assertNotIn("window-drag", self.page + self.styles)
-        # A 52 px title row; wide, a rail of icons beside the brain's card, which folds away and peeks on hover.
-        self.assertIn(".mac-window { --titlebar-h: 52px; --sidebar-rail-w: 56px; --list-w: 236px; }", self.styles)
-        self.assertIn(".mac-window .app.sidebar-collapsed .sidebar::after {", self.styles)  # the hairline between the rail and the page
-        self.assertIn(".mac-window .panel-head { padding-top: calc(14px + var(--titlebar-h)); }", self.styles)
-        self.assertIn(".mac-window .app { --sidebar-w: calc(var(--sidebar-rail-w) + var(--list-w) + 8px); }", self.styles)
-        self.assertIn(".mac-window .app.sidebar-collapsed, .mac-window .app.sidebar-peek { --sidebar-w: var(--sidebar-rail-w); }", self.styles)
-        self.assertIn(".mac-window .sidebar-scroll { display: contents; }", self.styles)
-        self.assertIn(".mac-window .sidebar .nav .lucide, .mac-window .sidebar-footer .lucide { width: 20px; height: 20px; }", self.styles)
-        self.assertIn(".mac-window #sidebarToggle { position: fixed; top: 10px; left: 84px; z-index: 56; margin: 0; }", self.styles)
-        self.assertNotIn(".mac-window #newNoteButton", self.styles)  # New note keeps its words, as New action does
-        # Above the projects, the card names the view they open; a project chosen while the card peeks opens the hovered view.
-        self.assertIn('<p id="cardView" class="card-view" aria-live="polite"></p>', self.page)
-        self.assertLess(self.page.index('id="cardView"'), self.page.index('id="projectsHeading"'))
-        self.assertIn("function pendingPeekView() { return peeking() ? peekView : ''; }", self.script)
-        self.assertIn("const target = pendingPeekView();", self.script)
-        self.assertIn("if (target && target !== view) setView(target);", self.script)
-        self.assertNotIn("showCardView(); // the view named above its projects", self.script)  # only shown while peeking
-        self.assertIn("const icon = ids[NAV_BUTTONS[peekView]]?.querySelector('svg')?.cloneNode(true);", self.script)
-        self.assertIn("'app', 'sidebar', 'cardView', 'sidebarResizer',", self.script)
-        self.assertIn(".card-view { display: none; }", self.styles)
-        # Only while the card peeks: pinned, the view header names the view already.
-        self.assertIn(".mac-window .app.sidebar-peek .card-view:not(:empty) {", self.styles)
-        self.assertNotIn(".card-view:empty, .mac-window .app:not(.sidebar-peek) .card-view", self.styles)
+        # A 52 px top row on every system; wide, a rail of icons beside the brain's card, which the sidebar button folds away.
+        self.assertIn(".app-window { --titlebar-h: 52px; --sidebar-rail-w: 56px; --list-w: 236px; --toggle-x: 12px; }", self.styles)
+        self.assertIn(".app-window .app.sidebar-collapsed .sidebar::after {", self.styles)  # the hairline between the rail and the page
+        self.assertIn(".app-window .app { --sidebar-w: calc(var(--sidebar-rail-w) + var(--list-w) + 8px); }", self.styles)
+        self.assertIn(".app-window .app.sidebar-collapsed { --sidebar-w: var(--sidebar-rail-w); }", self.styles)
+        self.assertIn(".app-window .sidebar-scroll { display: contents; }", self.styles)
+        self.assertIn(".app-window .sidebar .nav .lucide, .app-window .sidebar-footer .lucide { width: 20px; height: 20px; }", self.styles)
+        self.assertIn(".app-window #sidebarToggle { position: fixed; top: 10px; left: var(--toggle-x); z-index: 56; margin: 0; }", self.styles)
+        self.assertIn("margin-left: max(0px, calc(var(--toggle-x) + 32px + 16px - var(--sidebar-rail-w) - var(--page-x)));", self.styles)
+        self.assertNotIn(".app-window #newNoteButton", self.styles)  # New note keeps its words, as New action does
+        # What is the Mac's own: the sidebar button after the window buttons, and, narrow, everything below their row.
+        mac = [line.strip() for line in self.styles.splitlines() if line.strip().startswith(".mac-window")]
+        self.assertEqual(mac, [".mac-window { --toggle-x: 84px; }", ".mac-window .view-header { padding-top: calc(var(--titlebar-h) + 4px); }",
+                               ".mac-window .panel-head { padding-top: calc(14px + var(--titlebar-h)); } /* full width, the panel runs under the window buttons */",
+                               ".mac-window .sidebar-top { padding-top: calc(10px + var(--titlebar-h)); }"])
+        self.assertIn("const appWindow = document.documentElement.classList.contains('app-window');", self.script)
+        self.assertNotIn("macWindow", self.script)
+        # No peek: the pointer or the focus on a group of the folded rail shows nothing over the page, the card comes back only by
+        # the sidebar button (or `[`); nothing of the peek is left (its state, its card label, its pointer and focus handlers).
+        for gone in ("peek", "Peek", "PEEK_KEEPERS", "cardView", "card-view", "is-peeked", "pendingPeekView"):
+            self.assertNotIn(gone, self.script + self.styles + self.page)
+        self.assertNotIn("entry.addEventListener('mouseenter'", self.script)
+        self.assertIn("return VIEW_GROUPS[group][0] === name ? GROUP_TITLES[group] : `${GROUP_TITLES[group]} · ${VIEW_TITLES[name]}`;", self.script)
+        self.assertNotIn("NAV_BUTTONS", self.script)
+        self.assertIn("'app', 'sidebar', 'sidebarResizer',", self.script)
+        self.assertIn("button.addEventListener('click', () => setProjectScope(scope));", self.script)  # a project of the card filters, nothing else
         # Back to a wide window, the card follows the view again (it stayed away from the remembered choice while narrow).
-        self.assertIn("endPeek(); fitCardToView(); updateSidebarToggle(); });", self.script)
+        self.assertIn("closeRailMenu(false); fitCardToView(); updateSidebarToggle(); });", self.script)
         # The detail panel's head keeps the room of the title row only when it runs under the window buttons (a narrow window).
-        self.assertNotIn("\n.mac-window .panel-head {", self.styles)
+        self.assertNotIn("\n.app-window .panel-head {", self.styles)
         # The action's title grows again when its width changes (the panel's handle, the window): no line is cut.
         self.assertIn("if (entry.contentRect.width === titleFieldWidth) return;", self.script)
         self.assertIn("}).observe(ids.editorActionTitle);", self.script)
-        # The brain's sticker stays at the top of the rail when the card is unfolded or peeks.
-        self.assertIn(".mac-window .app:not(.sidebar-collapsed) .sidebar::before {", self.styles)
-        # The views of the rail (not Archives, Tools, Sync or Settings) show the folded card while the pointer is on them.
-        self.assertIn("for (const entry of ids.sidebar.querySelectorAll('.nav[aria-labelledby=\"viewsHeading\"] .nav-item')) {", self.script)
-        self.assertIn("entry.addEventListener('mouseenter', () => {\n    startPeek();", self.script)
-        self.assertNotIn("ids.sidebarToggle.addEventListener('mouseenter', startPeek);", self.script)
-        self.assertIn("entry.addEventListener('mouseleave', () => {", self.script)
-        self.assertNotIn("part.addEventListener('mouseleave', leavePeek);", self.script)  # the per-move check covers the card
-        self.assertIn("peekTimer = setTimeout(() => { peekTimer = 0; endPeek(); }, 120);", self.script)
-        # WebKit may miss the pointer leaving: every move is checked, and leaving the window or its focus ends the peek.
-        self.assertIn("const PEEK_KEEPERS = '.nav[aria-labelledby=\"viewsHeading\"] .nav-item, .sidebar-top, .projects';", self.script)
-        self.assertIn("if (event.target instanceof Element && event.target.closest(PEEK_KEEPERS)) keepPeek(); else leavePeek();", self.script)
-        self.assertIn("document.documentElement.addEventListener('mouseleave', () => { if (!brainMenuOpen()) endPeek(); });", self.script)
-        self.assertIn("window.addEventListener('blur', () => endPeek());", self.script)
-        # The highlight follows the pointer while the card peeks.
-        self.assertIn("if (pendingPeekView()) ids[NAV_BUTTONS[peekView]]?.classList.add('is-peeked');", self.script)
-        self.assertIn(".mac-window .app.sidebar-peek .sidebar .nav-item.is-peeked { background: var(--accent-soft);", self.styles)
+        # The brain's sticker stays at the top of the rail when the card is unfolded.
+        self.assertIn(".app-window .app:not(.sidebar-collapsed) .sidebar::before {", self.styles)
         self.assertIn("grid-template-rows: 60px minmax(0, 1fr) auto;", self.styles)  # the rail's icons never move under the pointer
-        # The projects filter neither Archives, Tools, Sync nor Settings: there the card steps aside, the remembered choice untouched.
+        # The projects filter neither Archives (in Docs), Sync, nor Settings and Tools: there the card steps aside, the remembered choice untouched.
         self.assertIn("const NO_PROJECT_VIEWS = ['archives', 'tools', 'git', 'settings'];", self.script)
+        # Two rows in a narrower window: the first keeps the title row's 40 px, its title level with the window buttons; the second
+        # row and the tabs come below the title row.
+        self.assertIn(".app-window .view-heading { min-height: 40px; padding-block: 5.6px; }", self.styles)
+        self.assertNotIn(".app-window .view-tabs", self.styles)  # the tabs follow the title row, which keeps its place
         self.assertIn("ids.app.classList.toggle('sidebar-collapsed', off || readSidebarCollapsed());", self.script)
-        self.assertIn("fitCardToView(); // the Mac window's card: away on the views without projects", self.script)
-        self.assertIn("ids.app.classList.remove('card-off'); // and on a view without projects, a click asks for the card all the same", self.script)
+        self.assertIn("fitCardToView(); // the app window's card: away on the views without projects", self.script)
+        self.assertIn("ids.app.classList.remove('card-off'); // on a view without projects, a click asks for the card all the same", self.script)
 
     def test_the_sidebar_and_the_panel_resize_with_a_handle(self):
         # A handle on the sidebar's edge (its card's in the Mac window) and on the detail panel's; the width is remembered.
         self.assertIn('<div id="sidebarResizer" class="resizer sidebar-resizer" role="separator" aria-orientation="vertical"', self.page)
         self.assertIn('<div id="panelResizer" class="resizer panel-resizer" role="separator" aria-orientation="vertical"', self.page)
         self.assertIn("'sidebarResizer', 'panelResizer',", self.script)
-        self.assertIn("makeResizable(ids.sidebarResizer, macWindow ? {variable: '--list-w', min: 180, max: () => 440} : {variable: '--sidebar-full-w', min: 200, max: () => 440});", self.script)
+        self.assertIn("makeResizable(ids.sidebarResizer, appWindow ? {variable: '--list-w', min: 180, max: () => 440} : {variable: '--sidebar-full-w', min: 200, max: () => 440});", self.script)
         # The panel keeps the list at 480 px at least, and has no handle where it is laid out between the sidebar and the edge.
         self.assertIn("max: () => Math.max(PANEL_MIN, Math.min(innerWidth * .6, innerWidth - ids.sidebar.getBoundingClientRect().width - LIST_MIN)),", self.script)
         self.assertIn("const LIST_MIN = 480;", self.script)
@@ -3276,10 +3290,10 @@ class GitViewPageTest(unittest.TestCase):
         self.assertIn("for (const variable of ['--sidebar-full-w', '--list-w', '--panel-w']) {", shell)  # set back before the first paint
         self.assertIn("if (/^\\d{2,4}px$/.test(width)) document.documentElement.style.setProperty(variable, width);", shell)
         self.assertIn(".resizer { display: none; }", self.styles)  # none in the drawer of a narrow window
-        self.assertIn(".app.sidebar-collapsed .sidebar-resizer, .app.sidebar-peek .sidebar-resizer { display: none; }", self.styles)
-        self.assertIn("endPeek(); // a click on the button while the card peeks keeps it open", self.script)
-        self.assertIn("if (macWindow && !narrowQuery.matches) ids.app.before(ids.sidebarToggle);", self.script)
-        self.assertIn("return macWindow && item !== ids.brainButton;", self.script)
+        self.assertIn(".app.sidebar-collapsed .sidebar-resizer { display: none; }", self.styles)
+        self.assertIn("closeRailMenu(false);\n  ids.app.classList.remove('card-off');", self.script)  # the button folds or unfolds the card, nothing else
+        self.assertIn("if (appWindow && !narrowQuery.matches) ids.app.before(ids.sidebarToggle);", self.script)
+        self.assertIn("return appWindow && item !== ids.brainButton;", self.script)
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_the_script_parses(self):
@@ -3303,23 +3317,21 @@ class GitViewPageTest(unittest.TestCase):
         changes = self.page[self.page.index('<dialog id="gitChangesDialog"'):self.page.index('<dialog id="quitDialog"')]
         for fragment in ('class="dialog dialog-wide"', 'aria-labelledby="gitChangesTitle"', 'id="gitChangesBody"', 'id="gitChangesClose"', 'aria-label="Close"'):
             self.assertIn(fragment, changes)
-        self.assertIn('data-view="git"', self.page)
+        self.assertIn('<button id="syncButton" class="button sync-button" type="button" aria-pressed="false" aria-label="Sync" title="Sync">', self.page)
         self.assertIn("Nothing is saved or sent until you click.", self.page)
         self.assertNotIn("Read only", self.page)
 
-    def test_check_online_and_pull_are_wired_in_the_sync_view_and_the_sidebar(self):
+    def test_check_online_and_pull_are_wired_in_the_sync_view_and_the_header_button_opens_it(self):
         self.assertIn('id="gitCheckButton"', self.page)
         self.assertIn('id="gitCheckInfo"', self.page)
-        sidebar = self.page[self.page.index('id="syncPullButton"'):self.page.index('id="archivesButton"')]
-        self.assertIn('class="update-button"', sidebar)
-        self.assertIn("hidden", sidebar.split(">", 1)[0])
-        self.assertIn('id="syncPullButtonLabel"', sidebar)
-        self.assertLess(self.page.index('id="updateButton"'), self.page.index('id="syncPullButton"'))
-        self.assertIn("'syncPullButton'", self.script)
+        # The sidebar's pull button is gone: the header's Sync button opens the view, and the pull is the card's own button.
+        for gone in ('id="syncPullButton"', 'id="syncPullButtonLabel"', 'id="gitButton"', 'id="gitCount"'):
+            self.assertNotIn(gone, self.page)
+        for gone in ("syncPullButton", "pullCurrentBrain", "renderSyncPullButton", "gitCount", "gitButton"):
+            self.assertNotIn(gone, self.script + self.styles)
+        self.assertIn("ids.syncButton.addEventListener('click', () => setView('git'));", self.script)
         self.assertIn("updatePost('/api/git/fetch'", self.script)
         self.assertIn("/api/git/${action}", self.script)
-        self.assertIn("runGit(card, 'pull')", self.script)
-        self.assertIn("ids.syncPullButton.addEventListener('click', pullCurrentBrain)", self.script)
         self.assertIn("ids.gitCheckButton.addEventListener('click', () => fetchGit({force: true}))", self.script)
         self.assertIn("fetchGitInBackground();\nsetInterval(fetchGitInBackground, GIT_FETCH_EVERY);", self.script)
         self.assertIn("function fetchGitIfStale() { if (Date.now() - gitLastFetchAt > GIT_FOCUS_AFTER) fetchGitInBackground(); }", self.script)
@@ -3332,11 +3344,9 @@ class GitViewPageTest(unittest.TestCase):
         self.assertIn("GIT_FETCH_EVERY = 10 * 60 * 1000", self.script)
         self.assertIn("GIT_FOCUS_AFTER = 5 * 60 * 1000", self.script)
         self.assertIn("refresh(); // the actions and the notes changed", self.script)  # a pull reloads everything
-        self.assertIn("renderSyncPullButton();", self.script)
-        self.assertIn("syncPullButtonLabel", (self.STATIC / "app/shell.js").read_text(encoding="utf-8"))  # the rail tip reads its label
-        self.assertIn(".update-button", (self.STATIC / "app/shell.js").read_text(encoding="utf-8"))
-        self.assertIn("#syncPullButtonLabel", self.styles)  # the label is hidden in the icon rail
-        self.assertIn("The online copies are checked from time to time.", self.page)
+        self.assertIn("renderSyncButton();", self.script)
+        self.assertIn(".update-button", (self.STATIC / "app/shell.js").read_text(encoding="utf-8"))  # the rail tip still names Update
+        self.assertIn("The online copies are checked from time to time, and the Sync button counts the changes waiting there.", self.page)
 
     def test_the_view_lists_the_brains_and_never_work(self):
         self.assertIn("await request('/api/git')", self.script)
@@ -3350,10 +3360,11 @@ class GitViewPageTest(unittest.TestCase):
 
     def test_the_view_is_called_sync_and_explains_itself_with_an_info_tip(self):
         # The visible name is Sync; the ids and routes keep `git`.
-        self.assertIn('<span class="nav-label">Sync</span><span id="gitCount" class="nav-count"></span>', self.page)
+        self.assertIn('aria-label="Sync" title="Sync">', self.page)
         self.assertNotIn('<span class="nav-label">Git</span>', self.page)
-        self.assertIn("git: 'Sync', settings: 'Settings'}", self.script)
-        self.assertIn("`Sync, ${plural(pending, 'brain')} to save or send` : 'Sync'", self.script)
+        self.assertIn("git: 'Sync', settings: 'Settings', tools: 'Tools'}", self.script)
+        self.assertIn("sync: 'Sync'", self.script)  # its group's title
+        self.assertIn(": pending ? 'Sync: notes to save or send' : card?.state === 'clean' ? 'Sync: everything is saved and up to date' : 'Sync';", self.script)
         self.assertIn("showToast(`Sync: ${error.message}`)", self.script)
         self.assertNotIn("Git: ${", self.script)
         title = self.page[self.page.index('<span id="syncInfo"'):self.page.index('<span id="resultCount"')]
@@ -3435,12 +3446,32 @@ class GitViewPageTest(unittest.TestCase):
         self.assertNotIn("innerHTML", git)
         self.assertNotIn("insertAdjacentHTML", git)
 
-    def test_the_sidebar_count_is_the_number_of_brains_with_something_to_save_or_send(self):
-        self.assertIn("function gitPendingCount() { return gitCards.filter(card => card.pending).length; }", self.script)
-        self.assertIn("ids.gitCount.textContent = gitLoaded && pending ? String(pending) : '';", self.script)
-        # It follows the writes made from the page and Refresh, without a network call (the server only reads local Git state).
-        self.assertIn("loadGit({quiet: view !== 'git'});", self.script)
+    def test_the_header_sync_button_has_a_badge_about_the_current_brain(self):
+        # At the right end of the header's actions, after New action, in every view: an icon button with a badge, out of the sidebar.
+        actions = self.page[self.page.index('<div class="view-actions">'):self.page.index('<div id="filters"')]
+        self.assertLess(actions.index('id="newButton"'), actions.index('id="syncButton"'))
+        self.assertIn('<span id="syncBadge" class="sync-badge" aria-hidden="true" hidden></span>', actions)
+        self.assertIn('<path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="m21 8-4-4-4 4"/><path d="M17 4v16"/>', actions)  # arrow-down-up, the former entry's icon
+        sidebar = self.page[self.page.index('<aside id="sidebar"'):self.page.index("</aside>")]
+        for gone in (">Sync<", 'data-group="sync"', "Sync changes"):
+            self.assertNotIn(gone, sidebar)
+        self.assertIn("'syncButton', 'syncBadge'", self.script)
+        # The badge: the changes waiting online for the current brain (99+ at most), else a dot for notes to save or send, else none;
+        # its name says which, and the button is pressed in the Sync view. The behaviour is run under node in ViewGroupsTest.
+        self.assertIn("const card = gitLoaded ? gitCards.find(item => item.name === currentBrain) : null;", self.script)
+        self.assertIn("return {badge: behind ? (behind > 99 ? '99+' : String(behind)) : pending ? 'dot' : '', label};", self.script)
+        self.assertIn("ids.syncButton.setAttribute('aria-pressed', String(view === 'git'));", self.script)
+        self.assertIn("ids.syncButton.title = label;", self.script)
+        self.assertIn("function gitPendingCount() { return gitCards.filter(card => card.pending).length; }", self.script)  # the view's own count
+        for rule in (".sync-button { position: relative; width: 34px; padding: 0; color: var(--text-muted); }",
+                     ".sync-button[aria-pressed=\"true\"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }",
+                     ".sync-badge.is-dot { top: -3px; right: -3px; width: 9px; min-width: 0; height: 9px; padding: 0; }"):
+            self.assertIn(rule, self.styles)
+        # It follows the writes made from the page, Refresh, a change of brain and the background checks, without a network call of its own.
+        self.assertIn("loadGit({quiet: view !== 'git'}); // the badge of the Sync button follows the writes made from the page", self.script)
         self.assertIn("loadGit({quiet: true});", self.script)
+        self.assertIn("  closePopover(false);\n  renderSyncButton();", self.script)  # each render, so a change of brain too
+        self.assertIn("  const pending = gitPendingCount();\n  renderSyncButton();", self.script)  # each answer of /api/git and of a check
 
     def test_a_change_of_brain_closes_the_dialogs_and_keeps_the_cards(self):
         reset = self.script[self.script.index("function resetBrainState()"):self.script.index("function enterBrain(")]
@@ -4990,8 +5021,8 @@ class PixelLookTest(unittest.TestCase):
         self.assertIn(".lucide { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }", self.styles)
         self.assertIn("function svgIcon(markup, className = '', viewBox = '0 0 24 24') {", script)
         sidebar = self.page[self.page.index('<aside id="sidebar"'):self.page.index("</aside>")]
-        self.assertEqual(sidebar.count("<svg"), 15)  # the caret, the close cross, six views, the update and pull buttons, four in the footer and the ⋯ button
-        self.assertEqual(sidebar.count('class="lucide nav-icon"'), 12)
+        self.assertEqual(sidebar.count("<svg"), 8)  # the caret, the close cross, three groups, the update button, Settings and the ⋯ button
+        self.assertEqual(sidebar.count('class="lucide nav-icon"'), 5)
         # The licence of the set ships with the app, the former one is gone.
         licences = self.STATIC / "licenses"
         self.assertIn("ISC License", (licences / "Lucide-ISC.txt").read_text(encoding="utf-8"))
@@ -5012,12 +5043,21 @@ class PixelLookTest(unittest.TestCase):
         sidebar = self.page[self.page.index('<aside id="sidebar"'):self.page.index("</aside>")]
         self.assertIn('<h2 id="viewsHeading" class="sidebar-heading">Views</h2>', sidebar)
         self.assertIn('<h2 id="projectsHeading" class="sidebar-heading">Projects</h2>', sidebar)
-        # Priorities … Docs under "Views"; the footer is a list of the same entries, the Update button first, then the meta line.
-        views = re.findall(r'<button id="(\w+)" class="nav-item"', sidebar[:sidebar.index('<section class="projects"')])
-        self.assertEqual(views, ["prioButton", "todayButton", "listButton", "boardButton", "timelineButton", "docsButton"])
+        # Five groups of views: Today, Actions and Docs under "Views", Settings in the footer (a list of the same entries, the Update
+        # button first, then the meta line); Sync is the header's button. Each entry names its group, with the group's icon.
+        views = re.findall(r'<button id="(\w+)" class="nav-item" type="button" data-group="(\w+)"', sidebar[:sidebar.index('<section class="projects"')])
+        self.assertEqual(views, [("todayButton", "today"), ("listButton", "actions"), ("docsButton", "docs")])
+        for entry, label in (("todayButton", "Focus"), ("listButton", "Actions"), ("docsButton", "Docs"), ("settingsButton", "Settings")):
+            button = sidebar[sidebar.index(f'id="{entry}"'):]
+            self.assertIn(f'<span class="nav-label">{label}</span>', button[:button.index("</button>")])
         footer = sidebar[sidebar.index('<div class="sidebar-footer">'):]
-        order = [footer.index(marker) for marker in ('id="updateButton"', 'id="archivesButton"', 'id="toolsButton"', 'id="gitButton"', 'id="settingsButton"', 'class="footer-meta"')]
+        self.assertEqual(re.findall(r'<button id="(\w+)" class="nav-item" type="button" data-group="(\w+)"', footer), [("settingsButton", "settings")])
+        order = [footer.index(marker) for marker in ('id="updateButton"', 'id="settingsButton"', 'class="footer-meta"')]
         self.assertEqual(order, sorted(order))
+        for gone in ("prioButton", "boardButton", "timelineButton", "archivesButton", "toolsButton", "gitButton", "syncPullButton", "data-view="):
+            self.assertNotIn(gone, sidebar)
+        self.assertIn('<span id="todayCount" class="nav-count"></span>', sidebar)  # the urgent count stays on Today
+        self.assertIn('<span id="openCount" class="nav-count"></span>', sidebar)
         self.assertNotIn("footer-nav", self.page + self.styles)
         self.assertNotIn("nav-compact", self.page + self.styles)
         self.assertRegex(self.styles, r"\.nav-item \{\n  position: relative; display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 8px;")
@@ -5046,7 +5086,7 @@ class PixelLookTest(unittest.TestCase):
         # The tooltip: a fixed bubble to the right of the entry on hover and keyboard focus, with the label and the count.
         self.assertIn('<div id="railTip" class="rail-tip" aria-hidden="true" hidden></div>', self.page)
         self.assertIn(".rail-tip {\n  position: fixed;", self.styles)
-        for fragment in ("const RAIL_ITEMS = '.nav-item, .update-button, .brain-button, #moreButton';", "ids.railTip.style.left = `${Math.round(box.right + 8)}px`;",
+        for fragment in ("const RAIL_ITEMS = '.nav-item, .rail-project, .update-button, .brain-button, #moreButton';", "ids.railTip.style.left = `${Math.round(box.right + 8)}px`;",
                          "ids.sidebar.addEventListener('mouseover'", "ids.sidebar.addEventListener('focusin'", "matches(`${RAIL_ITEMS}:focus-visible`)", "'rail-tip-count'"):
             self.assertIn(fragment, script)
         # The toggle: same key, same storage, 'collapsed' now meaning the rail, and labels that say collapse and expand.
@@ -5234,23 +5274,36 @@ class TimelineViewTest(unittest.TestCase):
         self.script = app_script()
         self.styles = (self.STATIC / "app.css").read_text(encoding="utf-8")
 
-    def test_timeline_is_a_sidebar_view_right_after_the_board(self):
-        views = re.findall(r'<button id="(\w+)" class="nav-item[^"]*" type="button" data-view="(\w+)" title="([^"]*)"', self.page)
-        self.assertEqual([view for _id, view, _title in views], ["priorities", "today", "list", "board", "timeline", "docs", "archives", "tools", "git", "settings"])  # Search is a field, not a view of the sidebar
-        titles = {view: title for _id, view, title in views}
-        self.assertEqual([titles[view] for view in ("timeline", "docs")], ["Timeline (4)", "Docs (5)"])
-        self.assertIn('<button id="timelineButton"', self.page)
-        self.assertIn("<kbd>0</kbd> to <kbd>5</kbd></dt><dd>Priorities, Today, Actions, Board, Timeline, Docs</dd>", self.page)
+    def test_timeline_is_a_view_of_the_actions_group_right_after_the_board(self):
+        # The rail has a group per entry; the row of tabs under the title holds every view of a group, in the group's order. Search is a field.
+        rail = re.findall(r'<button id="(\w+)" class="nav-item[^"]*" type="button" data-group="(\w+)" title="([^"]*)"', self.page)
+        self.assertEqual([group for _id, group, _title in rail], ["today", "actions", "docs", "settings"])
+        titles = {group: title for _id, group, title in rail}
+        self.assertEqual([titles[group] for group in ("today", "actions", "docs")], ["Focus (1)", "Actions (2)", "Docs (3)"])  # their digits
+        tabs = self.page[self.page.index('<nav id="viewSwitch"'):]
+        tabs = tabs[:tabs.index("</nav>")]
+        self.assertIn('<nav id="viewSwitch" class="view-tabs" aria-label="Views" hidden>', tabs)
+        views = re.findall(r'<button (?:id="\w+" )?class="view-tab" type="button" data-view="(\w+)"', tabs)
+        self.assertEqual(views, ["list", "board", "timeline", "docs", "archives", "settings", "tools"])  # Focus is one page: no tab
+        self.assertIn("const VIEW_GROUPS = {today: ['today'], actions: ['list', 'board', 'timeline'], docs: ['docs', 'archives'], sync: ['git'], settings: ['settings', 'tools']};", self.script)
+        self.assertNotIn('id="timelineButton"', self.page)
+        self.assertIn("<kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>Focus, Actions, Docs, each on its last view</dd>", self.page)
+        self.assertIn("<kbd>v</kbd> or <kbd>⇧</kbd> <kbd>V</kbd></dt><dd>Next or previous view of the group:", self.page)
+        self.assertNotIn("<kbd>0</kbd>", self.page)
         self.assertIn("<kbd>Alt</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>On the Timeline: move the deadline by a day", self.page)
 
     def test_keyboard_scheme_follows_the_sidebar_order(self):
-        self.assertIn("const VIEWS = ['priorities', 'today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git', 'settings'];", self.script)
-        self.assertIn("setView(['priorities', 'today', 'list', 'board', 'timeline', 'docs'][Number(digit)]);", self.script)
-        self.assertIn("/^[0-5]$/.test(key)", self.script)
-        self.assertIn("/^Digit[0-5]$/.test(event.code)", self.script)
+        self.assertIn("const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git', 'settings'];", self.script)
+        # 1 to 3 open the groups of the sidebar on their last view; 0 and the other digits do nothing.
+        self.assertIn("openGroup(['today', 'actions', 'docs'][Number(digit) - 1]);", self.script)
+        self.assertIn("/^[1-3]$/.test(key)", self.script)
+        self.assertIn("/^Digit[1-3]$/.test(event.code)", self.script)
+        self.assertNotIn("[Number(digit)]", self.script)
+        # `v` goes to the next view of the group, Shift+V to the previous one; `[` still folds the sidebar, Alt+arrows stay the Timeline's.
+        self.assertIn("else if (key.toLowerCase() === 'v' && !event.altKey) { if (cycleView(event.shiftKey ? -1 : 1)) event.preventDefault(); }", self.script)
+        self.assertIn("else if (key === '[') { event.preventDefault(); toggleSidebar(); }", self.script)
         # The timeline is an action view: filters, j/k, Enter, the detail panel and the quick edits work there as in the list and the board.
         self.assertRegex(self.script, r"const ACTION_VIEWS = \[[^\]]*'timeline'[^\]]*\];")
-        self.assertIn("timeline: 'timelineButton'", self.script)
 
     def test_search_is_one_global_field_with_a_results_page(self):
         # One field in the header, the same in every view: no Search button, no second field for the documents or the tools.
@@ -5260,7 +5313,7 @@ class TimelineViewTest(unittest.TestCase):
         self.assertNotIn("search: 'searchButton'", self.script)
         self.assertNotIn("view-searchless", self.script + self.styles)
         # `search` stays an internal view: never restored, never saved as the view to come back to.
-        self.assertIn("const VIEWS = ['priorities', 'today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git', 'settings'];", self.script)
+        self.assertIn("const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git', 'settings'];", self.script)
         self.assertIn("VIEWS.includes(savedUI.view) && savedUI.view !== 'search'", self.script)
         self.assertIn("view: view === 'search' ? searchReturn : view,", self.script)
         # A query shows the results page, an empty field or Esc goes back to the view it left; any other view ends the search.
@@ -5790,15 +5843,15 @@ class ActionViewsPageTest(unittest.TestCase):
         self.assertLess(sections.index("sections.othersLate.push(action)"), sections.index("sections.waiting.push(action)"))
         self.assertIn("if (!mine && action.due && action.due < day) sections.othersLate.push(action);", sections)
         today = self.function("renderToday")
-        titles = re.findall(r"\['[\w-]+', '([^']+)', sections\.\w+, [^\]]*, (true|false)\]", today)
-        self.assertEqual(titles, [("Overdue", "false"), ("Today", "false"), ("In progress", "false"), ("Late from others", "true"),
-                                  ("Waiting on others", "true"), ("This week", "false")])
-        self.assertIn("ownerGroups(actions, late)", today)
+        # Focus: To chase (what others are late on) and Waiting on others, both by owner.
+        self.assertIn("const byOwner = (key, actions) => ownerGroups(actions, late).map(", today)
+        self.assertIn("const parts = byOwner('chase', sections.othersLate);", today)
+        self.assertIn("blocks.push(focusBlock('waiting', 'Waiting on others', sections.waiting.length, 'Waiting, or assigned to someone else', byOwner('waiting', sections.waiting)));", today)
         # The owners with overdue actions lead, then the ones with the most actions, then by name; a row under a heading drops the owner.
         self.assertIn("(late.get(b.owner) || 0) - (late.get(a.owner) || 0) || b.actions.length - a.actions.length || a.owner.localeCompare(b.owner, LOCALE)",
                       self.function("ownerGroups"))
         self.assertIn("rowList(group.actions, {...options, owner: false})", self.function("ownerBlock"))
-        self.assertIn(".section-late h2, .section-others-late h2 { color: var(--danger); }", self.styles)
+        self.assertNotIn("color: var(--danger); }\n.section", self.styles)  # quiet headings: no red block title
 
     def test_the_project_column_gives_way_to_the_title_when_one_project_is_in_scope(self):
         self.assertIn("const options = {project: !singleProject()};", self.function("renderToday"))
@@ -5901,7 +5954,7 @@ class ActionViewsPageTest(unittest.TestCase):
         marker = self.function("markOpenAction")
         self.assertIn("'is-open'", marker)
         self.assertIn("'has-open'", marker)
-        self.assertIn("markOpenAction();", self.function("renderPriorities"))
+        self.assertIn("markOpenAction();", self.function("renderToday"))  # Focus, which shows the /priorities items
         self.assertIn("markOpenAction();", self.function("renderSearchResults"))
         self.assertIn(".prio-id.is-open", self.styles)
         self.assertIn(".prio-body li.has-open", self.styles)
@@ -7015,13 +7068,417 @@ class PrioritiesTest(unittest.TestCase):
         self.assertIn("showToast('Copy failed: select the text and copy it')", script)
         self.assertIn("closest('a, button, .prio-draft')", script)  # linkActionIds skips drafts
 
-    def test_the_view_is_wired_in_the_page(self):
+    SOURCE_SCRIPT = r"""
+const fs = require('fs');
+const vm = require('vm');
+const text = fs.readFileSync(process.argv[1], 'utf8');
+const start = text.indexOf('const PRIO_ID');
+const code = text.slice(start, text.indexOf('\n', start)) + '\n'
+  + text.slice(text.indexOf('function freshPriorities'), text.indexOf('// The action IDs of a rendered section'));
+const context = {Intl, Date, Set, result: null};
+vm.createContext(context);
+vm.runInContext(code + `
+  const TIME_FORMAT = new Intl.DateTimeFormat('en-US', {hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris'});
+  const DAY_FORMAT = new Intl.DateTimeFormat('en-US', {weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Europe/Paris'});
+  let prioData = null;
+  let projectScope = '';
+  function scopeLabel(scope) { return scope === 'projects/clients/acme/' ? 'Acme' : scope; }
+  const now = {key: 'now', count: 2, html: '<ul><li><strong>Send the deck</strong> · ACME-001</li><li>Book the room · ACME-004, INI-002</li></ul>'};
+  const out = [];
+  out.push([prioSourceLine(), freshPriorities()]);
+  prioData = {exists: false};
+  out.push([prioSourceLine(), freshPriorities()]);
+  prioData = {exists: true, stale: false, generated: '2026-11-27T09:50:00+01:00', next_meeting: '10:00 Steering committee', sections: [now]};
+  out.push([prioSourceLine(), Boolean(freshPriorities()), prioSection('now').count, prioSection('prepare'), [...prioCitedIds(prioSection('now'))]]);
+  prioData = {...prioData, next_meeting: null};
+  out.push([prioSourceLine()]);
+  projectScope = 'projects/clients/acme/';
+  out.push([prioSourceLine(2), prioSourceLine(0), Boolean(freshPriorities())]);
+  prioData = {exists: true, stale: true, generated: '2026-11-24T08:00:00+01:00', sections: [now]};
+  out.push([prioSourceLine(), freshPriorities(), prioSection('now')]);
+  prioData = {exists: true, stale: true, generated: null, sections: []};
+  out.push([prioSourceLine()]);
+  result = JSON.stringify(out);
+`, context);
+console.log(context.result);
+"""
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_focus_names_where_the_ranking_comes_from_and_uses_only_todays(self):
+        done = subprocess.run(["node", "-e", self.SOURCE_SCRIPT, str(STATIC / "app/priorities.js")], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        out = json.loads(done.stdout)
+        self.assertEqual(out[0], ["", None])  # not loaded yet
+        self.assertEqual(out[1], ["", None])  # no file: no line, nothing from the ranking
+        self.assertEqual(out[2], ["Ranked by /priorities at 09:50 AM · next meeting 10:00 Steering committee", True, 2, None, ["ACME-001", "ACME-004", "INI-002"]])
+        self.assertEqual(out[3], ["Ranked by /priorities at 09:50 AM"])
+        # A project chosen: the ranking cut to the items about it (renderToday counts them), or a line saying that none cites it.
+        self.assertEqual(out[4], ["Ranked by /priorities at 09:50 AM, the items about Acme", "No /priorities item cites the actions of Acme.", True])
+        self.assertEqual(out[5], ["The /priorities ranking dates from Tue, Nov 24: run /priorities in Claude Code to refresh it.", None, None])  # a project too
+        self.assertEqual(out[6], ["The /priorities ranking has no valid date: run /priorities in Claude Code to refresh it."])
+
+    def test_the_ranking_is_part_of_focus(self):
         with urlopen(self.base + "/", timeout=3) as response:
             page = response.read().decode("utf-8")
-        nav = re.findall(r'<button id="(\w+)" class="nav-item[^"]*" type="button" data-view="(\w+)"', page)
-        self.assertEqual(nav[0], ("prioButton", "priorities"))
-        self.assertIn('id="prioCount"', page)
-        self.assertIn('id="prioView"', page)
+        # No view of its own any more: Focus (the view `today`) shows it, with a quiet source line under the title.
+        for gone in ('id="prioView"', 'id="prioSwitch"', 'id="prioCount"', 'data-view="priorities"'):
+            self.assertNotIn(gone, page)
+        self.assertIn('<p id="viewNote" class="view-note" hidden></p>', page)
+        sidebar = page[page.index('<aside id="sidebar"'):page.index("</aside>")]
+        self.assertIn('title="Focus (1)">', sidebar)
+        self.assertIn('<span class="nav-label">Focus</span><span id="todayCount" class="nav-count"></span>', sidebar)
+        script = app_script()
+        for gone in ("renderPriorities", "prioHeader", "'priorities'"):
+            self.assertNotIn(gone, script)
+        today = script[script.index("function renderToday(base) {"):script.index("// ---------- Actions (list) ----------")]
+        # The blocks, in order; the ranking only when today's, cut to a chosen project; Now leaves out what its items already cite.
+        order = ["focusBlock('now', 'Now'", "['prepare', 'To prepare'", "['conflicts', 'Conflicts'", "['new-requests', 'New requests'",
+                 "focusBlock('doing', 'In progress'", "focusBlock('chase', 'To chase'", "focusBlock('waiting', 'Waiting on others'",
+                 "focusBlock('week', 'This week'", "'Also from /priorities'"]
+        self.assertEqual([today.index(item) for item in order], sorted(today.index(item) for item in order))
+        for fragment in ("const prio = freshPriorities();", "const ranked = prio ? prio.sections.filter(section => section.key !== 'warnings').map(prioScoped) : [];",
+                         "ids.viewNote.textContent = prioSourceLine(ranked.reduce((sum, section) => sum + section.count, 0));",
+                         "const now = rankedSection('now');", "const also = urgent.filter(action => !cited.has(action.id));", "focusSub('Also overdue or due today')",
+                         "'Your actions past their due date or due today'", "['follow-ups', 'to-chase'].map(rankedSection).filter(section => section?.count);",
+                         "'Actions of others past their due date, and the follow-ups drafted by /priorities'",
+                         "const rest = ranked.filter(section => !FOCUS_OWN_BLOCKS.has(section.key) && section.count);",
+                         "const more = element('details', 'focus-more');", "more.open = moreOpen;",
+                         "const warnings = prio && prioSection('warnings');",  # the warnings stay with a project chosen
+                         "banner.setAttribute('aria-label', 'Warnings from /priorities');"):
+            self.assertIn(fragment, today)
+        # With a project chosen, a section keeps the items (top-level list items, drafts with them) that cite an action in scope; the
+        # text of a draft is no citation; a list left empty goes, and the count is the items kept.
+        scoped = script[script.index("function prioScoped(section) {"):script.index("// The action IDs of a rendered section")]
+        for fragment in ("if (!section || !projectScope) return section;",
+                         "const scoped = new Set(snapshot.actions.filter(action => inScope(action.register)).map(action => action.id));",
+                         "for (const draft of copy.querySelectorAll('.prio-draft')) draft.remove();",
+                         "for (const item of [...node.children]) if (cites(item)) count += 1; else item.remove();",
+                         "if (!node.children.length) node.remove();", "} else if (!cites(node)) node.remove();",
+                         "return {...section, html: template.innerHTML, count};"):
+            self.assertIn(fragment, scoped)
+        self.assertNotIn("clear the project to see it", script)
+        self.assertIn("const FOCUS_OWN_BLOCKS = new Set(['now', 'prepare', 'conflicts', 'new-requests', 'follow-ups', 'to-chase', 'warnings']);", script)
+        # IDs open their action, drafts keep their Copy message button; the page reads the file again on Focus and on the window's focus.
+        self.assertIn("ids.todayView.addEventListener('click', event => {", script)
+        self.assertIn("window.addEventListener('focus', () => { if (view === 'today') loadPriorities(); });", script)
+        self.assertIn("if (next === 'today') loadPriorities();", script)
+        self.assertIn("if (view === 'today' && !unchanged) render();", script)
+        styles = (STATIC / "app.css").read_text(encoding="utf-8")
+        for rule in (".view-note { margin-top: 6px; color: var(--text-muted); font-size: var(--fs-xs); }", ".focus-hint {", ".focus-warnings {"):
+            self.assertIn(rule, styles)
+        for gone in (".prio-card", ".prio-view", ".prio-badge", ".prio-notice"):
+            self.assertNotIn(gone, styles)
+
+
+class ViewGroupsTest(unittest.TestCase):
+    """The groups of views: five rail entries (Sync in the header), a row of tabs, a remembered view per group, and the Sync badge.
+
+    The page tests read the markup, the wiring and the style; the logic (the groups, their memory, the cycling and the badge) is cut
+    out of core.js, render.js and git.js and run under node, with a fictitious brain and a browser storage of its own."""
+    STATIC = TOOL.parent / "static"
+    SCRIPT = r"""
+const fs = require('fs');
+const vm = require('vm');
+const [core, render, git] = process.argv.slice(1).map(path => fs.readFileSync(path, 'utf8'));
+const cut = (text, from, to) => {
+  const start = text.indexOf(from);
+  const end = text.indexOf(to, start);
+  if (start < 0 || end < 0) throw new Error(`not found: ${from}`);
+  return text.slice(start, end);
+};
+const store = new Map();
+const context = {store, broken: false, result: null};
+context.localStorage = {
+  getItem: key => { if (context.broken) throw new Error('blocked'); return store.has(key) ? store.get(key) : null; },
+  setItem: (key, value) => { if (context.broken) throw new Error('blocked'); store.set(key, String(value)); }
+};
+vm.createContext(context);
+vm.runInContext([
+  cut(core, 'const VIEW_GROUPS', '// The Docs view was called Notes'),
+  cut(render, 'function openGroup', 'function populateProjects'),
+  cut(git, 'function syncButtonState', 'function renderSyncButton'),
+  `
+  let view = 'today';
+  function setView(next) { view = next; rememberSubview(next); }
+  function plural(count, word, words = word + 's') { return count + ' ' + (count === 1 ? word : words); }
+  function gitPullPlural(count) { return plural(count, 'change'); }
+  let gitLoaded = false;
+  let gitCards = [];
+  const currentBrain = 'brain-acme';
+  const out = {groups: VIEW_GROUPS, titles: GROUP_TITLES, buttons: GROUP_BUTTONS};
+  openGroup('actions'); out.firstTime = view;
+  setView('board'); openGroup('today'); out.otherGroup = view; openGroup('actions'); out.remembered = view;
+  setView('git'); setView('search');
+  out.stored = Object.fromEntries(store);
+  store.set('corvus-subview-docs', 'board'); openGroup('docs'); out.foreign = view;
+  broken = true; openGroup('settings'); out.blocked = view; setView('tools'); out.blockedSet = view; broken = false;
+  out.names = ['list', 'board', 'today', 'archives', 'git', 'tools', 'search'].map(viewName);
+  setView('timeline'); out.cycle = [cycleView(1), view, cycleView(1), view, cycleView(-1), view, cycleView(-1), view];
+  setView('git'); out.cycleSync = [cycleView(1), view];
+  view = 'search'; out.cycleSearch = [cycleView(1), view];
+  out.badges = [syncButtonState()];
+  gitLoaded = true;
+  for (const card of [
+    {name: 'brain-acme', state: 'behind', behind: 2, pending: false},
+    {name: 'brain-acme', state: 'behind', behind: 1, pending: false},
+    {name: 'brain-acme', state: 'behind', behind: 140, pending: true},
+    {name: 'brain-acme', state: 'changes', behind: 0, pending: true},
+    {name: 'brain-acme', state: 'clean', behind: 0, pending: false},
+    {name: 'brain-acme', state: 'unavailable', behind: 0, pending: false},
+  ]) { gitCards = [{name: 'brain-globex', state: 'behind', behind: 7, pending: true}, card]; out.badges.push(syncButtonState()); }
+  gitCards = [{name: 'brain-globex', state: 'behind', behind: 7, pending: true}];
+  out.badges.push(syncButtonState());
+  result = JSON.stringify(out);
+  `
+].join('\n'), context);
+console.log(context.result);
+"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.page = (cls.STATIC / "index.html").read_text(encoding="utf-8")
+        cls.script = app_script()
+        cls.styles = (cls.STATIC / "app.css").read_text(encoding="utf-8")
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_the_groups_remember_their_last_view_cycle_round_and_name_the_sync_badge(self):
+        paths = [str(self.STATIC / "app" / name) for name in ("core.js", "render.js", "git.js")]
+        done = subprocess.run(["node", "-e", self.SCRIPT, *paths], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        out = json.loads(done.stdout)
+        self.assertEqual(out["groups"], {"today": ["today"], "actions": ["list", "board", "timeline"], "docs": ["docs", "archives"],
+                                         "sync": ["git"], "settings": ["settings", "tools"]})
+        self.assertEqual(out["titles"], {"today": "Focus", "actions": "Actions", "docs": "Docs", "sync": "Sync", "settings": "Settings"})
+        self.assertEqual(out["buttons"], {"today": "todayButton", "actions": "listButton", "docs": "docsButton", "settings": "settingsButton"})  # Sync: the header's button
+        # A group opens its first view, then the last one seen; Focus and Sync (a single view each) and the search results store nothing.
+        self.assertEqual((out["firstTime"], out["otherGroup"], out["remembered"]), ("list", "today", "board"))
+        self.assertEqual(out["stored"], {"corvus-subview-actions": "board"})
+        # A stored value that is not a view of the group, or a storage that refuses, gives the group's first view, without an error.
+        self.assertEqual((out["foreign"], out["blocked"], out["blockedSet"]), ("docs", "settings", "tools"))
+        self.assertEqual(out["names"], ["Actions", "Actions · Board", "Focus", "Docs · Archives", "Sync", "Settings · Tools", "Search"])
+        # `v` and Shift+V go round the views of the group; nothing to do in Sync and on the search results.
+        self.assertEqual(out["cycle"], [True, "list", True, "board", True, "list", True, "timeline"])
+        self.assertEqual(out["cycleSync"], [False, "git"])
+        self.assertEqual(out["cycleSearch"], [False, "search"])
+        # The badge speaks for the current brain only: the changes waiting online (99+ at most), else a dot, else nothing.
+        self.assertEqual(out["badges"], [
+            {"badge": "", "label": "Sync"},  # before the first answer
+            {"badge": "2", "label": "Sync: 2 changes waiting online"},
+            {"badge": "1", "label": "Sync: 1 change waiting online"},
+            {"badge": "99+", "label": "Sync: 140 changes waiting online, and notes to save or send"},
+            {"badge": "dot", "label": "Sync: notes to save or send"},
+            {"badge": "", "label": "Sync: everything is saved and up to date"},
+            {"badge": "", "label": "Sync"},
+            {"badge": "", "label": "Sync"},  # another brain's card says nothing about this one
+        ])
+
+    def test_the_header_has_a_row_of_tabs_under_the_title_and_the_rail_opens_groups(self):
+        # The title row keeps the title, its counter right after it and the actions; the tabs are a row of their own, under it and
+        # above the filters, each with its icon (the former sidebar entry's) and its name.
+        header = self.page[self.page.index('<header class="view-header'):self.page.index("</header>")]
+        bar = header[header.index('<div class="view-bar'):header.index('<nav id="viewSwitch"')]
+        self.assertIn('<h1 id="viewTitle">Today</h1>', bar)
+        self.assertNotIn("viewSwitch", bar)
+        self.assertLess(bar.index('<h1 id="viewTitle">'), bar.index('id="resultCount"'))
+        self.assertLess(header.index('<nav id="viewSwitch"'), header.index('<div id="filters"'))
+        tabs = header[header.index('<nav id="viewSwitch"'):header.index("</nav>")]
+        self.assertEqual(tabs.count('<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true">'), 7)
+        for icon in (
+                     '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/>', '<path d="M8 7v7"/><path d="M12 7v4"/><path d="M16 7v9"/>',
+                     '<path d="M3 3v16a2 2 0 0 0 2 2h16"/>', '<path d="M16 17H8"/>', '<rect width="20" height="5" x="2" y="3" rx="1"/>',
+                     '<circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>', '<path d="m7 11 2-2-2-2"/><path d="M11 13h4"/>'):
+            self.assertIn(icon, tabs)
+        self.assertNotIn("aria-pressed", tabs)
+        self.assertIn("'viewSwitch',", self.script)
+        # The title names the group (the view's own name on the search results), the tabs the views, the current one `aria-current`;
+        # the row hides for a single view.
+        for fragment in ("ids.viewTitle.textContent = group ? GROUP_TITLES[group] : VIEW_TITLES[next];", "renderViewTabs();\n  rememberSubview(next);",
+                         "ids.viewSwitch.hidden = views.length < 2;", "tab.hidden = !views.includes(tab.dataset.view);",
+                         "if (tab.dataset.view === view) tab.setAttribute('aria-current', 'page'); else tab.removeAttribute('aria-current');",
+                         "if (name === group) ids[id].setAttribute('aria-current', 'page'); else ids[id].removeAttribute('aria-current');"):
+            self.assertIn(fragment, self.script)
+        for gone in ("renderViewSwitch", "switch-button", "switch-count", "view-switch"):
+            self.assertNotIn(gone, self.page + self.script + self.styles)
+        # A rail entry opens its group's last view; a tab switches with setView, the filters untouched.
+        self.assertIn("for (const [group, id] of Object.entries(GROUP_BUTTONS)) ids[id].addEventListener('click', () => openGroup(group));", self.script)
+        self.assertIn("if (button && button.dataset.view !== view) setView(button.dataset.view); // the filters stay as they are", self.script)
+        self.assertIn("const SUBVIEW_KEY = 'corvus-subview-'; // + the group: its last view", self.script)
+        self.assertIn("try { localStorage.setItem(`${SUBVIEW_KEY}${group}`, name); } catch { /* Not remembered. */ }", self.script)
+        # The tab's own view still comes back after a reload (session storage), as before.
+        self.assertIn("view: view === 'search' ? searchReturn : view, project: projectScope,", self.script)
+        # Compact tabs, no box and no pill: 36 px high, the current one underlined in the brain's colour with the strong text colour,
+        # the others muted and the accent on hover, a hairline under the whole row; it scrolls sideways with its scrollbar hidden.
+        for rule in (".view-tabs {\n  display: flex; gap: 14px; margin-top: 10px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;\n  box-shadow: inset 0 -1px 0 var(--line);\n}",
+                     ".view-tabs::-webkit-scrollbar { display: none; }",
+                     "height: 36px; padding: 0 2px; border: 0; border-block: 2px solid transparent;",
+                     "background: transparent; color: var(--text-muted); font-size: var(--fs-sm); font-weight: 500; white-space: nowrap;",
+                     ".view-tab:hover { color: var(--accent); }", ".view-tab[aria-current=\"page\"] { color: var(--text); border-bottom-color: var(--accent); }",
+                     ".tab-count:empty { display: none; }"):
+            self.assertIn(rule, self.styles)
+        tab_rules = self.styles[self.styles.index(".view-tabs {"):self.styles.index(".tab-count:empty")]
+        for gone in ("border-radius: var(--radius", "accent-soft", "background: var("):
+            self.assertNotIn(gone, tab_rules)
+        # The title row: the title with a start of its counter (200 px), else the search and the buttons go to a second row; from
+        # 640 px down they always have one.
+        self.assertIn(".view-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: 36px; }", self.styles)
+        self.assertIn(".view-heading { flex: 1 1 0; min-width: 200px; display: flex; align-items: baseline; gap: 10px; }", self.styles)
+        narrow = self.styles[self.styles.index("@container main (max-width: 640px) {"):]
+        narrow = narrow[:narrow.index("\n}\n")]
+        self.assertIn(".view-heading { flex: 1 1 0; min-width: 0; }", narrow)
+        self.assertIn(".view-actions { flex: 1 1 100%; }", narrow)
+        self.assertNotIn("min-width: 340px", self.styles)
+        self.assertNotIn("@container main (max-width: 480px)", self.styles)
+
+    LETTERS_SCRIPT = r"""
+const fs = require('fs');
+const vm = require('vm');
+const text = fs.readFileSync(process.argv[1], 'utf8');
+const code = text.slice(text.indexOf('function railPrefix'), text.indexOf('function railProjectButton'));
+const context = {result: null};
+vm.createContext(context);
+vm.runInContext(`const LOCALE = 'en-US';
+const A = 'projects/clients/acme/missions/', G = 'projects/clients/globex/missions/', I = 'projects/clients/initech/missions/', N = 'projects/internal/';
+const actions = (register, prefix, count) => Array.from({length: count}, (_, n) => ({id: prefix + '-00' + n, register}));
+const snapshot = {
+  registers: [{path: 'a/one', prefix: 'ACME'}, {path: 'a/two', prefix: 'ACME'}, {path: 'a/empty', prefix: ''}, {path: 'w/empty', prefix: ''},
+    {path: A + 'pilot', prefix: 'ACME'}, {path: A + 'audit', prefix: 'ACX'}, {path: G + 'new', prefix: 'GLX'}, {path: G + 'other', prefix: ''},
+    {path: I + 'one', prefix: 'INI'}, {path: I + 'two', prefix: 'INX'}, {path: N + 'hiring', prefix: 'HIR'}, {path: N + 'intranet', prefix: 'INT'},
+    {path: N + 'setup', prefix: 'SET'}],
+  actions: [...actions(A + 'pilot', 'ACME', 5), ...actions(A + 'audit', 'ACX', 2), ...actions(I + 'one', 'INI', 2), ...actions(I + 'two', 'INX', 2),
+    ...actions(N + 'hiring', 'HIR', 3), ...actions(N + 'intranet', 'INT', 1), ...actions(N + 'setup', 'SET', 1)]};
+${code}
+const group = (key, paths) => ({key, children: paths.map(path => ({key: path}))});
+result = JSON.stringify([
+  [['a/one', 'a/two', 'a/empty'], ['w/empty']].map(keys => railPrefix(group('a/', keys))),
+  [group('projects/clients/acme/', [A + 'pilot', A + 'audit']), group('projects/clients/globex/', [G + 'new', G + 'other']),
+   group('projects/clients/initech/', [I + 'one', I + 'two']), group(N, [N + 'hiring', N + 'intranet', N + 'setup'])].map(railPrefix),
+  ['Globex Media', 'CYBERDYNE', 'Wonka', 'acme', 'Umbrella Corp Group', 'X', 'Internal'].map(label => railLetters(label)),
+  ['Wonka', 'Internal', 'Umbrella Corp Group Holding'].map(label => railLetters(label, 4))]);`, context);
+console.log(context.result);
+"""
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_the_folded_rail_shows_the_projects_by_the_prefix_of_their_actions(self):
+        done = subprocess.run(["node", "-e", self.LETTERS_SCRIPT, str(self.STATIC / "app/filters.js")], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        prefixes, clients, codes, longer = json.loads(done.stdout)
+        # The one prefix of the group's registers (a register of no prefix does not count); none for several or none.
+        self.assertEqual(prefixes, ["ACME", ""])
+        # A client keeps the prefix most of its actions carry (ACME over a few ACX; INI before INX on a tie); a client with no action
+        # takes its registers' one prefix (GLX, reserved by an empty register's header); Internal with several keeps the name code.
+        self.assertEqual(clients, ["ACME", "GLX", "INI", ""])
+        self.assertEqual(codes, ["GM", "CYB", "WON", "ACM", "UCG", "X", "INT"])  # otherwise a code from the name, in capitals
+        self.assertEqual(longer, ["WONK", "INTE", "UCGH"])  # when two pills would read the same
+        # Under the groups of the rail; the six groups of the tree's top level with the most open actions, by name; +N past six,
+        # with a menu of the others; a click filters, a click on the current one clears; rebuilt with the project list.
+        nav = self.page[self.page.index('<nav class="nav" aria-labelledby="viewsHeading">'):]
+        nav = nav[:nav.index("</nav>")]
+        self.assertLess(nav.index('id="docsButton"'), nav.index('<div id="railProjects" class="rail-projects" role="group" aria-label="Projects"></div>'))
+        for fragment in ("const RAIL_PROJECTS = 6;", "const room = groups.length > RAIL_PROJECTS ? RAIL_PROJECTS - 1 : RAIL_PROJECTS;",
+                         "const shown = [...groups].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, LOCALE)).slice(0, room)\n    .sort((a, b) => a.label.localeCompare(b.label, LOCALE));",
+                         "const codes = shown.map((group, index) => prefixes[index] || railLetters(group.label));",
+                         "const text = !prefixes[index] && codes.filter(code => code === codes[index]).length > 1 ? railLetters(group.label, 4) : codes[index];",
+                         "button.classList.toggle('rail-project-long', text.length > 4);",
+                         "button.addEventListener('click', () => setProjectScope(current ? '' : group.key));",
+                         "railProjectButton(`+${hidden.length}`,", "renderRailProjects(counts);",
+                         "button.setAttribute('aria-label', label);"):
+            self.assertIn(fragment, self.script)
+        # A group of one register names itself in the rail's bubble, with its count; the bubble comes in (120 ms) unless motion is reduced.
+        self.assertIn("const RAIL_ITEMS = '.nav-item, .rail-project, .update-button, .brain-button, #moreButton';", self.script)
+        self.assertIn("if (item.classList.contains('rail-project')) return [item.dataset.name || '', item.dataset.count || ''];", self.script)
+        self.assertIn("@media (prefers-reduced-motion: no-preference) {\n  .rail-tip:not([hidden]) { animation: rail-tip-in 120ms ease-out; }\n"
+                      "  @keyframes rail-tip-in { from { opacity: 0; transform: translateX(-4px); } }\n}", self.styles)
+        self.assertIn("ids.railTip.style.animation = 'none';", self.script)
+        # Sober: the rail's own 40 px boxes, 12 px, weight 600, muted, no colour of their own; the nav items' hover and current look;
+        # only in the folded rail of a wide Corvus window, never in a browser tab, the drawer or beside the open card.
+        for rule in (".rail-projects { display: none; }", ".app-window .app.sidebar-collapsed .rail-projects:not(:empty) {",
+                     "border-top: 1px solid var(--line);", "width: 40px; height: 40px; padding: 0; border: 0; border-radius: var(--radius-control);",
+                     "background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 600; line-height: 1;",
+                     ".rail-project-long { font-size: 10px; }", ".rail-project:hover { background: var(--bg-sunken); }",
+                     ".rail-project[aria-current=\"true\"] { background: var(--accent-soft); color: var(--accent-strong); }"):
+            self.assertIn(rule, self.styles)
+
+    ROWS_SCRIPT = r"""
+const fs = require('fs');
+const vm = require('vm');
+const text = fs.readFileSync(process.argv[1], 'utf8');
+const code = text.slice(text.indexOf('function railGroupRows'), text.indexOf('// The prefix of the group'));
+const context = {result: null};
+vm.createContext(context);
+vm.runInContext(`${code}
+const counts = new Map([['projects/clients/acme/missions/pilot/state/actions.md', 4], ['projects/clients/acme/missions/rollout/state/actions.md', 0],
+  ['projects/clients/globex/missions/audit/state/actions.md', 2], ['projects/internal/setup/state/actions.md', 1]]);
+result = JSON.stringify([
+  railGroupRows({key: 'projects/clients/acme/', label: 'Acme', count: 4, children: [{key: 'projects/clients/acme/missions/pilot/state/actions.md', label: 'pilot'},
+    {key: 'projects/clients/acme/missions/rollout/state/actions.md', label: 'rollout'}]}, counts),
+  railGroupRows({key: 'projects/clients/globex/', label: 'Globex', count: 2, children: [{key: 'projects/clients/globex/missions/audit/state/actions.md', label: 'audit'}]}, counts),
+  railGroupRows({key: 'projects/internal/', label: 'Internal', count: 1, children: [{key: 'projects/internal/setup/state/actions.md', label: 'setup'}]}, counts)]);`, context);
+console.log(context.result);
+"""
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_code_of_several_missions_has_a_menu_of_them_and_no_card_peeks(self):
+        done = subprocess.run(["node", "-e", self.ROWS_SCRIPT, str(self.STATIC / "app/filters.js")], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        acme, globex, internal = json.loads(done.stdout)
+        # The group with its open actions, then each mission in the card's order with its own; one register: the group alone.
+        self.assertEqual(acme, [{"scope": "projects/clients/acme/", "label": "Acme", "count": 4, "child": False},
+                                {"scope": "projects/clients/acme/missions/pilot/state/actions.md", "label": "pilot", "count": 4, "child": True},
+                                {"scope": "projects/clients/acme/missions/rollout/state/actions.md", "label": "rollout", "count": 0, "child": True}])
+        self.assertEqual(globex, [{"scope": "projects/clients/globex/", "label": "Globex", "count": 2, "child": False}])
+        self.assertEqual(internal, [{"scope": "projects/internal/", "label": "Internal", "count": 1, "child": False}])
+        # Only a group of several registers, and "+N" (the hidden groups, each with its missions), get the menu; the others keep the bubble.
+        for fragment in ("if (group.children.length > 1) railMenuButton(button, group.key, railGroupRows(group, counts));",
+                         "railMenuButton(more, '+', hidden.flatMap(group => railGroupRows(group, counts)));",
+                         "button.setAttribute('aria-haspopup', 'menu');", "button.setAttribute('aria-expanded', 'false');", "button.setAttribute('aria-controls', 'railMenu');",
+                         "if (item.matches('.rail-project[aria-haspopup]')) return; // its missions menu takes the bubble's place (below)",
+                         "more.addEventListener('click', event => { if (openRailMenu(more) && event.detail === 0) railMenuItems()[0]?.focus(); });"):
+            self.assertIn(fragment, self.script)
+        self.assertIn('<div id="railMenu" class="menu rail-menu" role="menu" hidden></div>', self.page)
+        self.assertIn("'railTip', 'railMenu',", self.script)
+        menu = self.script[self.script.index("// ---------- The missions menu of the rail's projects ----------"):self.script.index("function moreItems()")]
+        # Rows: radio items of the menu, the current scope checked (as in the card), the missions a step in; the code is expanded.
+        for fragment in ("item.setAttribute('role', 'menuitemradio');", "item.setAttribute('aria-checked', String(row.scope === projectScope));",
+                         "const item = element('button', `menu-item${row.child ? ' rail-menu-child' : ''}`);", "pill.setAttribute('aria-expanded', 'true');",
+                         "pill.setAttribute('aria-expanded', 'false');", "ids.railMenu.style.left = `${Math.round(box.right + 8)}px`;",
+                         # Opens on the pointer and on keyboard focus; stays while the pointer crosses into it (a grace), closes on leaving both.
+                         "ids.railProjects.addEventListener('mouseover', event => { const pill = railMenuPill(event.target); if (pill) openRailMenu(pill); });",
+                         "if (pill.matches(':focus-visible')) openRailMenu(pill);",
+                         "if (target && (ids.railMenu.contains(target) || railMenuPill(target) === railMenuAnchor)) keepRailMenu();",
+                         "railMenuTimer = setTimeout(() => { railMenuTimer = 0; closeRailMenu(false); }, 180);",
+                         # Esc, the window's focus, a click elsewhere, the focus leaving, a choice.
+                         "window.addEventListener('blur', () => closeRailMenu(false));",
+                         "if (railMenuOpen() && event.target !== railMenuAnchor && !ids.railMenu.contains(event.target)) closeRailMenu(false);",
+                         "closeRailMenu(false);\n  setProjectScope(item.dataset.scope);",
+                         # The keyboard: → into it from the code, ↑ ↓ Home End inside, Esc or ← back to the code.
+                         "if (!pill || event.key !== 'ArrowRight') return;", "if (openRailMenu(pill)) railMenuItems()[0]?.focus();",
+                         "if (event.key === 'ArrowDown' || event.key === 'ArrowUp')", "else if (event.key === 'Escape' || event.key === 'ArrowLeft') { event.stopPropagation(); closeRailMenu(true); }"):
+            self.assertIn(fragment, menu)
+        self.assertIn("if (railMenuOpen()) { event.preventDefault(); closeRailMenu(", self.script)  # Esc with the focus on the code
+        self.assertIn("closeRailMenu(false); // its code is drawn again", self.script)
+        # The ⋯ menu's look, fixed to the right of the rail, the current scope tinted, the bubble's entrance (none with reduced motion).
+        for rule in (".rail-menu { position: fixed; z-index: 75; min-width: 200px;", ".rail-menu .rail-menu-child { padding-left: 22px; }",
+                     ".rail-menu .menu-item[aria-checked=\"true\"] { background: var(--accent-soft); color: var(--accent-strong); }",
+                     "@media (prefers-reduced-motion: no-preference) {\n  .menu.rail-menu:not([hidden]) { animation: rail-tip-in 120ms ease-out; }\n}"):
+            self.assertIn(rule, self.styles)
+        # No more peek of the card from the rail: "+N" no longer shows it, and nothing starts or keeps one.
+        for gone in ("startPeek", "endPeek", "sidebar-peek", "PEEK_KEEPERS", "card-view"):
+            self.assertNotIn(gone, self.script + self.styles)
+
+
+
+class SharedGlobalsTest(unittest.TestCase):
+    """The page's scripts are classic scripts that share one global scope (index.html loads them in order)."""
+
+    def test_no_two_scripts_declare_the_same_global_name(self):
+        # A function declared twice is silently replaced by the later script's: the Settings helper `scopeLabel` once hid the
+        # sidebar's, and the Project chip showed "Other (projects/…)" instead of the project's name.
+        declared = {}
+        for path in sorted([*(STATIC / "app").glob("*.js"), *STATIC.glob("*.js")]):
+            for name in re.findall(r"^(?:async\s+)?(?:function\s*\*?|class\s+|const\s+|let\s+|var\s+)\s*([A-Za-z_$][\w$]*)", path.read_text(encoding="utf-8"), re.M):
+                declared.setdefault(name, []).append(path.name)
+        self.assertEqual({name: files for name, files in declared.items() if len(files) > 1}, {})
+        self.assertIn("function scopeKindLabel(slug)", (STATIC / "app/settings.js").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

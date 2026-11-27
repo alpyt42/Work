@@ -23,8 +23,9 @@ and launcher.sh run it. Standard library only.
        artifacts folder (never by bundle id, which an archived copy shares), and the launcher is done: the bundle
        shows its own window, or its own fallback. window.py is run directly only when that app is not there. Linux
        skips (a): uv's isolated environment cannot reach the system's GTK or Qt bindings;
-   (b) a Chrome app window (`--app=URL`): Google Chrome, else Microsoft Edge, else Chromium or Brave;
-   (c) the default browser.
+   (b) a Chrome app window (`--app=URL?shell=app`, the app's layout as in the native window): Google Chrome, else
+       Microsoft Edge, else Chromium or Brave;
+   (c) the default browser (the plain address: the layout of a browser tab).
 
 Modes: --browser skips (a). --prepare-window (the macOS bundle) starts the server, makes sure window.py can run
 (`window.py --check`, which may download pywebview) and prints only the path of the Python that runs it, for the bundle
@@ -308,10 +309,16 @@ def start_browser(command: list[str]) -> bool:
     return True
 
 
+def app_window_url(url: str) -> str:
+    """The page as an app window opens it: in the app's layout (?shell=app, static/window-shell.js), like the native window
+    on Windows and Linux. A browser tab keeps the plain address and the layout of a web page."""
+    return f"{url}{'&' if '?' in url else '?'}shell=app"
+
+
 def open_fallback(url: str, work: Path = WORK, command_for=app_mode_command, starter=start_browser, browser=webbrowser.open) -> str:
-    """Open the page without the native window: a Chrome app window ('app-mode'), else the default browser ('browser');
-    '' when neither worked. The step used is written to agents/tasks-web.log."""
-    command = command_for(url)
+    """Open the page without the native window: a Chrome app window ('app-mode', in the app's layout), else the default
+    browser ('browser', a plain tab); '' when neither worked. The step used is written to agents/tasks-web.log."""
+    command = command_for(app_window_url(url))
     if command is None:
         log_line(work, "No Chrome, Edge, Chromium or Brave found for an app window.")
     elif starter(command):

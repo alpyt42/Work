@@ -37,17 +37,24 @@ function orderedGitCards() {
 }
 function gitPendingCount() { return gitCards.filter(card => card.pending).length; }
 function gitPullPlural(count) { return plural(count, 'change'); }
-// The sidebar button: shown only when the current brain is behind its online copy and can simply be brought up to date.
-function renderSyncPullButton() {
+// The header's Sync button, about the current brain: its badge counts the changes waiting in the online copy (99+ at most), or is a
+// dot when none waits but the brain has notes to save or send, and nothing when all is in step; its name says which. Pressed in Sync.
+function syncButtonState() {
   const card = gitLoaded ? gitCards.find(item => item.name === currentBrain) : null;
-  const show = Boolean(card && card.pullable && card.behind > 0);
-  ids.syncPullButton.hidden = !show;
-  if (!show) return;
-  const busy = gitBusy.has(card.name);
-  ids.syncPullButtonLabel.textContent = busy ? 'Syncing…' : `Sync ${gitPullPlural(card.behind)}`;
-  ids.syncPullButton.disabled = busy;
-  ids.syncPullButton.setAttribute('aria-busy', String(busy));
-  ids.syncPullButton.title = `${gitPullPlural(card.behind)} from another computer ${card.behind === 1 ? 'is' : 'are'} waiting online. Click to bring ${card.behind === 1 ? 'it' : 'them'} into ${card.label}.`;
+  const behind = card && card.behind > 0 ? card.behind : 0;
+  const pending = Boolean(card?.pending);
+  const label = behind ? `Sync: ${gitPullPlural(behind)} waiting online${pending ? ', and notes to save or send' : ''}`
+    : pending ? 'Sync: notes to save or send' : card?.state === 'clean' ? 'Sync: everything is saved and up to date' : 'Sync';
+  return {badge: behind ? (behind > 99 ? '99+' : String(behind)) : pending ? 'dot' : '', label};
+}
+function renderSyncButton() {
+  const {badge, label} = syncButtonState();
+  ids.syncBadge.hidden = !badge;
+  ids.syncBadge.classList.toggle('is-dot', badge === 'dot');
+  ids.syncBadge.textContent = badge === 'dot' ? '' : badge;
+  ids.syncButton.setAttribute('aria-label', label);
+  ids.syncButton.title = label;
+  ids.syncButton.setAttribute('aria-pressed', String(view === 'git'));
 }
 // "Checked online 3 minutes ago", from the newest check of any brain; a failed one is named quietly.
 function gitCheckText() {
@@ -169,9 +176,7 @@ function gitCardNode(card) {
 // Draws the cards again, keeping the scroll position and the focus (`fallbackKey`: where the focus goes when its control is gone).
 function renderGit(fallbackKey = '') {
   const pending = gitPendingCount();
-  renderSyncPullButton();
-  ids.gitCount.textContent = gitLoaded && pending ? String(pending) : '';
-  ids.gitButton.setAttribute('aria-label', gitLoaded && pending ? `Sync, ${plural(pending, 'brain')} to save or send` : 'Sync');
+  renderSyncButton();
   if (view !== 'git') return;
   ids.gitCheckInfo.textContent = gitLoaded ? gitCheckText() : '';
   ids.gitCheckButton.disabled = gitFetching;
@@ -300,14 +305,6 @@ async function runGit(card, action) {
   }
   return succeeded;
 }
-// The sidebar button: pull the current brain; on a refusal, open the Sync view where the reason is written.
-async function pullCurrentBrain() {
-  const card = gitCards.find(item => item.name === currentBrain);
-  if (!card || !card.pullable || gitBusy.has(card.name)) return;
-  const done = await runGit(card, 'pull');
-  if (!done) setView('git');
-}
-ids.syncPullButton.addEventListener('click', pullCurrentBrain);
 ids.gitCheckButton.addEventListener('click', () => fetchGit({force: true}));
 // Also when a page loaded hidden (a background tab) is first shown: the check at start was skipped then.
 function fetchGitIfStale() { if (Date.now() - gitLastFetchAt > GIT_FOCUS_AFTER) fetchGitInBackground(); }

@@ -3,7 +3,12 @@
 // ---------- Wiring ----------
 const newNoteBar = mountMarkdownToolbar(ids.newNoteToolbar, ids.newNoteContent);
 mountMarkdownToolbar(ids.docEditorToolbar, ids.docEditor);
-for (const [name, id] of Object.entries(NAV_BUTTONS)) ids[id].addEventListener('click', () => setView(name));
+for (const [group, id] of Object.entries(GROUP_BUTTONS)) ids[id].addEventListener('click', () => openGroup(group));
+ids.viewSwitch.addEventListener('click', event => {
+  const button = event.target instanceof Element ? event.target.closest('[data-view]') : null;
+  if (button && button.dataset.view !== view) setView(button.dataset.view); // the filters stay as they are
+});
+ids.syncButton.addEventListener('click', () => setView('git'));
 ids.newButton.addEventListener('click', () => openEditor());
 ids.newNoteButton.addEventListener('click', openNewNote);
 ids.sidebarToggle.addEventListener('click', toggleSidebar);

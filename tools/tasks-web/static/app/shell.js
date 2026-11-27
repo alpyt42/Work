@@ -56,8 +56,8 @@ function toggleSidebar() {
   closeMoreMenu(false);
   closeBrainMenu(false);
   hideRailTip();
-  endPeek(); // a click on the button while the card peeks keeps it open
-  ids.app.classList.remove('card-off'); // and on a view without projects, a click asks for the card all the same
+  closeRailMenu(false);
+  ids.app.classList.remove('card-off'); // on a view without projects, a click asks for the card all the same
   ids.app.classList.add('is-sliding'); // eases the width between full and rail (CSS), only for this change
   clearTimeout(slideTimer);
   slideTimer = setTimeout(() => ids.app.classList.remove('is-sliding'), 260);
@@ -65,98 +65,38 @@ function toggleSidebar() {
   try { localStorage.setItem(SIDEBAR_KEY, collapsed ? 'collapsed' : 'open'); } catch { /* Not remembered. */ }
   updateSidebarToggle();
 }
-narrowQuery.addEventListener('change', () => { closeDrawer(false); hideRailTip(); endPeek(); fitCardToView(); updateSidebarToggle(); });
+narrowQuery.addEventListener('change', () => { closeDrawer(false); hideRailTip(); closeRailMenu(false); fitCardToView(); updateSidebarToggle(); });
 
-// Corvus's macOS window (window-shell.js) has two sidebar columns when wide: a rail of icons that always shows, and the brain's card,
-// which the sidebar button folds away. Folded, the pointer on one of the views of the rail (Priorities to Docs, the ones the projects
-// filter; not Archives, Tools, Sync or Settings) shows the card over the page; it stays while the pointer is on the views or on the
-// card (to choose a project) and goes when the pointer leaves both (CSS: .sidebar-peek), after a short delay so that the pointer can
-// cross from one to the other. The class 'sidebar-collapsed' steps aside meanwhile, and nothing is remembered.
-const macWindow = document.documentElement.classList.contains('mac-window');
-// Wide, the sidebar button sits in the title row next to the window buttons (app.css): it leaves the view's bar, whose layer is
-// below the peeking card, for a place of its own just before the app (still second in the tab order, after the skip link).
+// A Corvus window (window-shell.js marks it `app-window`, on every system) has two sidebar columns when wide: a rail of icons that
+// always shows, and the brain's card, which the sidebar button (or `[`) folds away and brings back. Folded, the rail shows the
+// projects as codes, with a menu of the missions of a client (below). Only the room for the macOS window buttons and the window's
+// drag regions are the Mac's own (`mac-window`: app.css and window.py), so nothing here depends on the system.
+const appWindow = document.documentElement.classList.contains('app-window');
+// Wide, the sidebar button sits in the top row (next to the window buttons on a Mac, app.css): it leaves the view's bar for a fixed
+// place of its own just before the app (still second in the tab order, after the skip link).
 const sidebarToggleHome = ids.sidebarToggle.parentElement;
 function placeSidebarToggle() {
-  if (macWindow && !narrowQuery.matches) ids.app.before(ids.sidebarToggle);
+  if (appWindow && !narrowQuery.matches) ids.app.before(ids.sidebarToggle);
   else if (ids.sidebarToggle.parentElement !== sidebarToggleHome) sidebarToggleHome.prepend(ids.sidebarToggle);
 }
 placeSidebarToggle();
 narrowQuery.addEventListener('change', placeSidebarToggle);
-let peekTimer = 0;
-function peeking() { return ids.app.classList.contains('sidebar-peek'); }
-function keepPeek() { clearTimeout(peekTimer); peekTimer = 0; }
-function startPeek() {
-  keepPeek();
-  if (!macWindow || narrowQuery.matches || peeking() || !ids.app.classList.contains('sidebar-collapsed')) return;
-  hideRailTip();
-  ids.app.classList.add('sidebar-peek');
-  ids.app.classList.remove('sidebar-collapsed');
-}
-function endPeek() {
-  keepPeek();
-  if (!peeking()) return;
-  ids.app.classList.remove('sidebar-peek');
-  ids.app.classList.add('sidebar-collapsed');
-  peekView = '';
-  showCardView();
-}
-// The projects filter neither Archives, Tools, Sync nor Settings: there the card steps aside (the rail alone, class 'card-off')
-// without changing the remembered choice, and comes back on a view that the projects filter (render.js calls this on each change).
+// The projects filter neither Archives (in Docs), Sync, nor Settings and Tools: there the card steps aside (the rail alone, class
+// 'card-off') without changing the remembered choice, and comes back on a view that the projects filter (render.js calls this on
+// each change).
 const NO_PROJECT_VIEWS = ['archives', 'tools', 'git', 'settings'];
 function fitCardToView() {
-  if (!macWindow || narrowQuery.matches) return;
+  if (!appWindow || narrowQuery.matches) return;
   const off = NO_PROJECT_VIEWS.includes(view);
   if (off === ids.app.classList.contains('card-off')) return;
-  endPeek();
+  closeRailMenu(false);
   ids.app.classList.toggle('card-off', off);
   ids.app.classList.toggle('sidebar-collapsed', off || readSidebarCollapsed());
   updateSidebarToggle();
 }
-// Above the projects, the card names the view they open: the hovered one while the card peeks (a project chosen then opens it,
-// app/filters.js). Pinned, the header already names the view and the line stays empty (CSS: .card-view:not(:empty) while peeking).
-let peekView = '';
-function pendingPeekView() { return peeking() ? peekView : ''; }
-function showCardView() {
-  const icon = ids[NAV_BUTTONS[peekView]]?.querySelector('svg')?.cloneNode(true);
-  ids.cardView.replaceChildren(...(icon ? [icon] : []), document.createTextNode(VIEW_TITLES[peekView] || ''));
-  // The highlight follows the pointer while the card peeks: the hovered view looks chosen, and stays so while the pointer is on the
-  // card, since a project chosen there opens it (CSS: .is-peeked).
-  for (const entry of ids.sidebar.querySelectorAll('.nav-item.is-peeked')) entry.classList.remove('is-peeked');
-  if (pendingPeekView()) ids[NAV_BUTTONS[peekView]]?.classList.add('is-peeked');
-}
-// Leaving starts one short countdown (not restarted by further moves), so that the pointer can cross from a view to the card.
-function leavePeek() {
-  if (!peeking() || brainMenuOpen() || peekTimer) return;
-  peekTimer = setTimeout(() => { peekTimer = 0; endPeek(); }, 120);
-}
-// WebKit may not report the pointer leaving an element when it moves fast or leaves the window, so every move is checked too, and
-// the card goes when the pointer leaves the window or the window loses the focus.
-const PEEK_KEEPERS = '.nav[aria-labelledby="viewsHeading"] .nav-item, .sidebar-top, .projects';
-document.addEventListener('mousemove', event => {
-  if (!peeking()) return;
-  if (event.target instanceof Element && event.target.closest(PEEK_KEEPERS)) keepPeek(); else leavePeek();
-}, {passive: true});
-document.documentElement.addEventListener('mouseleave', () => { if (!brainMenuOpen()) endPeek(); });
-window.addEventListener('blur', () => endPeek());
-for (const entry of ids.sidebar.querySelectorAll('.nav[aria-labelledby="viewsHeading"] .nav-item')) { // the views, which the projects filter
-  entry.addEventListener('mouseenter', () => {
-    startPeek();
-    if (!peeking()) return;
-    peekView = entry.dataset.view;
-    showCardView();
-    // No native tooltip over the card: the entry's title comes back when the pointer leaves.
-    if (entry.title) { entry.dataset.peekTitle = entry.title; entry.removeAttribute('title'); }
-  });
-  entry.addEventListener('mouseleave', () => {
-    if (entry.dataset.peekTitle) { entry.title = entry.dataset.peekTitle; delete entry.dataset.peekTitle; }
-    leavePeek();
-  });
-}
-// The card itself keeps the peek, so that a project can be chosen in it: the per-move check above (PEEK_KEEPERS) ends it when the
-// pointer leaves both the views and the card.
 
 // ---------- Resizing ----------
-// The handles on the sidebar's edge (its card's in the Mac window) and on the detail panel's: drag, arrow keys, double-click for the
+// The handles on the sidebar's edge (its card's in the app window) and on the detail panel's: drag, arrow keys, double-click for the
 // default width. The width is a CSS variable set on the page and kept by the browser under `corvus-width<variable>`; window-shell.js
 // sets it back before the first paint.
 function widthOf(variable) { return parseFloat(getComputedStyle(document.documentElement).getPropertyValue(variable)) || 0; }
@@ -205,7 +145,7 @@ function makeResizable(handle, {variable, min, max, fromRight = false, step = 16
   });
   handle.addEventListener('dblclick', () => resetWidth(variable));
 }
-makeResizable(ids.sidebarResizer, macWindow ? {variable: '--list-w', min: 180, max: () => 440} : {variable: '--sidebar-full-w', min: 200, max: () => 440});
+makeResizable(ids.sidebarResizer, appWindow ? {variable: '--list-w', min: 180, max: () => 440} : {variable: '--sidebar-full-w', min: 200, max: () => 440});
 // The list beside the panel keeps at least 480 px (the sidebar's width is read as laid out: full, rail or card).
 const PANEL_MIN = 340;
 const LIST_MIN = 480;
@@ -216,18 +156,18 @@ makeResizable(ids.panelResizer, {
 
 // In the rail the labels are visually hidden (still read by screen readers), so each entry shows its label, and its count when it has
 // one, in a small bubble to its right on hover and keyboard focus. The bubble is fixed to the page: the sidebar scrolls and would clip it.
-const RAIL_ITEMS = '.nav-item, .update-button, .brain-button, #moreButton';  // .update-button covers #syncPullButton
+const RAIL_ITEMS = '.nav-item, .rail-project, .update-button, .brain-button, #moreButton';
 let railTipItem = null;
 function railActive(item) {
   if (narrowQuery.matches) return false;
   if (ids.app.classList.contains('sidebar-collapsed')) return true;
-  if (peeking()) return false; // the peeking card says enough; no bubble over it
-  return macWindow && item !== ids.brainButton; // the Mac window's rail shows beside the card, whose switcher has its name
+  return appWindow && item !== ids.brainButton; // the app window's rail shows beside the card, whose switcher has its name
 }
 function railTipParts(item) {
   if (item === ids.brainButton) return [ids.brainName.textContent.trim(), ''];
   if (item === ids.moreButton) return [item.getAttribute('aria-label') || '', ''];
-  const label = (item.querySelector('.nav-label') || item.querySelector('#updateButtonLabel') || item.querySelector('#syncPullButtonLabel'))?.textContent.trim() || '';
+  if (item.classList.contains('rail-project')) return [item.dataset.name || '', item.dataset.count || ''];
+  const label = (item.querySelector('.nav-label') || item.querySelector('#updateButtonLabel'))?.textContent.trim() || '';
   return [label, item.querySelector('.nav-count')?.textContent.trim() || ''];
 }
 function hideRailTip() {
@@ -237,11 +177,15 @@ function hideRailTip() {
 }
 function showRailTip(item) {
   if (!railActive(item) || !item || item === railTipItem || brainMenuOpen() || !ids.moreMenu.hidden) return;
+  if (item.matches('.rail-project[aria-haspopup]')) return; // its missions menu takes the bubble's place (below)
   hideRailTip();
   const [label, count] = railTipParts(item);
   if (!label) return;
   ids.railTip.replaceChildren(element('span', '', label), ...(count ? [element('span', 'rail-tip-count', count)] : []));
   ids.railTip.hidden = false;
+  ids.railTip.style.animation = 'none'; // each bubble comes in anew, even right after another one (app.css: .rail-tip)
+  void ids.railTip.offsetWidth;
+  ids.railTip.style.animation = '';
   const box = item.getBoundingClientRect();
   const tip = ids.railTip.getBoundingClientRect();
   ids.railTip.style.left = `${Math.round(box.right + 8)}px`;
@@ -258,10 +202,116 @@ ids.sidebar.addEventListener('focusin', event => { if (event.target instanceof E
 ids.sidebar.addEventListener('focusout', hideRailTip);
 ids.sidebar.addEventListener('click', hideRailTip);
 ids.sidebar.querySelector('.sidebar-scroll').addEventListener('scroll', hideRailTip, {passive: true});
+
+// ---------- The missions menu of the rail's projects ----------
+// A project code of the folded rail whose group has several registers (a client with several missions, Internal with several
+// projects), and the "+N" of the groups past six, show a small menu to the right of the rail in place of the bubble: the group with
+// its open actions, then its missions in the card's order (app/filters.js: `railMenuRows`); a row filters, the current scope marked
+// as in the card. It opens on the pointer and on keyboard focus, stays while the pointer crosses from the code into it (a short
+// grace), and closes on leaving both, on Esc, when the window loses the focus and after a choice. → (or Enter on "+N") goes into it,
+// ↑ ↓ Home End move, Esc or ← go back to the code.
+let railMenuAnchor = null;
+let railMenuTimer = 0;
+let railMenuQuietFocus = false; // the code gets the focus back from its menu: no reopening
+function railMenuOpen() { return !ids.railMenu.hidden; }
+function railMenuItems() { return [...ids.railMenu.querySelectorAll('.menu-item')]; }
+function keepRailMenu() { clearTimeout(railMenuTimer); railMenuTimer = 0; }
+function openRailMenu(pill) {
+  const rows = railMenuRows.get(pill.dataset.key);
+  if (!rows || !railActive(pill)) return false;
+  keepRailMenu();
+  if (railMenuOpen() && railMenuAnchor === pill) return true;
+  closeRailMenu(false);
+  hideRailTip();
+  ids.railMenu.replaceChildren(...rows.map(row => {
+    const item = element('button', `menu-item${row.child ? ' rail-menu-child' : ''}`);
+    item.type = 'button';
+    item.tabIndex = -1;
+    item.setAttribute('role', 'menuitemradio');
+    item.setAttribute('aria-checked', String(row.scope === projectScope));
+    item.dataset.scope = row.scope;
+    item.append(element('span', 'menu-item-text', row.label), element('span', 'menu-item-hint', row.count ? String(row.count) : ''));
+    return item;
+  }));
+  ids.railMenu.setAttribute('aria-label', pill.dataset.name || '');
+  ids.railMenu.hidden = false;
+  ids.railMenu.style.animation = 'none'; // it comes in like the bubble, each time (app.css: .rail-menu)
+  void ids.railMenu.offsetWidth;
+  ids.railMenu.style.animation = '';
+  const box = pill.getBoundingClientRect();
+  const menu = ids.railMenu.getBoundingClientRect();
+  ids.railMenu.style.left = `${Math.round(box.right + 8)}px`;
+  ids.railMenu.style.top = `${Math.round(Math.max(4, Math.min(box.top - 5, innerHeight - menu.height - 4)))}px`;
+  pill.setAttribute('aria-expanded', 'true');
+  railMenuAnchor = pill;
+  return true;
+}
+function closeRailMenu(refocus = false) {
+  keepRailMenu();
+  if (!railMenuOpen()) return;
+  const pill = railMenuAnchor;
+  railMenuAnchor = null;
+  ids.railMenu.hidden = true;
+  ids.railMenu.replaceChildren();
+  if (!pill?.isConnected) return;
+  pill.setAttribute('aria-expanded', 'false');
+  if (refocus) { railMenuQuietFocus = true; pill.focus(); }
+}
+function leaveRailMenu() { if (!railMenuTimer) railMenuTimer = setTimeout(() => { railMenuTimer = 0; closeRailMenu(false); }, 180); }
+const railMenuPill = target => target instanceof Element ? target.closest('.rail-project[aria-haspopup]') : null;
+ids.railProjects.addEventListener('mouseover', event => { const pill = railMenuPill(event.target); if (pill) openRailMenu(pill); });
+ids.railProjects.addEventListener('focusin', event => {
+  const pill = railMenuPill(event.target);
+  if (!pill) return;
+  if (railMenuQuietFocus) { railMenuQuietFocus = false; return; }
+  if (pill.matches(':focus-visible')) openRailMenu(pill);
+});
+ids.railProjects.addEventListener('keydown', event => {
+  const pill = railMenuPill(event.target);
+  if (!pill || event.key !== 'ArrowRight') return;
+  event.preventDefault();
+  if (openRailMenu(pill)) railMenuItems()[0]?.focus();
+});
+// The pointer may cross the gap between the code and the menu; WebKit may not report it leaving when it moves fast, so every move
+// is checked while the menu is open. A menu the keyboard is in stays until the focus leaves it.
+document.addEventListener('mousemove', event => {
+  if (!railMenuOpen()) return;
+  const target = event.target instanceof Element ? event.target : null;
+  if (target && (ids.railMenu.contains(target) || railMenuPill(target) === railMenuAnchor)) keepRailMenu();
+  else if (!ids.railMenu.contains(document.activeElement)) leaveRailMenu();
+}, {passive: true});
+document.documentElement.addEventListener('mouseleave', () => { if (!ids.railMenu.contains(document.activeElement)) closeRailMenu(false); });
+window.addEventListener('blur', () => closeRailMenu(false));
+document.addEventListener('focusin', event => {
+  if (railMenuOpen() && event.target !== railMenuAnchor && !ids.railMenu.contains(event.target)) closeRailMenu(false);
+});
+document.addEventListener('pointerdown', event => {
+  if (railMenuOpen() && !ids.railMenu.contains(event.target) && railMenuPill(event.target) !== railMenuAnchor) closeRailMenu(false);
+});
+ids.railMenu.addEventListener('click', event => {
+  const item = event.target instanceof Element ? event.target.closest('.menu-item') : null;
+  if (!item) return;
+  const key = railMenuAnchor?.dataset.key;
+  const keyboard = event.detail === 0;
+  closeRailMenu(false);
+  setProjectScope(item.dataset.scope); // the codes are drawn again: the focus goes back to the one the choice came from
+  if (keyboard && key) { railMenuQuietFocus = true; ids.railProjects.querySelector(`[data-key="${CSS.escape(key)}"]`)?.focus(); }
+});
+ids.railMenu.addEventListener('keydown', event => {
+  const items = railMenuItems();
+  const index = items.indexOf(document.activeElement);
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') items[(index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+  else if (event.key === 'Home' || event.key === 'End') items[event.key === 'Home' ? 0 : items.length - 1]?.focus();
+  else if (event.key === 'Escape' || event.key === 'ArrowLeft') { event.stopPropagation(); closeRailMenu(true); }
+  else if (event.key === 'Tab') { closeRailMenu(false); return; }
+  else return;
+  event.preventDefault();
+});
 function moreItems() { return [...ids.moreMenu.querySelectorAll('.menu-item')]; }
 function openMoreMenu() {
   closePopover(false);
   hideRailTip();
+  closeRailMenu(false);
   ids.moreMenu.hidden = false;
   ids.moreButton.setAttribute('aria-expanded', 'true');
   moreItems()[0].focus();
@@ -329,6 +379,7 @@ function handleEscape(event) {
   if (dismissInfoTip()) { event.preventDefault(); return; }
   if (popoverState) { event.preventDefault(); closePopover(); return; }
   if (!ids.moreMenu.hidden) { event.preventDefault(); closeMoreMenu(); return; }
+  if (railMenuOpen()) { event.preventDefault(); closeRailMenu(ids.railMenu.contains(document.activeElement) || document.activeElement === railMenuAnchor); return; }
   if (ids.app.classList.contains('drawer-open')) { event.preventDefault(); closeDrawer(); return; }
   if (editorOpen() && (ids.editor.contains(document.activeElement) || !isTyping(document.activeElement))) {
     if (!ids.noteForm.hidden && ids.noteForm.contains(document.activeElement)) { event.preventDefault(); closeNoteForm(); return; }
@@ -354,13 +405,15 @@ document.addEventListener('keydown', event => {
   if (key === 'Escape') { handleEscape(event); return; }
   if (event.metaKey || event.ctrlKey || typing) return;
   if (document.querySelector('dialog[open]') || popoverState || brainMenuOpen() || !ids.moreMenu.hidden) return;
-  const digit = /^[0-5]$/.test(key) ? key : /^Digit[0-5]$/.test(event.code) && !event.altKey ? event.code.slice(5) : null;
+  // 1 to 3 open the groups of the sidebar (Today, Actions, Docs), each on its last view; `v` and Shift+V go round its views.
+  const digit = /^[1-3]$/.test(key) ? key : /^Digit[1-3]$/.test(event.code) && !event.altKey ? event.code.slice(5) : null;
   const inRows = ACTION_VIEWS.includes(view);
   const onBody = event.target === document.body || event.target === ids.mainContent || event.target === ids.editorTitle;
   if (key === '/') { event.preventDefault(); focusSearch(); }
   else if (key === '?') { event.preventDefault(); ids.shortcutsDialog.showModal(); }
   else if (key === '[') { event.preventDefault(); toggleSidebar(); }
-  else if (digit && !event.altKey) { event.preventDefault(); setView(['priorities', 'today', 'list', 'board', 'timeline', 'docs'][Number(digit)]); }
+  else if (digit && !event.altKey) { event.preventDefault(); openGroup(['today', 'actions', 'docs'][Number(digit) - 1]); }
+  else if (key.toLowerCase() === 'v' && !event.altKey) { if (cycleView(event.shiftKey ? -1 : 1)) event.preventDefault(); }
   else if (key === 'n' && !event.altKey) { event.preventDefault(); openEditor(); }
   else if (inRows && (key === 'j' || key === 'ArrowDown') && !event.altKey) {
     if (key === 'ArrowDown' && !onBody && !activeRoot().contains(event.target)) return;

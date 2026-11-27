@@ -50,33 +50,21 @@
       <div class="sidebar-scroll">
         <nav class="nav" aria-labelledby="viewsHeading">
           <h2 id="viewsHeading" class="sidebar-heading">Views</h2>
-          <button id="prioButton" class="nav-item" type="button" data-view="priorities" title="Priorities (0)">
-            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg>
-            <span class="nav-label">Priorities</span><span id="prioCount" class="nav-count"></span>
+          <button id="todayButton" class="nav-item" type="button" data-group="today" title="Focus (1)">
+            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/></svg>
+            <span class="nav-label">Focus</span><span id="todayCount" class="nav-count"></span>
           </button>
-          <button id="todayButton" class="nav-item" type="button" data-view="today" title="Today (1)">
-            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/></svg>
-            <span class="nav-label">Today</span><span id="todayCount" class="nav-count"></span>
-          </button>
-          <button id="listButton" class="nav-item" type="button" data-view="list" title="Actions (2)">
+          <button id="listButton" class="nav-item" type="button" data-group="actions" title="Actions (2)">
             <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>
             <span class="nav-label">Actions</span><span id="openCount" class="nav-count"></span>
           </button>
-          <button id="boardButton" class="nav-item" type="button" data-view="board" title="Board (3)">
-            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 7v7"/><path d="M12 7v4"/><path d="M16 7v9"/></svg>
-            <span class="nav-label">Board</span>
-          </button>
-          <button id="timelineButton" class="nav-item" type="button" data-view="timeline" title="Timeline (4)">
-            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6h8"/><path d="M12 16h6"/><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M8 11h7"/></svg>
-            <span class="nav-label">Timeline</span>
-          </button>
-          <button id="docsButton" class="nav-item" type="button" data-view="docs" title="Docs (5)">
+          <button id="docsButton" class="nav-item" type="button" data-group="docs" title="Docs (3)">
             <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
             <span class="nav-label">Docs</span>
           </button>
+          <div id="railProjects" class="rail-projects" role="group" aria-label="Projects"></div>
         </nav>
         <section class="projects" aria-labelledby="projectsHeading">
-          <p id="cardView" class="card-view" aria-live="polite"></p>
           <h2 id="projectsHeading" class="sidebar-heading">Projects</h2>
           <ul id="projectNav" class="project-nav"></ul>
         </section>
@@ -86,24 +74,8 @@
           <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4"/><path d="M12 16V8"/></svg>
           <span id="updateButtonLabel">Update</span>
         </button>
-        <button id="syncPullButton" class="update-button" type="button" hidden>
-          <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
-          <span id="syncPullButtonLabel">Sync changes</span>
-        </button>
-        <nav class="nav footer-list" aria-label="Archives, tools, sync and settings">
-          <button id="archivesButton" class="nav-item" type="button" data-view="archives" title="The archived clients, missions and projects, read-only; unarchive one to work on it again.">
-            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>
-            <span class="nav-label">Archives</span>
-          </button>
-          <button id="toolsButton" class="nav-item" type="button" data-view="tools" title="Workspace commands: nothing is sent to an external service, and those that change the brain ask for confirmation.">
-            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>
-            <span class="nav-label">Tools</span>
-          </button>
-          <button id="gitButton" class="nav-item" type="button" data-view="git" title="Save the changes of each brain and send them to its online copy, or bring here what others sent. The online copies are checked from time to time. Nothing is saved or sent until you click.">
-            <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="m21 8-4-4-4 4"/><path d="M17 4v16"/></svg>
-            <span class="nav-label">Sync</span><span id="gitCount" class="nav-count"></span>
-          </button>
-          <button id="settingsButton" class="nav-item" type="button" data-view="settings" title="See what is left to set up in your workspace, and change your settings.">
+        <nav class="nav footer-list" aria-label="Settings and tools">
+          <button id="settingsButton" class="nav-item" type="button" data-group="settings" title="Settings and Tools: see what is left to set up in your workspace, change your settings, and run the workspace commands.">
             <svg class="lucide nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
             <span class="nav-label">Settings</span>
           </button>
@@ -128,6 +100,7 @@
     </aside>
     <div id="scrim" class="scrim" hidden></div>
     <div id="railTip" class="rail-tip" aria-hidden="true" hidden></div>
+    <div id="railMenu" class="menu rail-menu" role="menu" hidden></div>
     <main id="mainContent" class="main" tabindex="-1">
       <header class="view-header pywebview-drag-region">
         <div class="view-bar pywebview-drag-region">
@@ -139,7 +112,7 @@
             <h1 id="viewTitle">Today</h1>
             <span id="syncInfo" class="info info-title" hidden>
               <button id="syncInfoButton" class="info-button" type="button" aria-label="About Sync" aria-describedby="syncInfoTip"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></button>
-              <span id="syncInfoTip" class="info-tip" role="tooltip"><span class="info-tip-box"><span class="info-tip-line">Each brain is a Git repository. Save and send records the changed notes and sends them to the brain's online copy.</span></span></span>
+              <span id="syncInfoTip" class="info-tip" role="tooltip"><span class="info-tip-box"><span class="info-tip-line">Each brain is a Git repository. Save and send records the changed notes and sends them to the brain's online copy.</span><span class="info-tip-line">The online copies are checked from time to time, and the Sync button counts the changes waiting there. Nothing is saved or sent until you click.</span></span></span>
             </span>
             <span id="resultCount" class="result-count" tabindex="-1"></span>
             <span id="gitStatus" class="view-status" role="status" aria-live="polite" hidden></span>
@@ -158,8 +131,22 @@
               <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               <span class="button-label">New action</span>
             </button>
+            <button id="syncButton" class="button sync-button" type="button" aria-pressed="false" aria-label="Sync" title="Sync">
+              <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="m21 8-4-4-4 4"/><path d="M17 4v16"/></svg>
+              <span id="syncBadge" class="sync-badge" aria-hidden="true" hidden></span>
+            </button>
           </div>
         </div>
+        <nav id="viewSwitch" class="view-tabs" aria-label="Views" hidden>
+          <button class="view-tab" type="button" data-view="list"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>List</button>
+          <button class="view-tab" type="button" data-view="board"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 7v7"/><path d="M12 7v4"/><path d="M16 7v9"/></svg>Board</button>
+          <button class="view-tab" type="button" data-view="timeline"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6h8"/><path d="M12 16h6"/><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M8 11h7"/></svg>Timeline</button>
+          <button class="view-tab" type="button" data-view="docs"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>Docs</button>
+          <button class="view-tab" type="button" data-view="archives" title="The archived clients, missions and projects, read-only; unarchive one to work on it again."><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>Archives</button>
+          <button class="view-tab" type="button" data-view="settings"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>Settings</button>
+          <button class="view-tab" type="button" data-view="tools" title="Workspace commands: nothing is sent to an external service, and those that change the brain ask for confirmation."><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>Tools</button>
+        </nav>
+        <p id="viewNote" class="view-note" hidden></p>
         <div id="filters" class="filter-row" role="group" aria-label="Filters">
           <span id="projectChip" class="chip chip-project" hidden>
             <span class="chip-key">Project</span><span id="projectChipValue" class="chip-value"></span>
@@ -186,8 +173,7 @@
       </header>
       <p id="errorBanner" class="error-banner" role="alert" hidden></p>
       <div class="views">
-        <div id="prioView" class="view-scroll prio-view" aria-label="Priorities" hidden></div>
-        <div id="todayView" class="view-scroll today-view" aria-label="Today" hidden></div>
+        <div id="todayView" class="view-scroll today-view" aria-label="Focus" hidden></div>
         <div id="listView" class="view-scroll list-view" aria-label="Action list" hidden></div>
         <div id="boardView" class="board-view" aria-label="Action board" hidden></div>
         <div id="timelineView" class="timeline-view" aria-label="Timeline" hidden>
@@ -474,7 +460,8 @@
       <dl class="shortcuts">
         <div><dt><kbd>/</kbd></dt><dd>Search the actions and the documents</dd></div>
         <div><dt><kbd>n</kbd></dt><dd>New action</dd></div>
-        <div><dt><kbd>0</kbd> to <kbd>5</kbd></dt><dd>Priorities, Today, Actions, Board, Timeline, Docs</dd></div>
+        <div><dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>Focus, Actions, Docs, each on its last view</dd></div>
+        <div><dt><kbd>v</kbd> or <kbd>⇧</kbd> <kbd>V</kbd></dt><dd>Next or previous view of the group: List, Board and Timeline; Docs and Archives; Settings and Tools</dd></div>
         <div><dt><kbd>j</kbd> <kbd>k</kbd> or <kbd>↓</kbd> <kbd>↑</kbd></dt><dd>Next or previous action</dd></div>
         <div><dt><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></dt><dd>On the Timeline: by date, and by project</dd></div>
         <div><dt><kbd>Alt</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>On the Timeline: move the deadline by a day (with <kbd>Shift</kbd>, a week)</dd></div>

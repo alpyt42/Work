@@ -2,7 +2,7 @@
 
 Corvus is the local app of Work: it shows the actions and the notes of your brains, and lets you change them without an agent. It opens in a window of its own on macOS, Windows and Linux, or in a browser tab. Everything stays on your computer: the server listens on `127.0.0.1` only, keeps no copy of your data and writes every change into the brain's own Markdown files, which your agents read too. Back to the [root README](../../README.md).
 
-![Corvus on macOS: the Today view, with the rail of views and the project card](../../docs/images/tasks-web-today.png)
+![Corvus on macOS: the Focus page, with the rail of sections and the project card](../../docs/images/tasks-web-focus.png)
 
 This guide first lists what Corvus does, then shows how its parts fit together, how to install it and how to launch it. It ends with a tour of the views and the keyboard shortcuts.
 
@@ -10,9 +10,9 @@ This guide first lists what Corvus does, then shows how its parts fit together, 
 
 Corvus brings the registers of every brain into one window, so that the day's work can be read and updated in a few clicks.
 
-- Today gathers what is overdue, due today, in progress, waiting on someone else and due in the week ahead.
+- Focus answers one question on one page, what to do now: the ranking of the `/priorities` agent skill, then what is overdue, due today, in progress, to chase, waiting on someone else and due in the week ahead.
 - Every action can be changed in place (status, owner, due date, priority, subtasks, notes), and every change can be undone.
-- The Board, the Timeline and the Docs view show the same actions as columns, as dates and next to the notes of each project.
+- Actions shows the same actions as a list, a board or a timeline, with the same filters, and Docs shows them next to the notes of each project.
 - One search field looks through the actions and every Markdown document of the brain.
 - A selector switches between your brains without restarting anything, and each brain keeps its own colour and logo.
 - Sync saves and sends the changes of each brain, and brings in the changes made on another computer.
@@ -53,43 +53,49 @@ Then open `http://127.0.0.1:8765/` (`--port N` for another port, `Ctrl+C` to sto
 
 ## Tour
 
-The tour follows the sidebar from top to bottom: the views of the day, then the brains, Sync and the window itself.
+The sidebar holds three sections, Focus, Actions and Docs, and Settings at the bottom. Under the title, a row of tabs lists the views of the section (for example List, Board and Timeline). A section opens on the view used last, and its views share the same filters. Sync is the button at the top right. The tour follows that order, then shows the brains, the window and the updates.
 
-### Today
+### Focus
 
-The opening view lists your overdue actions, those due today, those in progress, the follow-ups to make with others and what you wait on, then the week ahead. Each action appears once, in the first section that fits.
+**Focus** is the opening page. It brings together the ranking that the `/priorities` agent skill writes for the brain and the actions of the registers, so that the next thing to do is at the top. A line under the title says when the ranking was written and names the next meeting.
 
-### Priorities
+- **Now** lists the ranked items to do now, then the other actions past their due date or due today.
+- **To prepare**, **Conflicts** and **New requests** come from the ranking.
+- **In progress**, **To chase**, **Waiting on others** and **This week** come from the registers; To chase and Waiting on others are sorted by owner, and each follow-up carries a draft of the message with a button to copy it.
 
-The ranking written by the `/priorities` agent skill for the current brain: what to do now, what to prepare, the conflicts and the follow-ups. An action ID in an item opens that action, and each follow-up carries a draft of the message with a button to copy it.
+Each action appears once, in the first block that fits, and an empty block is left out. An action ID in a ranked item opens that action. When a project is chosen, the ranking keeps only the items that cite one of its actions, and the line under the title says so. When the ranking is not today's, the page shows the actions alone and says why.
 
-![The Priorities view](../../docs/images/tasks-web-priorities.png)
+### Actions: List, Board and Timeline
 
-### Actions and the detail panel
+The three views show the same actions with the same filters.
 
-Actions are listed by project and group, each with its progress and its overdue count. A click on the status or the due date changes it in place; a click on a row opens the detail panel with the fields, the subtasks and the history of notes. Every write goes through `action.py` and can be undone. Dragging the left edge of the panel widens it.
+- **List** groups the actions by project and group, each with its progress and its overdue count. A click on the status or the due date changes it in place; a click on a row opens the detail panel with the fields, the subtasks and the history of notes. Every write goes through `action.py` and can be undone, and dragging the left edge of the panel widens it.
+- **Board** has four columns, To do, In progress, Waiting and Recently done. Dragging a card changes its status. The board shows your own cards unless you switch to Everyone.
+- **Timeline** places the actions with a deadline on a chronological frieze (2 weeks, 6 weeks or a quarter), one lane per project, overdue first. Those without a deadline wait in a tray below: dropping one on a day plans it.
 
-![Actions grouped by project](../../docs/images/tasks-web-actions.png)
+![Actions as a list, grouped by project](../../docs/images/tasks-web-actions.png)
 
 ![An action in the detail panel](../../docs/images/tasks-web-action-panel.png)
 
-### Board
+![Actions as a board](../../docs/images/tasks-web-board.png)
 
-Four columns, To do, In progress, Waiting and Recently done. Dragging a card changes its status. The board shows your own cards unless you switch to Everyone.
+![Actions on the timeline](../../docs/images/tasks-web-timeline.png)
 
-![The Board](../../docs/images/tasks-web-board.png)
+### Docs: Docs and Archives
 
-### Timeline
-
-The actions with a deadline sit on a chronological frieze (2 weeks, 6 weeks or a quarter), one lane per project, overdue first. Those without a deadline wait in a tray below: dropping one on a day plans it.
-
-![The Timeline](../../docs/images/tasks-web-timeline.png)
-
-### Docs and search
-
-The notes, sources, workstreams, journal and project pages of the brain, with a reader and a Markdown editor for working notes. The search field, in every view, looks through the actions and every Markdown document at once.
+**Docs** shows the notes, sources, workstreams, journal and project pages of the brain, with a reader and a Markdown editor for working notes. **Archives** lists the clients, missions and projects moved to an archive, read-only, and can bring one back. The search field, in every view, looks through the actions and every Markdown document at once.
 
 ![Docs, with a note open](../../docs/images/tasks-web-docs.png)
+
+### Sync
+
+Each brain is a Git repository. The Sync button at the top right shows, for the current brain, how many changes made on another computer are waiting online, or a dot when notes are waiting to be saved and sent; a click opens the Sync view. That view shows one card per brain. **Save and send** records the changed notes and sends them to the brain's online copy, through the brain's own Git hooks. Corvus checks the online copies when it opens and every ten minutes; when a brain is behind, its card offers **Sync**, which brings the changes in as a fast-forward only, never with a merge commit or a rewrite of history.
+
+![The Sync view, with a brain to bring up to date](../../docs/images/tasks-web-sync.png)
+
+### Settings: Settings and Tools
+
+**Settings** shows what is left to set up in the workspace and the settings that can be changed. **Tools** runs the workspace commands; none of them sends anything to an external service.
 
 ### Brains
 
@@ -97,17 +103,11 @@ The brain's name at the top of the sidebar opens the brain menu: it switches bra
 
 ![The brain menu](../../docs/images/tasks-web-brain-menu.png)
 
-### Sync
-
-Each brain is a Git repository. The Sync view shows one card per brain and says what is waiting: notes to save and send, or changes made on another computer. **Save and send** records the changed notes and sends them to the brain's online copy, through the brain's own Git hooks. Corvus checks the online copies when it opens and every ten minutes; when a brain is behind, its card and the sidebar offer **Sync**, which brings the changes in as a fast-forward only, never with a merge commit or a rewrite of history.
-
-![The Sync view, with a brain to bring up to date](../../docs/images/tasks-web-sync.png)
-
 ### Sidebar, window and dark mode
 
-On the left, a rail holds the views and, at the bottom, Archives, Tools, Sync and Settings. Next to it, the project card lists the projects of the brain; its edge can be dragged to widen it. The sidebar button, or the `[` key, folds the card away; the pointer on a view then shows the card over the page, with that view named above the projects, and a project chosen there opens in that view. On macOS the window has no separate title bar: its three buttons sit at the top of the rail. The page follows the light or dark setting of the system.
+On the left, a rail holds the three sections and, at the bottom, Settings. Next to it, the project card lists the projects of the brain; its edge can be dragged to widen it. The sidebar button, or the `[` key, folds the card away. The rail then shows the main projects by the prefix of their action IDs, such as ACME for ACME-004: the pointer on one gives its full name and its number of open actions, and a click filters the view. When a client has several missions, the pointer on its code opens a small menu of them, each with its open actions, and a click there filters that mission. In Archives, Tools, Settings and Sync, which the projects do not filter, the card steps aside. The window has the same layout on macOS, Windows and Linux; on macOS it has no separate title bar, and its three buttons sit at the top left, before the sidebar button. The page follows the light or dark setting of the system.
 
-![The card folded away, shown again over the page from the Timeline icon, in dark mode](../../docs/images/tasks-web-rail-dark.png)
+![The card folded away, the rail showing the projects' codes and the menu of a client's two missions, in dark mode](../../docs/images/tasks-web-rail-dark.png)
 
 ### Update
 
@@ -123,8 +123,9 @@ The single keys do not apply while typing in a field. `?` shows their help, and 
 |---|---|
 | `/` | Search the actions and the documents |
 | `n` | New action |
-| `0` to `5` | Priorities, Today, Actions, Board, Timeline, Docs |
-| `j` `k`, `↓` `↑` | Next or previous action (Today, Actions, Board, Timeline) |
+| `1` to `3` | Focus, Actions, Docs, each on the view used last |
+| `v`, ⇧ `v` | Next or previous view of the section (List, Board, Timeline…) |
+| `j` `k`, `↓` `↑` | Next or previous action (Focus, List, Board, Timeline) |
 | `←` `→` `↑` `↓` | On a Timeline chip: by date, and by project |
 | Alt `←` `→` | On a Timeline chip: move its deadline by a day (with Shift, a week) |
 | Enter | Open the details of the selected action |
@@ -143,7 +144,7 @@ In a list, only the selected row (otherwise the first one) is in the tab order: 
 
 [`REFERENCE.md`](REFERENCE.md) holds the details:
 - [Install the app](REFERENCE.md#install-the-app) and the [layout](REFERENCE.md#layout).
-- The views and their routes: [Priorities](REFERENCE.md#priorities), [Today](REFERENCE.md#today), [Actions](REFERENCE.md#actions-and-detail-panel), [Board](REFERENCE.md#board), [Timeline](REFERENCE.md#timeline), [Groups](REFERENCE.md#groups), [Docs and Search](REFERENCE.md#docs-and-search), [Archives](REFERENCE.md#archives), [Tools](REFERENCE.md#tools), [Sync](REFERENCE.md#sync), [Update](REFERENCE.md#update) and [Settings](REFERENCE.md#settings).
+- The views and their routes: [Focus](REFERENCE.md#focus), [Actions](REFERENCE.md#actions-and-detail-panel), [Board](REFERENCE.md#board), [Timeline](REFERENCE.md#timeline), [Groups](REFERENCE.md#groups), [Docs and Search](REFERENCE.md#docs-and-search), [Archives](REFERENCE.md#archives), [Tools](REFERENCE.md#tools), [Sync](REFERENCE.md#sync), [Update](REFERENCE.md#update) and [Settings](REFERENCE.md#settings).
 - [Several brains](REFERENCE.md#several-brains).
 - The [priorities file format](REFERENCE.md#priorities-file).
 - [Data and security](REFERENCE.md#data-and-security).

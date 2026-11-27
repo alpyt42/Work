@@ -233,9 +233,8 @@ function renderFilterChips() {
 }
 function render() {
   closePopover(false);
-  renderSyncPullButton();
-  if (view === 'priorities') renderPriorities();
-  else if (view === 'tools') countTools();
+  renderSyncButton();
+  if (view === 'tools') countTools();
   else if (view === 'git') renderGit();
   else if (view === 'settings') renderSettings();
   else if (view === 'archives') renderArchives();
@@ -254,8 +253,8 @@ function setView(next, persist = true) {
   if (!VIEWS.includes(next)) next = 'today';
   view = next;
   closePopover(false);
-  ids.prioView.hidden = next !== 'priorities';
   ids.todayView.hidden = next !== 'today';
+  ids.viewNote.hidden = true; // Focus's source line, written by renderToday
   ids.listView.hidden = next !== 'list';
   ids.boardView.hidden = next !== 'board';
   ids.timelineView.hidden = next !== 'timeline';
@@ -269,11 +268,14 @@ function setView(next, persist = true) {
   ids.gitView.hidden = next !== 'git';
   ids.settingsView.hidden = next !== 'settings';
   ids.syncInfo.hidden = next !== 'git';
-  for (const [name, id] of Object.entries(NAV_BUTTONS)) {
-    if (name === next) ids[id].setAttribute('aria-current', 'page'); else ids[id].removeAttribute('aria-current');
+  const group = groupOf(next); // none for the search results: no entry is current, no tabs
+  for (const [name, id] of Object.entries(GROUP_BUTTONS)) {
+    if (name === group) ids[id].setAttribute('aria-current', 'page'); else ids[id].removeAttribute('aria-current');
   }
-  ids.viewTitle.textContent = VIEW_TITLES[next];
-  fitCardToView(); // the Mac window's card: away on the views without projects (app/shell.js)
+  ids.viewTitle.textContent = group ? GROUP_TITLES[group] : VIEW_TITLES[next];
+  renderViewTabs();
+  rememberSubview(next);
+  fitCardToView(); // the app window's card: away on the views without projects (app/shell.js)
   if (next !== 'search' && ids.searchInput.value) { // any other view ends the search: the field never says something the page does not show
     ids.searchInput.value = '';
     clearTimeout(docTimer);
@@ -284,7 +286,7 @@ function setView(next, persist = true) {
   ids.gitStatus.hidden = next !== 'git';
   ids.resultCount.textContent = '';
   render();
-  if (next === 'priorities') loadPriorities();
+  if (next === 'today') loadPriorities(); // the /priorities file may have been rewritten since
   if (next === 'tools' && !tools.length) loadTools();
   if (next === 'git') loadGit();
   if (next === 'settings' && !settingsData) loadSettings();
@@ -294,6 +296,24 @@ function setView(next, persist = true) {
     saveUIState();
     closeDrawer(false);
   }
+}
+// The row of tabs under the title: the views of the current group, the current one marked; hidden for a group of one view (Sync)
+// and for the search results.
+function renderViewTabs() {
+  const views = VIEW_GROUPS[groupOf(view)] || [];
+  ids.viewSwitch.hidden = views.length < 2;
+  for (const tab of ids.viewSwitch.querySelectorAll('[data-view]')) {
+    tab.hidden = !views.includes(tab.dataset.view);
+    if (tab.dataset.view === view) tab.setAttribute('aria-current', 'page'); else tab.removeAttribute('aria-current');
+  }
+}
+// A sidebar entry (or its digit) opens the last view of its group; `v` and Shift+V go round the views of the current one.
+function openGroup(group) { setView(lastSubview(group)); }
+function cycleView(step) {
+  const views = VIEW_GROUPS[groupOf(view)] || [];
+  if (views.length < 2) return false;
+  setView(views[(views.indexOf(view) + step + views.length) % views.length]);
+  return true;
 }
 function populateProjects() {
   const editing = ids.editorProject.value;

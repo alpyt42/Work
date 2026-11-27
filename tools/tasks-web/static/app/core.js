@@ -5,13 +5,13 @@
 
 const token = document.querySelector('meta[name="csrf-token"]').content;
 const ids = Object.fromEntries([
-  'app', 'sidebar', 'cardView', 'sidebarResizer', 'panelResizer', 'scrim', 'sidebarToggle', 'brainMini', 'sidebarClose', 'mainContent', 'brainSwipe', 'brainSwipeName',
-  'brainSwitch', 'brainButton', 'brainName', 'brainMenu', 'railTip',
+  'app', 'sidebar', 'sidebarResizer', 'panelResizer', 'scrim', 'sidebarToggle', 'brainMini', 'sidebarClose', 'mainContent', 'brainSwipe', 'brainSwipeName',
+  'brainSwitch', 'brainButton', 'brainName', 'brainMenu', 'railTip', 'railMenu',
   'addBrainDialog', 'addBrainForm', 'closeAddBrain', 'addBrainName', 'addBrainDescription', 'addBrainScope', 'addBrainError', 'cancelAddBrain', 'saveAddBrain',
-  'prioButton', 'prioCount', 'prioView', 'todayButton', 'listButton', 'boardButton', 'timelineButton', 'docsButton', 'archivesButton', 'toolsButton', 'gitButton', 'settingsButton',
+  'viewNote', 'todayButton', 'listButton', 'docsButton', 'settingsButton', 'viewSwitch', 'syncButton', 'syncBadge', 'railProjects',
   'archiveScopeButton', 'archivesView', 'archiveStatus', 'archiveList', 'archivePane', 'archiveBack', 'archivePaneTitle', 'archivePaneMeta', 'archiveUnarchive',
   'archivePaneEmpty', 'archiveBody', 'archiveDialog', 'archiveHeading', 'archiveText', 'archiveDialogList', 'archiveDialogError', 'archiveCancel', 'archiveConfirm',
-  'todayCount', 'openCount', 'gitCount', 'projectNav', 'lastSync',
+  'todayCount', 'openCount', 'projectNav', 'lastSync',
   'moreButton', 'moreMenu', 'refreshButton', 'undoButton', 'undoLabel', 'shortcutsButton', 'quitButton',
   'viewTitle', 'resultCount', 'gitStatus', 'searchField', 'searchInput', 'newNoteButton', 'newButton',
   'filters', 'projectChip', 'projectChipValue', 'projectChipClear', 'ownerChip', 'ownerFilter', 'boardOwnerChip', 'boardOwner', 'boardEveryone', 'scopeChip', 'scopeFilter',
@@ -29,7 +29,7 @@ const ids = Object.fromEntries([
   'editorSubtasks', 'editorSubtasksCount', 'editorSubtasksBar', 'editorSubtaskList', 'subtaskForm', 'subtaskInput', 'submitSubtask', 'subtaskHint', 'subtaskError',
   'noteInput', 'noteWords', 'submitNote', 'closeNoteForm', 'noteError', 'editorStamps', 'editorError', 'deleteEditor', 'cancelEditor', 'saveEditor', 'editorSaveState', 'editorFoot',
   'popover', 'newNoteDialog', 'newNoteForm', 'closeNewNote', 'newNoteTitle', 'newNoteProject', 'newNoteWhere', 'newNoteToolbar', 'newNoteContent',
-  'newNoteError', 'cancelNewNote', 'saveNewNote', 'deleteNoteDialog', 'deleteNoteHeading', 'deleteNoteText', 'deleteNoteLinks', 'deleteNoteError', 'deleteNoteCancel', 'deleteNoteConfirm', 'updateButton', 'updateButtonLabel', 'updateDialog', 'updateHeading', 'updateText', 'updateNotes', 'updateList', 'updateWhat', 'updateProgress', 'updateBar', 'updateBarFill', 'updateStep', 'updateElapsed', 'updateError', 'updateCancel', 'updateRecheck', 'updateConfirm', 'quitDialog', 'quitConfirm', 'shortcutsDialog', 'toast', 'toastText', 'toastAction', 'syncPullButton', 'syncPullButtonLabel', 'gitCheckButton', 'gitCheckInfo'
+  'newNoteError', 'cancelNewNote', 'saveNewNote', 'deleteNoteDialog', 'deleteNoteHeading', 'deleteNoteText', 'deleteNoteLinks', 'deleteNoteError', 'deleteNoteCancel', 'deleteNoteConfirm', 'updateButton', 'updateButtonLabel', 'updateDialog', 'updateHeading', 'updateText', 'updateNotes', 'updateList', 'updateWhat', 'updateProgress', 'updateBar', 'updateBarFill', 'updateStep', 'updateElapsed', 'updateError', 'updateCancel', 'updateRecheck', 'updateConfirm', 'quitDialog', 'quitConfirm', 'shortcutsDialog', 'toast', 'toastText', 'toastAction', 'gitCheckButton', 'gitCheckInfo'
 ].map(id => [id, document.getElementById(id)]));
 
 // The interface text is English; dates, relative times, case changes and sorting follow the browser's locale.
@@ -44,12 +44,35 @@ function readUIState() {
   } catch { return {}; }
 }
 const savedUI = readUIState();
-// `search` is the results page of the header field: no button, no digit, never restored (it has no query to show).
-const VIEWS = ['priorities', 'today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git', 'settings'];
+// `search` is the results page of the header field: no group, no digit, never restored (it has no query to show).
+// `today` is the Focus page (its name inside the code and the session state; the /priorities ranking is part of it, no view of its own).
+const VIEWS = ['today', 'list', 'board', 'timeline', 'docs', 'search', 'archives', 'tools', 'git', 'settings'];
 const ACTION_VIEWS = ['today', 'list', 'board', 'timeline'];
-const VIEW_TITLES = {priorities: 'Priorities', today: 'Today', list: 'Actions', board: 'Board', timeline: 'Timeline', docs: 'Docs', search: 'Search', archives: 'Archives', tools: 'Tools', git: 'Sync', settings: 'Settings'};
-const NAV_BUTTONS = {priorities: 'prioButton', today: 'todayButton', list: 'listButton', board: 'boardButton', timeline: 'timelineButton', docs: 'docsButton', archives: 'archivesButton', tools: 'toolsButton', git: 'gitButton', settings: 'settingsButton'};
-// The Docs view was called Notes: a view saved under the old name opens it.
+// The views come in groups: the sidebar has one entry per group (Sync has the header's button instead), the header's title names the
+// group and the row of tabs under it the view. A group opens the last of its views (remembered by the browser), else its first.
+const VIEW_GROUPS = {today: ['today'], actions: ['list', 'board', 'timeline'], docs: ['docs', 'archives'], sync: ['git'], settings: ['settings', 'tools']};
+const GROUP_TITLES = {today: 'Focus', actions: 'Actions', docs: 'Docs', sync: 'Sync', settings: 'Settings'};
+const GROUP_BUTTONS = {today: 'todayButton', actions: 'listButton', docs: 'docsButton', settings: 'settingsButton'};
+const VIEW_TITLES = {today: 'Focus', list: 'List', board: 'Board', timeline: 'Timeline', docs: 'Docs', archives: 'Archives', search: 'Search', git: 'Sync', settings: 'Settings', tools: 'Tools'};
+function groupOf(name) { return Object.keys(VIEW_GROUPS).find(group => VIEW_GROUPS[group].includes(name)) || ''; }
+// A view in full, where one line names it: the group, then the view when it is not the group's first ("Actions · Board").
+function viewName(name) {
+  const group = groupOf(name);
+  if (!group) return VIEW_TITLES[name] || '';
+  return VIEW_GROUPS[group][0] === name ? GROUP_TITLES[group] : `${GROUP_TITLES[group]} · ${VIEW_TITLES[name]}`;
+}
+const SUBVIEW_KEY = 'corvus-subview-'; // + the group: its last view
+function lastSubview(group) {
+  let saved = '';
+  try { saved = localStorage.getItem(`${SUBVIEW_KEY}${group}`) || ''; } catch { /* the group's first view */ }
+  return VIEW_GROUPS[group].includes(saved) ? saved : VIEW_GROUPS[group][0];
+}
+function rememberSubview(name) {
+  const group = groupOf(name);
+  if (!group || VIEW_GROUPS[group].length < 2) return;
+  try { localStorage.setItem(`${SUBVIEW_KEY}${group}`, name); } catch { /* Not remembered. */ }
+}
+// The Docs view was called Notes: a view saved under the old name opens it. A saved `priorities` (now part of Focus) opens Focus.
 let view = VIEWS.includes(savedUI.view) && savedUI.view !== 'search' ? savedUI.view : savedUI.view === 'notes' ? 'docs' : 'today';
 let searchReturn = 'today'; // the view the results page goes back to
 // The project filter of the sidebar: '' (all), a register path, or a folder prefix ending with '/' (a client and its missions).
