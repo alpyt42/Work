@@ -560,7 +560,7 @@ class DecisionLinkTest(unittest.TestCase):
     def test_accept_note_is_rewritten(self) -> None:
         self.propose(f"[CR]({MINUTES})")
         subprocess.run([sys.executable, str(TOOL), "--brain", str(self.brain), "accept", "1", "--project", "acme/gamma", "--by", "Owner",
-                        "--note", f"see [CR]({MINUTES})"], check=True, capture_output=True, text=True)
+                        "--note", f"see [CR]({MINUTES})"], check=True, capture_output=True, text=True, encoding="utf-8")
         self.assertIn(f"see [CR]({RELATIVE}))", self.register.read_text(encoding="utf-8"))
 
 

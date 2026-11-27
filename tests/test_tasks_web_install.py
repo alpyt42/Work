@@ -873,8 +873,9 @@ class OpenChainTest(unittest.TestCase):
 
     def test_macos_opens_chrome_then_edge_then_chromium_or_brave_as_an_app(self):
         home = Path("/Users/jane")
-        def command(*installed):
-            return launch.app_mode_command(self.URL, "macos", {}, home, exists=lambda path: str(path) in installed)
+        def command(*installed):  # compared as paths, so the test also runs where the separator is `\`
+            places = {Path(place) for place in installed}
+            return launch.app_mode_command(self.URL, "macos", {}, home, exists=lambda path: path in places)
         self.assertEqual(command("/Applications/Google Chrome.app", "/Applications/Microsoft Edge.app"),
                          ["open", "-na", "Google Chrome", "--args", f"--app={self.URL}"])
         self.assertEqual(command("/Users/jane/Applications/Microsoft Edge.app", "/Applications/Brave Browser.app"),
@@ -885,14 +886,14 @@ class OpenChainTest(unittest.TestCase):
 
     def test_windows_looks_in_program_files_and_local_app_data(self):
         environ = {"ProgramFiles": "C:/PF", "ProgramFiles(x86)": "C:/PF86", "LOCALAPPDATA": "C:/Local"}
-        def command(*installed):
-            return launch.app_mode_command(self.URL, "windows", environ, Path("C:/Users/jane"), exists=lambda path: str(path) in installed)
-        self.assertEqual(command("C:/PF86/Microsoft/Edge/Application/msedge.exe"),
-                         ["C:/PF86/Microsoft/Edge/Application/msedge.exe", f"--app={self.URL}"])
-        self.assertEqual(command("C:/Local/Google/Chrome/Application/chrome.exe", "C:/PF86/Microsoft/Edge/Application/msedge.exe")[0],
-                         "C:/Local/Google/Chrome/Application/chrome.exe")  # Chrome before Edge, wherever it is
-        self.assertEqual(command("C:/Local/BraveSoftware/Brave-Browser/Application/brave.exe")[0],
-                         "C:/Local/BraveSoftware/Brave-Browser/Application/brave.exe")
+        def command(*installed):  # compared as paths: the command holds the platform's own form of the path
+            places = {Path(place) for place in installed}
+            return launch.app_mode_command(self.URL, "windows", environ, Path("C:/Users/jane"), exists=lambda path: path in places)
+        edge, chrome = "C:/PF86/Microsoft/Edge/Application/msedge.exe", "C:/Local/Google/Chrome/Application/chrome.exe"
+        brave = "C:/Local/BraveSoftware/Brave-Browser/Application/brave.exe"
+        self.assertEqual(command(edge), [str(Path(edge)), f"--app={self.URL}"])
+        self.assertEqual(command(chrome, edge)[0], str(Path(chrome)))  # Chrome before Edge, wherever it is
+        self.assertEqual(command(brave)[0], str(Path(brave)))
         self.assertIsNone(command())
 
     def test_linux_takes_the_first_browser_on_the_path(self):

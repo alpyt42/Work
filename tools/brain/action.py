@@ -747,6 +747,12 @@ CODE_SPAN_RE = re.compile(r"`[^`]*`")
 SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
 
 
+def is_url(target: str) -> bool:
+    """True for a link target with a URL scheme (`https:`, `mailto:`…). A Windows drive path (`C:\\…`, `C:/…`) also starts
+    with a letter and a colon, but it is a path, not a one-letter scheme (``Path.drive`` is empty on macOS and Linux)."""
+    return bool(SCHEME_RE.match(target)) and not Path(target).drive
+
+
 def other_brain_root(path: Path, brain: Path) -> bool:
     """True when ``path`` lies inside a sibling brain (``brain/``, ``brain-<name>/``) of ``brain`` at the Work root."""
     try:
@@ -773,7 +779,7 @@ def resolve_links(text: str, written: Path, brain: Path) -> str:
         raw = match.group(2)
         wrapped = raw.startswith("<")
         target = raw[1:-1] if wrapped else raw
-        if not target or target.startswith("#") or SCHEME_RE.match(target):
+        if not target or target.startswith("#") or is_url(target):
             return match.group(0)
         path_part, sep, anchor = target.partition("#")
         decoded = unquote(path_part)

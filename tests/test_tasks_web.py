@@ -2549,7 +2549,7 @@ class GitViewTest(unittest.TestCase):
         return reached
 
     def stale_locks(self, brain):
-        return sorted(str(path.relative_to(brain / ".git")) for path in (brain / ".git").rglob("*.lock"))
+        return sorted(path.relative_to(brain / ".git").as_posix() for path in (brain / ".git").rglob("*.lock"))
 
     def test_a_pull_stopped_at_its_time_limit_clears_its_locks_and_says_so(self):
         self.other_clone_pushes()
