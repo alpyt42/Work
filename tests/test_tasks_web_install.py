@@ -1418,6 +1418,12 @@ class WindowHelpersTest(unittest.TestCase):
             window.check_renderer(lambda gui: types.SimpleNamespace(renderer="mshtml"))
         self.assertIn("WebView2", str(raised.exception))
 
+    def test_initialize_comes_from_the_guilib_module_not_the_package_attribute(self):
+        # pywebview's package sets `guilib = None`, which shadows the submodule: `from webview import guilib` gives None.
+        source = (WEB / "window.py").read_text(encoding="utf-8")
+        self.assertIn("from webview.guilib import initialize", source)
+        self.assertNotIn("from webview import guilib", source)
+
     def test_drag_regions_are_the_mac_pages_only_and_file_urls_are_refused(self):
         settings = {"DRAG_REGION_SELECTOR": ".pywebview-drag-region", "DRAG_REGION_DIRECT_TARGET_ONLY": False, "ALLOW_FILE_URLS": True}
         window.configure(settings)
@@ -1435,11 +1441,32 @@ class WindowHelpersTest(unittest.TestCase):
         self.assertIn("RuntimeError: no GTK", (self.agents / "tasks-web.log").read_text(encoding="utf-8"))
         self.assertTrue(window.InstanceLock(self.agents / window.LOCK_FILE).acquire())  # the lock was released
 
-    def test_check_prints_the_interpreter_and_needs_only_the_import(self):
+    def test_check_prints_the_interpreter_once_the_preflight_passes(self):
         out = io.StringIO()
-        with patch.dict(sys.modules, {"webview": Mock()}), redirect_stdout(out):
+        with patch.dict(sys.modules, {"webview": Mock()}), patch.object(window, "preflight") as preflight, redirect_stdout(out):
             self.assertEqual(window.main(["--check"]), 0)
+        preflight.assert_called_once_with()
         self.assertEqual(out.getvalue(), f"{sys.executable}\n")
+
+    def test_check_fails_when_the_window_would_fail(self):
+        # The installer's prewarm reports it, instead of the first click falling back to a Chrome app window silently.
+        out, err = io.StringIO(), io.StringIO()
+        failing = Mock(side_effect=RuntimeError("the WebView2 runtime is missing"))
+        with patch.dict(sys.modules, {"webview": Mock()}), patch.object(window, "preflight", failing), \
+                redirect_stdout(out), redirect_stderr(err):
+            self.assertEqual(window.main(["--check"]), 1)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("RuntimeError: the WebView2 runtime is missing", err.getvalue())
+
+    def test_the_preflight_checks_webview2_on_windows_only(self):
+        initialize = Mock(return_value=types.SimpleNamespace(renderer="edgechromium"))
+        guilib = types.SimpleNamespace(initialize=initialize)
+        with patch.dict(sys.modules, {"webview": types.SimpleNamespace(guilib=None), "webview.guilib": guilib}):
+            window.preflight("win32")
+            initialize.assert_called_once_with("edgechromium")
+            window.preflight("darwin")
+            window.preflight("linux")
+        initialize.assert_called_once()
 
     def test_the_window_settings_are_corvuss(self):
         self.assertEqual((window.TITLE, window.SIZE, window.MIN_SIZE, window.APP_ID), ("Corvus", (1280, 840), (720, 480), install.BUNDLE_ID))

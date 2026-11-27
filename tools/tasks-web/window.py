@@ -17,7 +17,8 @@ the server and closing it leaves the server running; the page's Quit stops the s
   three checks in a row, one second apart, AND that marker was written after the window started. Otherwise (a restart,
   a server stopped some other way) it closes only once the port has stayed closed for 90 s, longer than the page's own
   60 s restart wait, so that a failed restart leaves the page time to show its error.
-- --check imports pywebview, prints the path of this Python on stdout and exits 0 (how launch.py finds the interpreter
+- --check imports pywebview and loads what the window needs before it opens (on Windows, the GUI library and WebView2:
+  preflight), then prints the path of this Python on stdout and exits 0, or exits 1 with the reason on stderr (how launch.py finds the interpreter
   of the script environment, and downloads pywebview the first time).
 - Private mode is off, so the page's localStorage (the view, the filters, the collapsed groups) survives between runs; the
   store lives in the system's web view data (~/Library/WebKit/<bundle id>/ on macOS, the WebView2 profile on Windows).
@@ -110,6 +111,19 @@ def check_renderer(initialize: Callable[[str], object]) -> None:
     renderer = getattr(initialize("edgechromium"), "renderer", None)
     if renderer != "edgechromium":
         raise RuntimeError(f"the WebView2 runtime is missing (pywebview would use {renderer or 'no renderer'})")
+
+
+def preflight(platform: str | None = None) -> None:
+    """What the window loads before it opens, beyond the import: on Windows, pywebview's GUI library and WebView2.
+
+    run_window and --check share it, so the installer's --check sees a window that would fail, instead of the first click
+    falling back to a Chrome app window without a word. Raises on failure.
+    """
+    if (platform or sys.platform) == "win32":
+        # From the submodule: the package's own `guilib` attribute is None until webview.start, and it shadows the module.
+        from webview.guilib import initialize
+
+        check_renderer(initialize)
 
 
 def blend_title_bar(native) -> None:
@@ -329,10 +343,7 @@ def run_window(port: int, agents: Path) -> None:
 
     started = time.time()  # a quit marker older than this is from an earlier window
     set_app_id()
-    if sys.platform == "win32":
-        from webview import guilib
-
-        check_renderer(guilib.initialize)
+    preflight()
     stop = threading.Event()
     ready = agents / READY_FILE
     minimized = threading.Event()
@@ -382,12 +393,18 @@ def run_window(port: int, agents: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, default=PORT, help=f"port of the local server (default: {PORT})")
-    parser.add_argument("--check", action="store_true", help="import pywebview, print this Python's path and exit")
+    parser.add_argument("--check", action="store_true",
+                        help="import pywebview, load what the window needs (Windows: WebView2), print this Python's path and exit")
     parser.add_argument("--no-fallback", action="store_true", help="do not open the page elsewhere when the window fails (launch.py does)")
     args = parser.parse_args(argv)
     if args.check:
         import webview  # noqa: F401
 
+        try:
+            preflight()
+        except Exception as error:  # noqa: BLE001 - reported, and the exit code tells the caller
+            print(f"the native window would fail: {type(error).__name__}: {error}", file=sys.stderr)
+            return 1
         print(sys.executable)
         return 0
     lock = InstanceLock(AGENTS / LOCK_FILE)
